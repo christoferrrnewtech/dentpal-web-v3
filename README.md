@@ -874,3 +874,4 @@ This project is private and proprietary to DentPal.
 ---
 
 **Built with ❤️ for modern dental practices**
+# dentpal-web-v3
