@@ -1,0 +1,21 @@
+<svg width="100" height="100" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="grad1" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#14B8A6;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#06B6D4;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  
+  <!-- Background circle -->
+  <circle cx="50" cy="50" r="45" fill="url(#grad1)" />
+  
+  <!-- Tooth shape -->
+  <path d="M35 25 C35 20, 40 15, 50 15 C60 15, 65 20, 65 25 C65 30, 65 35, 65 40 C65 50, 60 55, 50 60 C40 55, 35 50, 35 40 C35 35, 35 30, 35 25 Z" fill="white" />
+  
+  <!-- Dental cross -->
+  <rect x="47" y="30" width="6" height="20" fill="#14B8A6" />
+  <rect x="40" y="37" width="20" height="6" fill="#14B8A6" />
+  
+  <!-- Text -->
+  <text x="50" y="80" font-family="Arial, sans-serif" font-size="12" font-weight="bold" text-anchor="middle" fill="white">DentPal</text>
+</svg>
