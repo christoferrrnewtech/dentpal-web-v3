@@ -7,12 +7,13 @@
 
 ## 🚀 Live Demo & Deployment
 
-**🌐 Production URL:** *Will be provided after deployment*  
+**🌐 Production URL:** _Will be provided after deployment_  
 **📋 Status:** ✅ Ready for Production  
 **🔧 Environment:** Serverless (Firebase)  
 **📱 Responsive:** Mobile + Desktop Compatible
 
 ### 🔐 Demo Credentials
+
 ```
 Email: admin@gmail.com
 Password: DentpalAccess
@@ -874,4 +875,5 @@ This project is private and proprietary to DentPal.
 ---
 
 **Built with ❤️ for modern dental practices**
+
 # dentpal-web-v3

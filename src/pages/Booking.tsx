@@ -1,8 +1,15 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { Order, BookingProps } from "../types/order.ts";
 import ScanTab from "../components/booking/ScanTab";
 import ProcessTab from "../components/booking/ProcessTab";
 import CompletedTab from "../components/booking/CompletedTab";
+
+const steps = ["scan", "process", "completed"] as const;
+const stepLabels: Record<(typeof steps)[number], string> = {
+  scan: "Scan",
+  process: "To Process",
+  completed: "Completed",
+};
 
 const Booking = ({}: BookingProps) => {
   const [activeTab, setActiveTab] = useState("scan");
@@ -248,6 +255,12 @@ const Booking = ({}: BookingProps) => {
     }
   };
 
+  const stepIndex = useMemo(() => steps.indexOf(activeTab as any), [activeTab]);
+  const canNext = stepIndex < steps.length - 1;
+  const canPrev = stepIndex > 0;
+  const gotoNext = () => canNext && setActiveTab(steps[stepIndex + 1]);
+  const gotoPrev = () => canPrev && setActiveTab(steps[stepIndex - 1]);
+
   return (
     <div className="space-y-6">
       {/* Booking Header */}
@@ -256,38 +269,107 @@ const Booking = ({}: BookingProps) => {
           <h2 className="text-2xl font-bold text-gray-900">BOOKINGS</h2>
         </div>
 
-        {/* Process Tabs */}
-        <div className="flex space-x-1 bg-gray-100 rounded-xl p-1 mb-6">
-          <button 
-            className={`flex-1 py-3 px-4 text-sm font-medium rounded-lg transition-colors ${
-              activeTab === "scan" 
-                ? "text-white bg-teal-600" 
-                : "text-gray-600 hover:text-gray-900"
-            }`}
-            onClick={() => handleTabChange("scan")}
-          >
-            SCAN
-          </button>
-          <button 
-            className={`flex-1 py-3 px-4 text-sm font-medium rounded-lg transition-colors ${
-              activeTab === "process" 
-                ? "text-white bg-teal-600" 
-                : "text-gray-600 hover:text-gray-900"
-            }`}
-            onClick={() => handleTabChange("process")}
-          >
-            TO PROCESS
-          </button>
-          <button 
-            className={`flex-1 py-3 px-4 text-sm font-medium rounded-lg transition-colors ${
-              activeTab === "completed" 
-                ? "text-white bg-teal-600" 
-                : "text-gray-600 hover:text-gray-900"
-            }`}
-            onClick={() => handleTabChange("completed")}
-          >
-            COMPLETED
-          </button>
+        {/* Enhanced Stepper Navigation */}
+        <div className="mb-8">
+          {/* Progress Bar Background */}
+          <div className="relative mb-8">
+            <div className="absolute top-5 left-0 w-full h-1 bg-gray-200 rounded-full"></div>
+            <div 
+              className="absolute top-5 left-0 h-1 bg-gradient-to-r from-teal-500 to-teal-600 rounded-full transition-all duration-500 ease-in-out"
+              style={{ width: `${(stepIndex / (steps.length - 1)) * 100}%` }}
+            ></div>
+            
+            {/* Step Circles */}
+            <ol className="flex items-center justify-between relative z-10">
+              {steps.map((key, idx) => {
+                const active = idx === stepIndex;
+                const done = idx < stepIndex;
+                const isClickable = true; // Allow clicking on any step
+                
+                return (
+                  <li key={key} className="flex flex-col items-center">
+                    <button
+                      onClick={() => isClickable && setActiveTab(key)}
+                      disabled={!isClickable}
+                      className={`relative flex items-center justify-center w-10 h-10 rounded-full border-2 text-sm font-semibold transition-all duration-300 transform hover:scale-105 ${
+                        done
+                          ? "bg-teal-600 text-white border-teal-600 shadow-lg"
+                          : active
+                          ? "bg-white text-teal-700 border-teal-600 shadow-lg ring-4 ring-teal-100"
+                          : "bg-white text-gray-500 border-gray-300 hover:border-gray-400"
+                      } ${isClickable ? "cursor-pointer" : "cursor-default"}`}
+                      aria-current={active ? "step" : undefined}
+                    >
+                      {done ? (
+                        <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                        </svg>
+                      ) : (
+                        <span>{idx + 1}</span>
+                      )}
+                      
+                      {/* Active Step Pulse Animation */}
+                      {active && (
+                        <div className="absolute inset-0 rounded-full border-2 border-teal-400 animate-ping"></div>
+                      )}
+                    </button>
+                    
+                    {/* Step Label */}
+                    <div className="mt-3 text-center max-w-24">
+                      <div className={`text-sm font-medium ${
+                        active ? "text-teal-700" : done ? "text-teal-600" : "text-gray-500"
+                      }`}>
+                        {stepLabels[key]}
+                      </div>
+                      {active && (
+                        <div className="text-xs text-gray-500 mt-1">Current Step</div>
+                      )}
+                    </div>
+                  </li>
+                );
+              })}
+            </ol>
+          </div>
+
+          {/* Navigation Controls */}
+          <div className="flex justify-between items-center">
+            <button
+              className={`flex items-center space-x-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
+                canPrev 
+                  ? "text-gray-700 bg-white border border-gray-300 hover:bg-gray-50 hover:border-gray-400 shadow-sm" 
+                  : "text-gray-400 bg-gray-50 border border-gray-200 cursor-not-allowed"
+              }`}
+              onClick={gotoPrev}
+              disabled={!canPrev}
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+              </svg>
+              <span>Back</span>
+            </button>
+
+            {/* Step Indicator */}
+            <div className="flex items-center space-x-2 text-sm text-gray-600">
+              <span className="font-medium">Step {stepIndex + 1} of {steps.length}</span>
+              <div className="w-px h-4 bg-gray-300"></div>
+              <span className="text-teal-600 font-medium">{stepLabels[steps[stepIndex]]}</span>
+            </div>
+
+            <button
+              className={`flex items-center space-x-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
+                canNext 
+                  ? "text-white bg-gradient-to-r from-teal-600 to-teal-700 hover:from-teal-700 hover:to-teal-800 shadow-sm" 
+                  : "text-gray-400 bg-gray-50 border border-gray-200 cursor-not-allowed"
+              }`}
+              onClick={gotoNext}
+              disabled={!canNext}
+            >
+              <span>Next</span>
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+              </svg>
+            </button>
+          </div>
         </div>
 
         {/* Tab Content */}
@@ -297,6 +379,7 @@ const Booking = ({}: BookingProps) => {
             loading={loading}
             error={error}
             setError={setError}
+            onTabChange={handleTabChange}
           />
         )}
 
@@ -312,8 +395,6 @@ const Booking = ({}: BookingProps) => {
             onTabChange={handleTabChange}
           />
         )}
-
-
 
         {activeTab === "completed" && (
           <CompletedTab 

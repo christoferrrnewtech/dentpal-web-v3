@@ -22,6 +22,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { createPartnerUser, updatePartnerClaims, disablePartnerUser } from '@/services/partnerProvisioning';
 
 interface User {
   id: string;
@@ -118,7 +119,6 @@ const AccessTab = ({ loading = false, error, setError, onTabChange }: AccessTabP
   const [newUser, setNewUser] = useState<Partial<User>>({
     username: "",
     email: "",
-    password: "",
     role: "seller",
     status: "pending",
     permissions: {
@@ -160,50 +160,60 @@ const AccessTab = ({ loading = false, error, setError, onTabChange }: AccessTabP
     }
   };
 
-  const handleAddUser = () => {
-    if (!newUser.username || !newUser.email || !newUser.password) {
+  const handleAddUser = async () => {
+    if (!newUser.username || !newUser.email) {
       setError?.("Please fill in all required fields");
       return;
     }
 
-    const user: User = {
-      id: Date.now().toString(),
-      username: newUser.username,
-      email: newUser.email,
-      password: newUser.password,
-      role: newUser.role as 'admin' | 'seller',
-      status: 'pending',
-      permissions: newUser.permissions || {
-        dashboard: true,
-        bookings: true,
-        confirmation: false,
-        withdrawal: false,
-        access: false,
-        images: false,
-        users: false
-      },
-      createdAt: new Date().toISOString()
-    };
+    try {
+      // Create Auth user + profile via Cloud Function and send reset link
+      const res = await createPartnerUser({
+        email: newUser.email!,
+        name: newUser.username!,
+        role: (newUser.role as 'admin' | 'seller') || 'seller',
+        permissions: newUser.permissions as any
+      });
 
-    setUsers(prev => [...prev, user]);
-    setNewUser({
-      username: "",
-      email: "",
-      password: "",
-      role: "seller",
-      status: "pending",
-      permissions: {
-        dashboard: true,
-        bookings: true,
-        confirmation: false,
-        withdrawal: false,
-        access: false,
-        images: false,
-        users: false
-      }
-    });
-    setShowAddForm(false);
-    setError?.(null);
+      const user: User = {
+        id: res.uid,
+        username: newUser.username!,
+        email: newUser.email!,
+        role: (newUser.role as 'admin' | 'seller') || 'seller',
+        status: 'pending',
+        permissions: newUser.permissions || {
+          dashboard: true,
+          bookings: true,
+          confirmation: false,
+          withdrawal: false,
+          access: false,
+          images: false,
+          users: false
+        },
+        createdAt: new Date().toISOString()
+      };
+
+      setUsers(prev => [...prev, user]);
+      setNewUser({
+        username: "",
+        email: "",
+        role: "seller",
+        status: "pending",
+        permissions: {
+          dashboard: true,
+          bookings: true,
+          confirmation: false,
+          withdrawal: false,
+          access: false,
+          images: false,
+          users: false
+        }
+      });
+      setShowAddForm(false);
+      setError?.(null);
+    } catch (e: any) {
+      setError?.(e.message || 'Failed to create user');
+    }
   };
 
   const handleEditUser = (user: User) => {
@@ -211,15 +221,25 @@ const AccessTab = ({ loading = false, error, setError, onTabChange }: AccessTabP
     setShowAddForm(true);
   };
 
-  const handleUpdateUser = () => {
+  const handleUpdateUser = async () => {
     if (!editingUser) return;
+    try {
+      // Persist role/permissions to custom claims via Cloud Function
+      await updatePartnerClaims(
+        editingUser.id,
+        editingUser.role,
+        editingUser.permissions as any
+      );
 
-    setUsers(prev => prev.map(user => 
-      user.id === editingUser.id ? editingUser : user
-    ));
-    setEditingUser(null);
-    setShowAddForm(false);
-    setError?.(null);
+      setUsers(prev => prev.map(user => 
+        user.id === editingUser.id ? editingUser : user
+      ));
+      setEditingUser(null);
+      setShowAddForm(false);
+      setError?.(null);
+    } catch (e: any) {
+      setError?.(e.message || 'Failed to update user');
+    }
   };
 
   const handleDeleteUser = (userId: string) => {
@@ -228,10 +248,18 @@ const AccessTab = ({ loading = false, error, setError, onTabChange }: AccessTabP
     }
   };
 
-  const handleStatusChange = (userId: string, newStatus: 'active' | 'inactive' | 'pending') => {
+  const handleStatusChange = async (userId: string, newStatus: 'active' | 'inactive' | 'pending') => {
     setUsers(prev => prev.map(user => 
       user.id === userId ? { ...user, status: newStatus } : user
     ));
+    try {
+      // Only toggle disabled when switching to active/inactive
+      if (newStatus === 'active' || newStatus === 'inactive') {
+        await disablePartnerUser(userId, newStatus === 'inactive');
+      }
+    } catch (e: any) {
+      setError?.(e.message || 'Failed to update status');
+    }
   };
 
   const handlePermissionChange = (userId: string, permission: keyof User['permissions'], value: boolean) => {
@@ -313,15 +341,10 @@ const AccessTab = ({ loading = false, error, setError, onTabChange }: AccessTabP
                 }
               />
             </div>
+            {/* Remove password input: invites send a reset link instead */}
             {!isEditing && (
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Password</label>
-                <Input
-                  type="password"
-                  placeholder="Enter password"
-                  value={currentUser.password || ""}
-                  onChange={(e) => setNewUser(prev => ({ ...prev, password: e.target.value }))}
-                />
+              <div className="text-sm text-gray-500 bg-gray-50 border border-gray-200 rounded-lg p-3">
+                An invite email with a password setup link will be sent to this user.
               </div>
             )}
             <div>
@@ -412,7 +435,7 @@ const AccessTab = ({ loading = false, error, setError, onTabChange }: AccessTabP
 
         <div className="flex items-center justify-between mt-8 pt-6 border-t border-gray-200">
           <div className="text-sm text-gray-500">
-            {isEditing ? 'Update user information and permissions' : 'All fields marked with * are required'}
+            {isEditing ? 'Update user information and permissions' : 'The user will receive an email to set their password'}
           </div>
           <div className="flex items-center space-x-3">
             <Button
@@ -429,7 +452,7 @@ const AccessTab = ({ loading = false, error, setError, onTabChange }: AccessTabP
               disabled={loading}
               className="bg-green-600 hover:bg-green-700 text-white"
             >
-              {loading ? "Processing..." : isEditing ? "Update User" : "Add User"}
+              {loading ? "Processing..." : isEditing ? "Update User" : "Invite User"}
             </Button>
           </div>
         </div>

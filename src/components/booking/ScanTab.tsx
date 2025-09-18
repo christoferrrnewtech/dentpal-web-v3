@@ -1,50 +1,60 @@
 import { useState } from "react";
 import { Order } from "../../types/order.ts";
+import useBarcodeScanner from "@/hooks/useBarcodeScanner";
 
 interface ScanTabProps {
   onOrderScanned: (order: Order) => void;
   loading: boolean;
   error: string | null;
   setError: (error: string | null) => void;
+  onTabChange: (tab: string) => void;
 }
 
-const ScanTab = ({ onOrderScanned, loading, error, setError }: ScanTabProps) => {
+const ScanTab = ({ onOrderScanned, loading, error, setError, onTabChange }: ScanTabProps) => {
   const [orderCount, setOrderCount] = useState("");
   const [barcode, setBarcode] = useState("");
   const [startDate, setStartDate] = useState("2024-08-05");
   const [endDate, setEndDate] = useState("2024-09-09");
 
-  const handleAddItem = async () => {
-    if (orderCount && barcode) {
+  // Attach keyboard-wedge scanner listener
+  useBarcodeScanner({
+    onScan: (code) => {
+      setBarcode(code);
+      handleAddItem(code);
+    },
+    // Most handheld scanners type fast and end with Enter
+    minLength: 6,
+    maxInterval: 50,
+    // Keep input focused UX; capture outside inputs only
+    captureOnInputs: false,
+  });
+
+  const handleAddItem = async (incoming?: string) => {
+    const code = incoming ?? barcode;
+    if (orderCount && code) {
       try {
-        // TODO: API call to add scanned item
-        // const response = await fetch('/api/orders/scan', {
-        //   method: 'POST',
-        //   headers: { 'Content-Type': 'application/json' },
-        //   body: JSON.stringify({ orderCount: parseInt(orderCount), barcode })
-        // });
-        
-        console.log("Adding item:", { orderCount, barcode });
-        
         // Simulate successful addition - create new order for processing
         const newOrder: Order = {
           id: `DP-2024-${String(Date.now()).slice(-3)}`,
           orderCount: parseInt(orderCount),
-          barcode,
+          barcode: code,
           timestamp: new Date().toISOString(),
           customer: { name: "New Customer", contact: "+63 XXX XXX XXXX" },
           package: { size: "medium", dimensions: "15cm × 10cm × 8cm", weight: "0.5kg" },
           priority: "normal",
-          status: "pending"
+          status: "pending",
         };
-        
         onOrderScanned(newOrder);
         setOrderCount("");
         setBarcode("");
         setError(null);
+        // Advance to next step in parent
+        onTabChange("process");
       } catch (err) {
         setError("Failed to add item. Please try again.");
       }
+    } else if (!orderCount) {
+      setError("Please enter order count before scanning.");
     }
   };
 
@@ -71,9 +81,7 @@ const ScanTab = ({ onOrderScanned, loading, error, setError }: ScanTabProps) => 
       {/* Scanning Interface */}
       <div className="flex items-center space-x-4 mb-8">
         <div className="flex-1">
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            [ORDER_COUNT]
-          </label>
+          <label className="block text-sm font-medium text-gray-700 mb-2">[ORDER_COUNT]</label>
           <input
             type="text"
             value={orderCount}
@@ -82,30 +90,35 @@ const ScanTab = ({ onOrderScanned, loading, error, setError }: ScanTabProps) => 
             className="w-full px-4 py-3 border border-gray-200 rounded-xl text-gray-900 placeholder-gray-500 focus:ring-2 focus:ring-teal-500 focus:border-transparent"
           />
         </div>
-        
+
         <div className="flex-1">
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            *INPUT BARCODE HERE*
-          </label>
+          <label className="block text-sm font-medium text-gray-700 mb-2">Scan Barcode</label>
           <input
             type="text"
             value={barcode}
             onChange={(e) => setBarcode(e.target.value)}
-            placeholder="Scan or enter barcode"
+            placeholder="Focus here and scan, or type then press Enter"
             className="w-full px-4 py-3 border border-gray-200 rounded-xl text-gray-900 placeholder-gray-500 focus:ring-2 focus:ring-teal-500 focus:border-transparent"
-            onKeyPress={(e) => e.key === 'Enter' && handleAddItem()}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                handleAddItem();
+              }
+            }}
+            autoFocus
           />
+          <p className="mt-1 text-xs text-gray-500">Tip: Most USB scanners act as keyboards and append Enter. Click in the field then scan.</p>
         </div>
-        
+
         <div className="flex space-x-2 pt-7">
-          <button 
-            onClick={handleAddItem}
+          <button
+            onClick={() => handleAddItem()}
             disabled={loading}
             className="px-6 py-3 bg-green-600 text-white font-medium rounded-xl hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {loading ? "Adding..." : "ADD"}
           </button>
-          <button 
+          <button
             onClick={handleClearInputs}
             className="px-6 py-3 bg-red-600 text-white font-medium rounded-xl hover:bg-red-700 transition-colors"
           >
