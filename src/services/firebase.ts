@@ -6,13 +6,13 @@ import { getStorage, FirebaseStorage } from 'firebase/storage';
 
 // Your Firebase project configuration
 const firebaseConfig = {
-  apiKey: "AIzaSyD9chK8ZPQ52uuM8jOKKP3Xdjmpy4xmJEo",
-  authDomain: "dentpal-161e5.firebaseapp.com",
-  databaseURL: "https://dentpal-161e5-default-rtdb.asia-southeast1.firebasedatabase.app",
-  projectId: "dentpal-161e5",
-  storageBucket: "dentpal-161e5.firebasestorage.app",
-  messagingSenderId: "606033398344",
-  appId: "1:606033398344:web:65a1c7ff689121946aa67d"
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  databaseURL: import.meta.env.VITE_FIREBASE_DATABASE_URL,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID
 };
 
 // Initialize Firebase

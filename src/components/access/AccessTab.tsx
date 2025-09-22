@@ -115,7 +115,6 @@ const AccessTab = ({ loading = false, error, setError, onTabChange }: AccessTabP
   const [editingUser, setEditingUser] = useState<User | null>(null);
   const [showPasswords, setShowPasswords] = useState<{ [key: string]: boolean }>({});
 
-  // Form states
   const [newUser, setNewUser] = useState<Partial<User>>({
     username: "",
     email: "",
@@ -167,7 +166,6 @@ const AccessTab = ({ loading = false, error, setError, onTabChange }: AccessTabP
     }
 
     try {
-      // Create Auth user + profile via Cloud Function and send reset link
       const res = await createPartnerUser({
         email: newUser.email!,
         name: newUser.username!,
@@ -224,7 +222,7 @@ const AccessTab = ({ loading = false, error, setError, onTabChange }: AccessTabP
   const handleUpdateUser = async () => {
     if (!editingUser) return;
     try {
-      // Persist role/permissions to custom claims via Cloud Function
+
       await updatePartnerClaims(
         editingUser.id,
         editingUser.role,
@@ -253,7 +251,6 @@ const AccessTab = ({ loading = false, error, setError, onTabChange }: AccessTabP
       user.id === userId ? { ...user, status: newStatus } : user
     ));
     try {
-      // Only toggle disabled when switching to active/inactive
       if (newStatus === 'active' || newStatus === 'inactive') {
         await disablePartnerUser(userId, newStatus === 'inactive');
       }
