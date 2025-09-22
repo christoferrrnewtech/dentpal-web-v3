@@ -17,12 +17,83 @@ import {
   Clock,
   AlertCircle,
   Lock,
-  Unlock
+  Unlock,
+  FileText,
+  FileSpreadsheet,
+  File
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { createPartnerUser, updatePartnerClaims, disablePartnerUser } from '@/services/partnerProvisioning';
+// Add dropdown UI for export actions
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+// Replace backend partner provisioning with direct web user service (Firestore + password email)
+import { createWebUser, updateWebUserAccess, setWebUserStatus, getWebUsers } from '@/services/webUserService';
+import type { WebUserProfile } from '@/types/webUser';
+// Export libs
+import * as XLSX from 'xlsx';
+import jsPDF from 'jspdf';
+import 'jspdf-autotable';
+// New: professional XLSX export with styling + logo
+import ExcelJS from 'exceljs';
+import { saveAs } from 'file-saver';
+import dentpalLogo from '@/assets/dentpal_logo.png';
+
+// Helper to normalize Firestore Timestamp/number/string to epoch millis
+function normalizeTimestamp(value: any): number | null {
+  try {
+    if (!value) return null;
+    if (typeof value === 'number') {
+      // if seconds, convert to ms
+      return value < 1e12 ? value * 1000 : value;
+    }
+    if (typeof value === 'string') {
+      const ms = Date.parse(value);
+      return isNaN(ms) ? null : ms;
+    }
+    if (value instanceof Date) {
+      return value.getTime();
+    }
+    if (typeof value.toDate === 'function') {
+      // Firestore Timestamp
+      return value.toDate().getTime();
+    }
+    if (typeof value.seconds === 'number') {
+      return value.seconds * 1000;
+    }
+  } catch {}
+  return null;
+}
+
+// Default permissions fallback by role
+const defaultPermissionsByRole: Record<'admin' | 'seller', {
+  dashboard: boolean;
+  bookings: boolean;
+  confirmation: boolean;
+  withdrawal: boolean;
+  access: boolean;
+  images: boolean;
+  users: boolean;
+}> = {
+  admin: {
+    dashboard: true,
+    bookings: true,
+    confirmation: true,
+    withdrawal: true,
+    access: true,
+    images: true,
+    users: true,
+  },
+  seller: {
+    dashboard: true,
+    bookings: true,
+    confirmation: false,
+    withdrawal: false,
+    access: false,
+    images: false,
+    users: false,
+  }
+};
 
 interface User {
   id: string;
@@ -160,6 +231,36 @@ const AccessTab = ({ loading = false, error, setError, onTabChange }: AccessTabP
     }
   };
 
+  // Load users from Firestore on mount
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const webUsers = await getWebUsers(); // fetch all roles
+        const mapped: User[] = webUsers.map((u: WebUserProfile) => {
+          const createdAtMs = normalizeTimestamp((u as any).createdAt);
+          const lastLoginMs = normalizeTimestamp((u as any).lastLogin);
+          const perms = (u as any).permissions || defaultPermissionsByRole[u.role] || defaultPermissionsByRole.seller;
+          return {
+            id: u.uid,
+            username: u.name,
+            email: u.email,
+            role: u.role,
+            status: u.isActive ? 'active' : 'inactive',
+            permissions: perms,
+            lastLogin: lastLoginMs ? new Date(lastLoginMs).toISOString() : undefined,
+            createdAt: createdAtMs ? new Date(createdAtMs).toISOString() : new Date().toISOString(),
+          };
+        });
+        setUsers(mapped);
+      } catch (e: any) {
+        console.error('Failed to load web users:', e);
+        setError?.(e.message || 'Failed to load users');
+      }
+    };
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const handleAddUser = async () => {
     if (!newUser.username || !newUser.email) {
       setError?.("Please fill in all required fields");
@@ -167,16 +268,24 @@ const AccessTab = ({ loading = false, error, setError, onTabChange }: AccessTabP
     }
 
     try {
-      // Create Auth user + profile via Cloud Function and send reset link
-      const res = await createPartnerUser({
-        email: newUser.email!,
-        name: newUser.username!,
-        role: (newUser.role as 'admin' | 'seller') || 'seller',
-        permissions: newUser.permissions as any
-      });
+      // Create Auth user + profile in Firestore and send password setup link via email
+      const created = await createWebUser(
+        newUser.email!,
+        newUser.username!,
+        (newUser.role as 'admin' | 'seller') || 'seller',
+        (newUser.permissions as any) || {
+          dashboard: true,
+          bookings: true,
+          confirmation: false,
+          withdrawal: false,
+          access: false,
+          images: false,
+          users: false
+        }
+      );
 
       const user: User = {
-        id: res.uid,
+        id: created.uid,
         username: newUser.username!,
         email: newUser.email!,
         role: (newUser.role as 'admin' | 'seller') || 'seller',
@@ -194,6 +303,26 @@ const AccessTab = ({ loading = false, error, setError, onTabChange }: AccessTabP
       };
 
       setUsers(prev => [...prev, user]);
+      // Optionally refresh from Firestore to reflect authoritative data
+      try {
+        const webUsers = await getWebUsers();
+        const mapped: User[] = webUsers.map((u: WebUserProfile) => {
+          const createdAtMs = normalizeTimestamp((u as any).createdAt);
+          const lastLoginMs = normalizeTimestamp((u as any).lastLogin);
+          const perms = (u as any).permissions || defaultPermissionsByRole[u.role] || defaultPermissionsByRole.seller;
+          return {
+            id: u.uid,
+            username: u.name,
+            email: u.email,
+            role: u.role,
+            status: u.isActive ? 'active' : 'inactive',
+            permissions: perms,
+            lastLogin: lastLoginMs ? new Date(lastLoginMs).toISOString() : undefined,
+            createdAt: createdAtMs ? new Date(createdAtMs).toISOString() : new Date().toISOString(),
+          };
+        });
+        setUsers(mapped);
+      } catch {}
       setNewUser({
         username: "",
         email: "",
@@ -224,16 +353,36 @@ const AccessTab = ({ loading = false, error, setError, onTabChange }: AccessTabP
   const handleUpdateUser = async () => {
     if (!editingUser) return;
     try {
-      // Persist role/permissions to custom claims via Cloud Function
-      await updatePartnerClaims(
+      // Update role and permissions in Firestore (no RBAC enforcement yet)
+      await updateWebUserAccess(
         editingUser.id,
         editingUser.role,
         editingUser.permissions as any
       );
 
-      setUsers(prev => prev.map(user => 
+      setUsers(prev => prev.map((user) => (
         user.id === editingUser.id ? editingUser : user
-      ));
+      )));
+      // Refresh list from Firestore to reflect authoritative data
+      try {
+        const webUsers = await getWebUsers();
+        const mapped: User[] = webUsers.map((u: WebUserProfile) => {
+          const createdAtMs = normalizeTimestamp((u as any).createdAt);
+          const lastLoginMs = normalizeTimestamp((u as any).lastLogin);
+          const perms = (u as any).permissions || defaultPermissionsByRole[u.role] || defaultPermissionsByRole.seller;
+          return {
+            id: u.uid,
+            username: u.name,
+            email: u.email,
+            role: u.role,
+            status: u.isActive ? 'active' : 'inactive',
+            permissions: perms,
+            lastLogin: lastLoginMs ? new Date(lastLoginMs).toISOString() : undefined,
+            createdAt: createdAtMs ? new Date(createdAtMs).toISOString() : new Date().toISOString(),
+          };
+        });
+        setUsers(mapped);
+      } catch {}
       setEditingUser(null);
       setShowAddForm(false);
       setError?.(null);
@@ -249,25 +398,45 @@ const AccessTab = ({ loading = false, error, setError, onTabChange }: AccessTabP
   };
 
   const handleStatusChange = async (userId: string, newStatus: 'active' | 'inactive' | 'pending') => {
-    setUsers(prev => prev.map(user => 
+    setUsers(prev => prev.map((user) => (
       user.id === userId ? { ...user, status: newStatus } : user
-    ));
+    )));
     try {
-      // Only toggle disabled when switching to active/inactive
+      // Persist active/inactive to Firestore boolean flag
       if (newStatus === 'active' || newStatus === 'inactive') {
-        await disablePartnerUser(userId, newStatus === 'inactive');
+        await setWebUserStatus(userId, newStatus === 'active');
       }
+      // Refresh list to reflect persisted status
+      try {
+        const webUsers = await getWebUsers();
+        const mapped: User[] = webUsers.map((u: WebUserProfile) => {
+          const createdAtMs = normalizeTimestamp((u as any).createdAt);
+          const lastLoginMs = normalizeTimestamp((u as any).lastLogin);
+          const perms = (u as any).permissions || defaultPermissionsByRole[u.role] || defaultPermissionsByRole.seller;
+          return {
+            id: u.uid,
+            username: u.name,
+            email: u.email,
+            role: u.role,
+            status: u.isActive ? 'active' : 'inactive',
+            permissions: perms,
+            lastLogin: lastLoginMs ? new Date(lastLoginMs).toISOString() : undefined,
+            createdAt: createdAtMs ? new Date(createdAtMs).toISOString() : new Date().toISOString(),
+          };
+        });
+        setUsers(mapped);
+      } catch {}
     } catch (e: any) {
       setError?.(e.message || 'Failed to update status');
     }
   };
 
   const handlePermissionChange = (userId: string, permission: keyof User['permissions'], value: boolean) => {
-    setUsers(prev => prev.map(user => 
+    setUsers(prev => prev.map((user) => (
       user.id === userId 
         ? { ...user, permissions: { ...user.permissions, [permission]: value } }
         : user
-    ));
+    )));
   };
 
   const togglePasswordVisibility = (userId: string) => {
@@ -277,19 +446,198 @@ const AccessTab = ({ loading = false, error, setError, onTabChange }: AccessTabP
     }));
   };
 
-  const handleExport = () => {
-    // TODO: Implement export functionality
-    console.log("Exporting user data...");
+  const formatUserForExport = (u: User) => ({
+    Username: u.username,
+    Email: u.email,
+    Role: u.role,
+    Status: u.status,
+    Permissions: Object.entries(u.permissions || {})
+      .filter(([, v]) => !!v)
+      .map(([k]) => k)
+      .join(', '),
+    CreatedAt: u.createdAt,
+    LastLogin: u.lastLogin || ''
+  });
+
+  // Helper to convert image URL to base64 data URL (for PDF/ExcelJS)
+  const loadImageDataUrl = async (url: string): Promise<string> => {
+    const res = await fetch(url);
+    const blob = await res.blob();
+    return await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  };
+
+  const exportToPDF = async (list: User[], title: string) => {
+    const data = list.map(formatUserForExport);
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' });
+
+    // Header with logo and title
+    try {
+      const logoDataUrl = await loadImageDataUrl(dentpalLogo);
+      doc.addImage(logoDataUrl, 'PNG', 40, 24, 100, 28);
+    } catch {}
+
+    doc.setFontSize(18);
+    doc.setTextColor(34, 139, 94); // DentPal brand-ish
+    doc.text(`${title}`, 160, 44);
+    doc.setFontSize(10);
+    doc.setTextColor(100);
+    doc.text(`Exported: ${new Date().toLocaleString()}`, 160, 60);
+
+    // Table
+    (doc as any).autoTable({
+      head: [["Username", "Email", "Role", "Status", "Permissions", "Created At", "Last Login"]],
+      body: data.map(d => [d.Username, d.Email, d.Role, d.Status, d.Permissions, d.CreatedAt, d.LastLogin]),
+      styles: { fontSize: 9, cellPadding: 6 },
+      headStyles: { fillColor: [16, 185, 129], textColor: 255 },
+      bodyStyles: { textColor: [55, 65, 81] },
+      theme: 'grid',
+      startY: 90,
+      didDrawPage: (data: any) => {
+        // Footer with page numbers
+        const ps: any = doc.internal.pageSize as any;
+        const pageHeight = ps.height || (ps.getHeight && ps.getHeight());
+        const pageWidth = ps.width || (ps.getWidth && ps.getWidth());
+        const page = (doc as any).getNumberOfPages ? (doc as any).getNumberOfPages() : data.pageNumber;
+        doc.setFontSize(9);
+        doc.setTextColor(120);
+        doc.text(`DentPal • ${new Date().getFullYear()}`, 40, (pageHeight || 792) - 24);
+        doc.text(`Page ${page}`, (pageWidth || 1120) - 80, (pageHeight || 792) - 24);
+      }
+    });
+
+    doc.save(`${title.replace(/\s+/g, '_').toLowerCase()}_${Date.now()}.pdf`);
+  };
+
+  const exportToCSV = (list: User[], title: string) => {
+    const data = list.map(formatUserForExport);
+    const ws = XLSX.utils.json_to_sheet(data);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, title);
+    XLSX.writeFile(wb, `${title.replace(/\s+/g, '_').toLowerCase()}_${Date.now()}.csv`, { bookType: 'csv' });
+  };
+
+  const exportToExcel = async (list: User[], title: string) => {
+    const data = list.map(formatUserForExport);
+
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('Sheet 1', {
+      properties: { defaultRowHeight: 22 },
+      pageSetup: { paperSize: 9, orientation: 'landscape' }
+    });
+
+    // Add logo
+    try {
+      const logoDataUrl = await loadImageDataUrl(dentpalLogo);
+      const imageId = workbook.addImage({ base64: logoDataUrl, extension: 'png' });
+      sheet.addImage(imageId, {
+        tl: { col: 0, row: 0 }, // top-left at A1
+        ext: { width: 140, height: 40 }
+      });
+    } catch {}
+
+    // Title row
+    const titleRowIndex = 3;
+    sheet.mergeCells(titleRowIndex, 2, titleRowIndex, 7); // merge B3:G3
+    const titleCell = sheet.getCell(titleRowIndex, 2);
+    titleCell.value = `${title}`;
+    titleCell.font = { name: 'Inter', bold: true, size: 18, color: { argb: 'FF065F46' } };
+
+    // Subtitle row (exported at)
+    const subRowIndex = 4;
+    sheet.mergeCells(subRowIndex, 2, subRowIndex, 7);
+    const subCell = sheet.getCell(subRowIndex, 2);
+    subCell.value = `Exported: ${new Date().toLocaleString()}`;
+    subCell.font = { size: 10, color: { argb: 'FF6B7280' } };
+
+    // Header row
+    const headerRowIndex = 6;
+    const headers = ["Username", "Email", "Role", "Status", "Permissions", "Created At", "Last Login"];
+    sheet.getRow(headerRowIndex).values = headers;
+    sheet.getRow(headerRowIndex).font = { name: 'Inter', bold: true, color: { argb: 'FFFFFFFF' } } as any;
+    sheet.getRow(headerRowIndex).alignment = { vertical: 'middle' as const, horizontal: 'center' as const };
+    sheet.getRow(headerRowIndex).height = 28;
+
+    // Header styling and column widths
+    const columnWidths = [22, 30, 12, 14, 40, 22, 22];
+    headers.forEach((_, i) => {
+      const cell = sheet.getRow(headerRowIndex).getCell(i + 1);
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF10B981' } } as any;
+      cell.border = {
+        top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' }
+      };
+      sheet.getColumn(i + 1).width = columnWidths[i];
+    });
+
+    // Data rows
+    const startRow = headerRowIndex + 1;
+    data.forEach((d, idx) => {
+      const rowIndex = startRow + idx;
+      const row = sheet.getRow(rowIndex);
+      row.values = [d.Username, d.Email, d.Role, d.Status, d.Permissions, d.CreatedAt, d.LastLogin];
+      row.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true } as any;
+      row.height = 22;
+      // Zebra striping
+      const isAlt = idx % 2 === 0;
+      row.eachCell((cell) => {
+        cell.border = {
+          top: { style: 'hair' }, left: { style: 'hair' }, bottom: { style: 'hair' }, right: { style: 'hair' }
+        };
+        if (isAlt) {
+          (cell as any).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF0FDF4' } };
+        }
+      });
+    });
+
+    // Freeze header
+    sheet.views = [{ state: 'frozen', ySplit: headerRowIndex }];
+
+    // Footer note
+    const footerRow = sheet.addRow([`DentPal • © ${new Date().getFullYear()}`]);
+    footerRow.getCell(1).font = { italic: true, size: 9, color: { argb: 'FF6B7280' } } as any;
+
+    const buffer = await workbook.xlsx.writeBuffer();
+    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    saveAs(blob, `${title.replace(/\s+/g, '_').toLowerCase()}_${Date.now()}.xlsx`);
+  };
+
+  const exportUsers = async (list: User[], type: 'csv' | 'xlsx' | 'pdf', title: string) => {
+    if (type === 'pdf') return await exportToPDF(list, title);
+    if (type === 'xlsx') return await exportToExcel(list, title);
+    return exportToCSV(list, title);
   };
 
   const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
+    try {
+      const ms = normalizeTimestamp(dateString) ?? Date.parse(dateString);
+      if (!ms || isNaN(ms)) return dateString;
+      return new Date(ms).toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+    } catch {
+      return dateString;
+    }
+  };
+
+  const handleExport = () => {
+    const list = activeSection === 'admin' ? adminUsers : activeSection === 'seller' ? sellerUsers : filteredUsers;
+    const title = activeSection === 'admin' ? 'Admin Users' : activeSection === 'seller' ? 'Seller Users' : 'Users';
+    exportUsers(list, 'xlsx', title);
+  };
+
+  // New: handler that receives a type from dropdowns
+  const handleExportAs = async (type: 'csv' | 'xlsx' | 'pdf', listOverride?: User[], titleOverride?: string) => {
+    const list = listOverride || (activeSection === 'admin' ? adminUsers : activeSection === 'seller' ? sellerUsers : filteredUsers);
+    const title = titleOverride || (activeSection === 'admin' ? 'Admin Users' : activeSection === 'seller' ? 'Seller Users' : 'Users');
+    await exportUsers(list, type, title);
   };
 
   const renderUserForm = () => {
@@ -465,9 +813,12 @@ const AccessTab = ({ loading = false, error, setError, onTabChange }: AccessTabP
       <div className="p-6 border-b border-gray-200">
         <div className="flex items-center justify-between">
           <h3 className="text-xl font-semibold text-gray-900">{title}</h3>
-          <Badge variant="secondary" className="bg-green-50 text-green-700">
-            {userList.length} users
-          </Badge>
+          <div className="flex items-center gap-2">
+            <Badge variant="secondary" className="bg-green-50 text-green-700">
+              {userList.length} users
+            </Badge>
+            {/* Removed redundant per-list Export dropdown */}
+          </div>
         </div>
       </div>
 
@@ -519,7 +870,7 @@ const AccessTab = ({ loading = false, error, setError, onTabChange }: AccessTabP
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="flex flex-wrap gap-1">
-                        {Object.entries(user.permissions).map(([permission, enabled]) => 
+                        {Object.entries(user.permissions || {}).map(([permission, enabled]) => 
                           enabled ? (
                             <Badge 
                               key={permission} 
@@ -691,14 +1042,29 @@ const AccessTab = ({ loading = false, error, setError, onTabChange }: AccessTabP
                   <option value="pending">Pending</option>
                 </select>
               </div>
-              <Button
-                variant="outline"
-                onClick={handleExport}
-                className="flex items-center space-x-2"
-              >
-                <Download className="w-4 h-4" />
-                <span>Export</span>
-              </Button>
+              {/* Export dropdown in toolbar */}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" className="flex items-center space-x-2">
+                    <Download className="w-4 h-4" />
+                    <span>Export</span>
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem onClick={() => handleExportAs('csv')}>
+                    <FileText className="w-4 h-4 mr-2" />
+                    Export as CSV
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => handleExportAs('xlsx')}>
+                    <FileSpreadsheet className="w-4 h-4 mr-2" />
+                    Export as Excel (XLSX)
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => handleExportAs('pdf')}>
+                    <File className="w-4 h-4 mr-2" />
+                    Export as PDF
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
           </div>
         </div>

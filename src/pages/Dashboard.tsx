@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Sidebar from "@/components/dashboard/Sidebar";
 import DashboardHeader from "@/components/dashboard/DashboardHeader";
 import StatsCard from "@/components/dashboard/StatsCard";
@@ -12,6 +12,8 @@ import ImagesTab from "@/components/images/ImagesTab";
 import UsersTab from "@/components/users/UsersTab";
 import { Order } from "@/types/order";
 import { DollarSign, Users, ShoppingCart, TrendingUp } from "lucide-react";
+// Add permission-aware auth hook
+import { useAuth } from "@/hooks/use-auth";
 
 interface DashboardProps {
   user: { name?: string; email: string };
@@ -20,6 +22,30 @@ interface DashboardProps {
 
 const Dashboard = ({ user, onLogout }: DashboardProps) => {
   const [activeItem, setActiveItem] = useState("dashboard");
+  const { hasPermission, loading: authLoading } = useAuth();
+
+  // Map page ids to permission keys stored in Firestore
+  const permissionByMenuId: Record<string, keyof ReturnType<typeof useAuth>["permissions"] | 'dashboard'> = {
+    dashboard: "dashboard",
+    booking: "bookings",
+    confirmation: "confirmation",
+    withdrawal: "withdrawal",
+    access: "access",
+    images: "images",
+    users: "users",
+  } as any;
+
+  const isAllowed = (itemId: string) => hasPermission((permissionByMenuId[itemId] || 'dashboard') as any);
+
+  // Ensure active tab is permitted; otherwise jump to first allowed
+  useEffect(() => {
+    if (authLoading) return;
+    if (!isAllowed(activeItem)) {
+      const order = ["dashboard", "booking", "confirmation", "withdrawal", "access", "images", "users"];
+      const firstAllowed = order.find((id) => isAllowed(id));
+      if (firstAllowed) setActiveItem(firstAllowed);
+    }
+  }, [authLoading, activeItem]);
 
   // Mock data for confirmation page
   const [confirmationOrders, setConfirmationOrders] = useState<Order[]>([
@@ -248,6 +274,7 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
   const getPageContent = () => {
     switch (activeItem) {
       case "dashboard":
+        if (!isAllowed("dashboard")) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
         return (
           <div className="space-y-8">
             {/* Top Section - Metrics Cards and Filters */}
@@ -371,8 +398,10 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
           </div>
         );
       case "booking":
+        if (!isAllowed("booking")) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
         return <Booking />;
       case "confirmation":
+        if (!isAllowed("confirmation")) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
         return (
           <ConfirmationTab 
             orders={confirmationOrders}
@@ -386,6 +415,7 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
           />
         );
       case "withdrawal":
+        if (!isAllowed("withdrawal")) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
         return (
           <WithdrawalTab 
             loading={loading}
@@ -398,6 +428,7 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
           />
         );
       case "access":
+        if (!isAllowed("access")) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
         return (
           <AccessTab 
             loading={loading}
@@ -407,6 +438,7 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
           />
         );
       case "images":
+        if (!isAllowed("images")) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
         return (
           <ImagesTab 
             loading={loading}
@@ -416,6 +448,7 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
           />
         );
       case "users":
+        if (!isAllowed("users")) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
         return (
           <UsersTab 
             onResetRewardPoints={handleResetRewardPoints}

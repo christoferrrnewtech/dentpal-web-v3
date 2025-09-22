@@ -13,6 +13,7 @@ import {
   X
 } from "lucide-react";
 import dentalLogo from "@/assets/dentpal_logo.png";
+import { useAuth } from "@/hooks/use-auth";
 
 interface SidebarProps {
   activeItem: string;
@@ -32,6 +33,24 @@ const menuItems = [
 
 const Sidebar = ({ activeItem, onItemClick, onLogout }: SidebarProps) => {
   const [isCollapsed, setIsCollapsed] = useState(false);
+  const { hasPermission, loading } = useAuth();
+
+  const permissionByMenuId: Record<string, string> = {
+    dashboard: "dashboard",
+    booking: "bookings",
+    confirmation: "confirmation",
+    withdrawal: "withdrawal",
+    access: "access",
+    images: "images",
+    users: "users",
+  };
+
+  const visibleMenuItems = loading
+    ? []
+    : menuItems.filter((item) => {
+        const key = permissionByMenuId[item.id] || "dashboard";
+        return hasPermission(key as any);
+      });
 
   return (
     <div className={`bg-card border-r border-border flex flex-col transition-all duration-300 ${
@@ -82,7 +101,7 @@ const Sidebar = ({ activeItem, onItemClick, onLogout }: SidebarProps) => {
       {/* Navigation */}
       <div className="flex-1 p-4">
         <nav className="space-y-2">
-          {menuItems.map((item) => {
+          {visibleMenuItems.map((item) => {
             const Icon = item.icon;
             const isActive = activeItem === item.id;
             
