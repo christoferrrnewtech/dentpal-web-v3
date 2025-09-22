@@ -82,7 +82,6 @@ This application follows a **separated frontend-backend architecture**:
 
 ### Backend API (`/backend` directory)
 
-- **Framework**: Node.js with Express.js
 - **Language**: TypeScript
 - **Database**: Firebase Firestore
 - **Authentication**: Firebase Admin SDK
