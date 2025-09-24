@@ -10,6 +10,7 @@ import WithdrawalTab from "@/components/withdrawal/WithdrawalTab";
 import AccessTab from "@/components/access/AccessTab";
 import ImagesTab from "@/components/images/ImagesTab";
 import UsersTab from "@/components/users/UsersTab";
+import SellerOrdersTab from '@/components/orders/SellerOrdersTab';
 import { Order } from "@/types/order";
 import { DollarSign, Users, ShoppingCart, TrendingUp } from "lucide-react";
 // Add permission-aware auth hook
@@ -33,6 +34,7 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
     access: "access",
     images: "images",
     users: "users",
+    'seller-orders': 'bookings'
   } as any;
 
   const isAllowed = (itemId: string) => hasPermission((permissionByMenuId[itemId] || 'dashboard') as any);
@@ -455,6 +457,9 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
             onExport={handleExportUsers}
           />
         );
+      case 'seller-orders':
+        if (!isAllowed('booking')) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
+        return <SellerOrdersTab orders={confirmationOrders} loading={loading} error={error} />;
       default:
         return null;
     }
@@ -466,6 +471,8 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
         return "Dashboard";
       case "booking":
         return "Booking";
+      case 'seller-orders':
+        return 'Seller Orders';
       case "confirmation":
         return "Confirmation";
       case "withdrawal":
@@ -487,6 +494,8 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
         return `Welcome back, ${user.name || user.email}`;
       case "booking":
         return "Manage dental appointments and bookings";
+      case 'seller-orders':
+        return 'Manage seller order statuses and actions';
       case "confirmation":
         return "Review and confirm patient appointments";
       case "withdrawal":

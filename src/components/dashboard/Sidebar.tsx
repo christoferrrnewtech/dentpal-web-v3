@@ -24,6 +24,7 @@ interface SidebarProps {
 const menuItems = [
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
   { id: "booking", label: "Booking", icon: Calendar },
+  { id: 'seller-orders', label: 'Seller Orders', icon: Calendar },
   { id: "confirmation", label: "Confirmation", icon: CheckCircle },
   { id: "withdrawal", label: "Withdrawal", icon: CreditCard },
   { id: "access", label: "Access", icon: Key },
@@ -38,6 +39,7 @@ const Sidebar = ({ activeItem, onItemClick, onLogout }: SidebarProps) => {
   const permissionByMenuId: Record<string, string> = {
     dashboard: "dashboard",
     booking: "bookings",
+    'seller-orders': 'bookings',
     confirmation: "confirmation",
     withdrawal: "withdrawal",
     access: "access",
