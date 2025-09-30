@@ -17,6 +17,8 @@ export const PERMISSIONS_BY_ROLE: Record<WebUserRole, WebUserPermissions> = {
     access: true,
     images: true,
     users: true,
+    inventory: true,
+    'seller-orders': true,
   },
   seller: {
     dashboard: true,
@@ -26,6 +28,8 @@ export const PERMISSIONS_BY_ROLE: Record<WebUserRole, WebUserPermissions> = {
     access: false,
     images: false,
     users: false,
+    inventory: false,
+    'seller-orders': true,
   }
 };
 
@@ -42,9 +46,7 @@ interface UseAuthResult {
   error: string | null;
 }
 
-/**
- * A hook to check if the current user has the specified permission
- */
+
 export function useAuth(): UseAuthResult {
   const [role, setRole] = useState<WebUserRole | null>(null);
   const [permissions, setPermissions] = useState<WebUserPermissions | null>(null);
@@ -53,11 +55,9 @@ export function useAuth(): UseAuthResult {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    // Listen for auth state changes
     const unsubscribe = auth.onAuthStateChanged(async (user) => {
       try {
         if (!user) {
-          // Not logged in
           setRole(null);
           setPermissions(null);
           setUid(null);
@@ -65,18 +65,15 @@ export function useAuth(): UseAuthResult {
           return;
         }
 
-        // Set uid early so we know the user is authenticated
         setUid(user.uid);
         
-        // Since we don't have Cloud Functions yet to set custom claims,
-        // we'll read directly from the web_users collection
+
         const userDoc = await getDoc(doc(db, 'web_users', user.uid));
         
         if (userDoc.exists()) {
           const userData = userDoc.data();
           
           if (userData.isActive === false) {
-            // User is disabled
             setRole(null);
             setPermissions(null);
             setError('Your account has been disabled');
@@ -85,7 +82,6 @@ export function useAuth(): UseAuthResult {
             setPermissions(userData.permissions || null);
           }
         } else {
-          // No role found - this user might not be properly set up
           console.warn(`No web_users document found for uid ${user.uid}`);
           setRole(null);
           setPermissions(null);
@@ -108,12 +104,10 @@ export function useAuth(): UseAuthResult {
   const hasPermission = (permission: Permission): boolean => {
     if (!role) return false;
     
-    // If user has explicit permissions, check those first
     if (permissions && permission in permissions) {
       return permissions[permission];
     }
     
-    // Otherwise use the role-based permissions as fallback
     return PERMISSIONS_BY_ROLE[role][permission] || false;
   };
 

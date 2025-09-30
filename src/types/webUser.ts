@@ -8,6 +8,8 @@ export type WebUserPermissions = {
   access: boolean;
   images: boolean;
   users: boolean;
+  inventory: boolean;
+  'seller-orders': boolean;
 };
 
 export interface WebUserProfile {

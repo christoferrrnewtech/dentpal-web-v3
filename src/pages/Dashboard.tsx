@@ -10,7 +10,8 @@ import WithdrawalTab from "@/components/withdrawal/WithdrawalTab";
 import AccessTab from "@/components/access/AccessTab";
 import ImagesTab from "@/components/images/ImagesTab";
 import UsersTab from "@/components/users/UsersTab";
-import SellerOrdersTab from '@/components/orders/SellerOrdersTab';
+import OrderTab from '@/components/orders/SellerOrdersTab';
+import InventoryTab from '@/components/inventory/InventoryTab';
 import { Order } from "@/types/order";
 import { DollarSign, Users, ShoppingCart, TrendingUp } from "lucide-react";
 // Add permission-aware auth hook
@@ -34,7 +35,8 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
     access: "access",
     images: "images",
     users: "users",
-    'seller-orders': 'bookings'
+    'seller-orders': 'bookings',
+    inventory: 'dashboard'
   } as any;
 
   const isAllowed = (itemId: string) => hasPermission((permissionByMenuId[itemId] || 'dashboard') as any);
@@ -459,7 +461,10 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
         );
       case 'seller-orders':
         if (!isAllowed('booking')) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
-        return <SellerOrdersTab orders={confirmationOrders} loading={loading} error={error} />;
+        return <OrderTab orders={confirmationOrders} loading={loading} error={error} />;
+      case 'inventory':
+        if (!isAllowed('inventory')) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
+        return <InventoryTab />;
       default:
         return null;
     }
@@ -483,6 +488,8 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
         return "Images";
       case "users":
         return "Users";
+      case "inventory":
+        return "Inventory";
       default:
         return "Dashboard";
     }
@@ -506,6 +513,8 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
         return "Manage dental images, x-rays, and patient photos";
       case "users":
         return "Manage patients, staff, and user accounts";
+      case "inventory":
+        return "Manage clinic stock levels and adjustments";
       default:
         return "";
     }

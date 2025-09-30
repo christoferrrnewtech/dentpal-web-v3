@@ -13,7 +13,8 @@ import {
   X
 } from "lucide-react";
 import dentalLogo from "@/assets/dentpal_logo.png";
-import { useAuth } from "@/hooks/use-auth";
+import { useAuth } from "@/hooks/useAuth";
+import type { WebUserPermissions } from "@/types/webUser";
 
 interface SidebarProps {
   activeItem: string;
@@ -21,40 +22,37 @@ interface SidebarProps {
   onLogout: () => void;
 }
 
-const menuItems = [
-  { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { id: "booking", label: "Booking", icon: Calendar },
-  { id: 'seller-orders', label: 'Seller Orders', icon: Calendar },
-  { id: "inventory", label: "Inventory", icon: LayoutDashboard },
-  { id: "confirmation", label: "Confirmation", icon: CheckCircle },
-  { id: "withdrawal", label: "Withdrawal", icon: CreditCard },
-  { id: "access", label: "Access", icon: Key },
-  { id: "images", label: "Images", icon: Images },
-  { id: "users", label: "Users", icon: Users },
+const menuItems: Array<{
+  id: string;
+  label: string;
+  icon: any;
+  permission: keyof WebUserPermissions;
+}> = [
+  { id: "dashboard", label: "Dashboard", icon: LayoutDashboard, permission: "dashboard" },
+  { id: "booking", label: "Booking", icon: Calendar, permission: "bookings" },
+  { id: "confirmation", label: "Confirmation", icon: CheckCircle, permission: "confirmation" },
+  { id: "withdrawal", label: "Withdrawal", icon: CreditCard, permission: "withdrawal" },
+  { id: "access", label: "Access", icon: Key, permission: "access" },
+  { id: "images", label: "Images", icon: Images, permission: "images" },
+  { id: "users", label: "Users", icon: Users, permission: "users" },
 ];
 
 const Sidebar = ({ activeItem, onItemClick, onLogout }: SidebarProps) => {
   const [isCollapsed, setIsCollapsed] = useState(false);
-  const { hasPermission, loading } = useAuth();
+  const { hasPermission, profile, loading } = useAuth();
 
-  const permissionByMenuId: Record<string, string> = {
-    dashboard: "dashboard",
-    booking: "bookings",
-    'seller-orders': 'bookings',
-    inventory: 'dashboard',
-    confirmation: "confirmation",
-    withdrawal: "withdrawal",
-    access: "access",
-    images: "images",
-    users: "users",
-  };
-
-  const visibleMenuItems = loading
-    ? []
-    : menuItems.filter((item) => {
-        const key = permissionByMenuId[item.id] || "dashboard";
-        return hasPermission(key as any);
-      });
+  // Show loading state if auth is still loading
+  if (loading) {
+    return (
+      <div className={`bg-card border-r border-border flex flex-col transition-all duration-300 ${
+        isCollapsed ? "w-16" : "w-64"
+      }`}>
+        <div className="p-4 flex items-center justify-center">
+          <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-teal-600"></div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className={`bg-card border-r border-border flex flex-col transition-all duration-300 ${
@@ -105,25 +103,28 @@ const Sidebar = ({ activeItem, onItemClick, onLogout }: SidebarProps) => {
       {/* Navigation */}
       <div className="flex-1 p-4">
         <nav className="space-y-2">
-          {visibleMenuItems.map((item) => {
-            const Icon = item.icon;
-            const isActive = activeItem === item.id;
-            
-            return (
-              <button
-                key={item.id}
-                onClick={() => onItemClick(item.id)}
-                className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition-all duration-200 ${
-                  isActive
-                    ? "bg-primary text-primary-foreground shadow-md"
-                    : "text-muted-foreground hover:text-foreground hover:bg-accent"
-                }`}
-              >
-                <Icon className="w-5 h-5 flex-shrink-0" />
-                {!isCollapsed && <span className="font-medium">{item.label}</span>}
-              </button>
-            );
-          })}
+          {menuItems
+            // Filter menu items based on user permissions
+            .filter(item => hasPermission(item.permission))
+            .map((item) => {
+              const Icon = item.icon;
+              const isActive = activeItem === item.id;
+              
+              return (
+                <button
+                  key={item.id}
+                  onClick={() => onItemClick(item.id)}
+                  className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition-all duration-200 ${
+                    isActive
+                      ? "bg-primary text-primary-foreground shadow-md"
+                      : "text-muted-foreground hover:text-foreground hover:bg-accent"
+                  }`}
+                >
+                  <Icon className="w-5 h-5 flex-shrink-0" />
+                  {!isCollapsed && <span className="font-medium">{item.label}</span>}
+                </button>
+              );
+            })}
         </nav>
       </div>
 

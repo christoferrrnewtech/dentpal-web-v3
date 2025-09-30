@@ -66,34 +66,17 @@ function normalizeTimestamp(value: any): number | null {
 }
 
 // Default permissions fallback by role
-const defaultPermissionsByRole: Record<'admin' | 'seller', {
-  dashboard: boolean;
-  bookings: boolean;
-  confirmation: boolean;
-  withdrawal: boolean;
-  access: boolean;
-  images: boolean;
-  users: boolean;
-}> = {
-  admin: {
+  const defaultPermissionsByRole = (role: 'admin' | 'seller') => ({
     dashboard: true,
     bookings: true,
-    confirmation: true,
-    withdrawal: true,
-    access: true,
-    images: true,
-    users: true,
-  },
-  seller: {
-    dashboard: true,
-    bookings: true,
-    confirmation: false,
-    withdrawal: false,
-    access: false,
-    images: false,
-    users: false,
-  }
-};
+    confirmation: role === 'admin',
+    withdrawal: role === 'admin',
+    access: role === 'admin',
+    images: role === 'admin',
+    users: role === 'admin',
+    inventory: role === 'admin',
+    'seller-orders': true
+  });
 
 interface User {
   id: string;
@@ -110,6 +93,8 @@ interface User {
     access: boolean;
     images: boolean;
     users: boolean;
+    inventory: boolean;
+    'seller-orders': boolean;
   };
   lastLogin?: string;
   createdAt: string;
@@ -138,7 +123,9 @@ const AccessTab = ({ loading = false, error, setError, onTabChange }: AccessTabP
         withdrawal: true,
         access: true,
         images: true,
-        users: true
+        users: true,
+        inventory: true,
+        'seller-orders': true
       },
       lastLogin: "2024-09-09T10:30:00Z",
       createdAt: "2024-01-15T00:00:00Z"
@@ -156,7 +143,9 @@ const AccessTab = ({ loading = false, error, setError, onTabChange }: AccessTabP
         withdrawal: false,
         access: false,
         images: true,
-        users: false
+        users: false,
+        inventory: false,
+        'seller-orders': true
       },
       lastLogin: "2024-09-09T09:15:00Z",
       createdAt: "2024-02-20T00:00:00Z"
@@ -174,7 +163,9 @@ const AccessTab = ({ loading = false, error, setError, onTabChange }: AccessTabP
         withdrawal: false,
         access: false,
         images: false,
-        users: false
+        users: false,
+        inventory: false,
+        'seller-orders': true
       },
       createdAt: "2024-09-08T00:00:00Z"
     }
@@ -192,15 +183,7 @@ const AccessTab = ({ loading = false, error, setError, onTabChange }: AccessTabP
     email: "",
     role: "seller",
     status: "pending",
-    permissions: {
-      dashboard: true,
-      bookings: true,
-      confirmation: false,
-      withdrawal: false,
-      access: false,
-      images: false,
-      users: false
-    }
+    permissions: defaultPermissionsByRole('seller')
   });
 
   const filteredUsers = users.filter(user => {
@@ -239,7 +222,7 @@ const AccessTab = ({ loading = false, error, setError, onTabChange }: AccessTabP
         const mapped: User[] = webUsers.map((u: WebUserProfile) => {
           const createdAtMs = normalizeTimestamp((u as any).createdAt);
           const lastLoginMs = normalizeTimestamp((u as any).lastLogin);
-          const perms = (u as any).permissions || defaultPermissionsByRole[u.role] || defaultPermissionsByRole.seller;
+          const perms = (u as any).permissions || defaultPermissionsByRole(u.role) || defaultPermissionsByRole('seller');
           return {
             id: u.uid,
             username: u.name,
@@ -290,15 +273,7 @@ const AccessTab = ({ loading = false, error, setError, onTabChange }: AccessTabP
         email: newUser.email!,
         role: (newUser.role as 'admin' | 'seller') || 'seller',
         status: 'pending',
-        permissions: newUser.permissions || {
-          dashboard: true,
-          bookings: true,
-          confirmation: false,
-          withdrawal: false,
-          access: false,
-          images: false,
-          users: false
-        },
+        permissions: newUser.permissions || defaultPermissionsByRole((newUser.role as 'admin' | 'seller') || 'seller'),
         createdAt: new Date().toISOString()
       };
 
@@ -309,7 +284,7 @@ const AccessTab = ({ loading = false, error, setError, onTabChange }: AccessTabP
         const mapped: User[] = webUsers.map((u: WebUserProfile) => {
           const createdAtMs = normalizeTimestamp((u as any).createdAt);
           const lastLoginMs = normalizeTimestamp((u as any).lastLogin);
-          const perms = (u as any).permissions || defaultPermissionsByRole[u.role] || defaultPermissionsByRole.seller;
+          const perms = (u as any).permissions || defaultPermissionsByRole(u.role) || defaultPermissionsByRole('seller');
           return {
             id: u.uid,
             username: u.name,
@@ -328,15 +303,7 @@ const AccessTab = ({ loading = false, error, setError, onTabChange }: AccessTabP
         email: "",
         role: "seller",
         status: "pending",
-        permissions: {
-          dashboard: true,
-          bookings: true,
-          confirmation: false,
-          withdrawal: false,
-          access: false,
-          images: false,
-          users: false
-        }
+        permissions: defaultPermissionsByRole('seller')
       });
       setShowAddForm(false);
       setError?.(null);
@@ -369,7 +336,7 @@ const AccessTab = ({ loading = false, error, setError, onTabChange }: AccessTabP
         const mapped: User[] = webUsers.map((u: WebUserProfile) => {
           const createdAtMs = normalizeTimestamp((u as any).createdAt);
           const lastLoginMs = normalizeTimestamp((u as any).lastLogin);
-          const perms = (u as any).permissions || defaultPermissionsByRole[u.role] || defaultPermissionsByRole.seller;
+          const perms = (u as any).permissions || defaultPermissionsByRole(u.role) || defaultPermissionsByRole('seller');
           return {
             id: u.uid,
             username: u.name,
@@ -412,7 +379,7 @@ const AccessTab = ({ loading = false, error, setError, onTabChange }: AccessTabP
         const mapped: User[] = webUsers.map((u: WebUserProfile) => {
           const createdAtMs = normalizeTimestamp((u as any).createdAt);
           const lastLoginMs = normalizeTimestamp((u as any).lastLogin);
-          const perms = (u as any).permissions || defaultPermissionsByRole[u.role] || defaultPermissionsByRole.seller;
+          const perms = (u as any).permissions || defaultPermissionsByRole(u.role) || defaultPermissionsByRole('seller');
           return {
             id: u.uid,
             username: u.name,
@@ -702,25 +669,7 @@ const AccessTab = ({ loading = false, error, setError, onTabChange }: AccessTabP
                 value={currentUser.role || "seller"}
                 onChange={(e) => {
                   const role = e.target.value as 'admin' | 'seller';
-                  const permissions = role === 'admin' 
-                    ? {
-                        dashboard: true,
-                        bookings: true,
-                        confirmation: true,
-                        withdrawal: true,
-                        access: true,
-                        images: true,
-                        users: true
-                      }
-                    : {
-                        dashboard: true,
-                        bookings: true,
-                        confirmation: false,
-                        withdrawal: false,
-                        access: false,
-                        images: false,
-                        users: false
-                      };
+                  const permissions = defaultPermissionsByRole(role);
                   
                   if (isEditing) {
                     setEditingUser(prev => prev ? { ...prev, role, permissions } : null);
