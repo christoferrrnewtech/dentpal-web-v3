@@ -26,7 +26,6 @@ const Auth = () => {
       {isLogin ? (
         <LoginForm
           onLoginSuccess={handleLoginSuccess}
-          onSwitchToSignup={() => setIsLogin(false)}
         />
       ) : (
         <SignupForm

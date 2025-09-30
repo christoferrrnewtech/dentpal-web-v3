@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Sidebar from "@/components/dashboard/Sidebar";
 import DashboardHeader from "@/components/dashboard/DashboardHeader";
 import StatsCard from "@/components/dashboard/StatsCard";
@@ -10,8 +10,12 @@ import WithdrawalTab from "@/components/withdrawal/WithdrawalTab";
 import AccessTab from "@/components/access/AccessTab";
 import ImagesTab from "@/components/images/ImagesTab";
 import UsersTab from "@/components/users/UsersTab";
+import OrderTab from '@/components/orders/SellerOrdersTab';
+import InventoryTab from '@/components/inventory/InventoryTab';
 import { Order } from "@/types/order";
 import { DollarSign, Users, ShoppingCart, TrendingUp } from "lucide-react";
+// Add permission-aware auth hook
+import { useAuth } from "@/hooks/use-auth";
 
 interface DashboardProps {
   user: { name?: string; email: string };
@@ -20,6 +24,32 @@ interface DashboardProps {
 
 const Dashboard = ({ user, onLogout }: DashboardProps) => {
   const [activeItem, setActiveItem] = useState("dashboard");
+  const { hasPermission, loading: authLoading } = useAuth();
+
+  // Map page ids to permission keys stored in Firestore
+  const permissionByMenuId: Record<string, keyof ReturnType<typeof useAuth>["permissions"] | 'dashboard'> = {
+    dashboard: "dashboard",
+    booking: "bookings",
+    confirmation: "confirmation",
+    withdrawal: "withdrawal",
+    access: "access",
+    images: "images",
+    users: "users",
+    'seller-orders': 'bookings',
+    inventory: 'dashboard'
+  } as any;
+
+  const isAllowed = (itemId: string) => hasPermission((permissionByMenuId[itemId] || 'dashboard') as any);
+
+  // Ensure active tab is permitted; otherwise jump to first allowed
+  useEffect(() => {
+    if (authLoading) return;
+    if (!isAllowed(activeItem)) {
+      const order = ["dashboard", "booking", "confirmation", "withdrawal", "access", "images", "users"];
+      const firstAllowed = order.find((id) => isAllowed(id));
+      if (firstAllowed) setActiveItem(firstAllowed);
+    }
+  }, [authLoading, activeItem]);
 
   // Mock data for confirmation page
   const [confirmationOrders, setConfirmationOrders] = useState<Order[]>([
@@ -248,10 +278,11 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
   const getPageContent = () => {
     switch (activeItem) {
       case "dashboard":
+        if (!isAllowed("dashboard")) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
         return (
           <div className="space-y-8">
-            {/* Top Section - Metrics Cards and Filters */}
-            <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+            {/* Top Section - Metrics Cards (3) */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               {/* Order Shipped Card */}
               <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
                 <div className="flex items-center justify-between">
@@ -293,67 +324,66 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
                   </div>
                 </div>
               </div>
+            </div>
 
-              {/* Filters Section */}
-              <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
-                <h4 className="text-lg font-semibold text-gray-900 mb-4">FILTERS</h4>
-                
-                <div className="space-y-4">
-                  {/* Date Filter */}
-                  <div>
-                    <label className="block text-xs font-medium text-gray-700 mb-1">SELECT DATE</label>
-                    <select className="w-full p-2 border border-gray-200 rounded-lg text-xs focus:ring-2 focus:ring-teal-500 focus:border-transparent">
-                      <option>Select date range</option>
-                      <option>Last 7 days</option>
-                      <option>Last 30 days</option>
-                      <option>Last 3 months</option>
-                      <option>Last year</option>
-                    </select>
-                  </div>
-
-                  {/* Payment Method Filter */}
-                  <div>
-                    <label className="block text-xs font-medium text-gray-700 mb-1">SELECT PAYMENT METHOD</label>
-                    <select className="w-full p-2 border border-gray-200 rounded-lg text-xs focus:ring-2 focus:ring-teal-500 focus:border-transparent">
-                      <option>All payment methods</option>
-                      <option>Credit Card</option>
-                      <option>Cash</option>
-                      <option>Insurance</option>
-                    </select>
-                  </div>
-
-                  {/* Payment Type Filter */}
-                  <div>
-                    <label className="block text-xs font-medium text-gray-700 mb-1">SELECT PAYMENT TYPE</label>
-                    <select className="w-full p-2 border border-gray-200 rounded-lg text-xs focus:ring-2 focus:ring-teal-500 focus:border-transparent">
-                      <option>All payment types</option>
-                      <option>Full Payment</option>
-                      <option>Partial Payment</option>
-                      <option>Installment</option>
-                    </select>
-                  </div>
-
-                  {/* Location Filter */}
-                  <div>
-                    <label className="block text-xs font-medium text-gray-700 mb-1">SELECT LOCATION</label>
-                    <select className="w-full p-2 border border-gray-200 rounded-lg text-xs focus:ring-2 focus:ring-teal-500 focus:border-transparent">
-                      <option>All locations</option>
-                      <option>Main Clinic</option>
-                      <option>Branch 1</option>
-                      <option>Branch 2</option>
-                    </select>
-                  </div>
-
-                  {/* Seller Filter */}
-                  <div>
-                    <label className="block text-xs font-medium text-gray-700 mb-1">SELECT SELLER</label>
-                    <select className="w-full p-2 border border-gray-200 rounded-lg text-xs focus:ring-2 focus:ring-teal-500 focus:border-transparent">
-                      <option>All dentists</option>
-                      <option>Dr. Smith</option>
-                      <option>Dr. Johnson</option>
-                      <option>Dr. Williams</option>
-                    </select>
-                  </div>
+            {/* Horizontal Filters Bar */}
+            <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100">
+              <div className="flex flex-col lg:flex-row lg:items-end lg:space-x-4 gap-4">
+                {/* Date Filter */}
+                <div className="flex-1 min-w-[160px]">
+                  <label className="block text-xs font-medium text-gray-700 mb-1">DATE RANGE</label>
+                  <select className="w-full p-2 border border-gray-200 rounded-lg text-xs focus:ring-2 focus:ring-teal-500 focus:border-transparent">
+                    <option>Select date range</option>
+                    <option>Last 7 days</option>
+                    <option>Last 30 days</option>
+                    <option>Last 3 months</option>
+                    <option>Last year</option>
+                  </select>
+                </div>
+                {/* Payment Method */}
+                <div className="flex-1 min-w-[160px]">
+                  <label className="block text-xs font-medium text-gray-700 mb-1">PAYMENT METHOD</label>
+                  <select className="w-full p-2 border border-gray-200 rounded-lg text-xs focus:ring-2 focus:ring-teal-500 focus:border-transparent">
+                    <option>All payment methods</option>
+                    <option>Credit Card</option>
+                    <option>Cash</option>
+                    <option>Insurance</option>
+                  </select>
+                </div>
+                {/* Payment Type */}
+                <div className="flex-1 min-w-[160px]">
+                  <label className="block text-xs font-medium text-gray-700 mb-1">PAYMENT TYPE</label>
+                  <select className="w-full p-2 border border-gray-200 rounded-lg text-xs focus:ring-2 focus:ring-teal-500 focus:border-transparent">
+                    <option>All payment types</option>
+                    <option>Full Payment</option>
+                    <option>Partial Payment</option>
+                    <option>Installment</option>
+                  </select>
+                </div>
+                {/* Location */}
+                <div className="flex-1 min-w-[160px]">
+                  <label className="block text-xs font-medium text-gray-700 mb-1">LOCATION</label>
+                  <select className="w-full p-2 border border-gray-200 rounded-lg text-xs focus:ring-2 focus:ring-teal-500 focus:border-transparent">
+                    <option>All locations</option>
+                    <option>Main Clinic</option>
+                    <option>Branch 1</option>
+                    <option>Branch 2</option>
+                  </select>
+                </div>
+                {/* Seller */}
+                <div className="flex-1 min-w-[160px]">
+                  <label className="block text-xs font-medium text-gray-700 mb-1">DENTIST</label>
+                  <select className="w-full p-2 border border-gray-200 rounded-lg text-xs focus:ring-2 focus:ring-teal-500 focus:border-transparent">
+                    <option>All dentists</option>
+                    <option>Dr. Smith</option>
+                    <option>Dr. Johnson</option>
+                    <option>Dr. Williams</option>
+                  </select>
+                </div>
+                {/* Apply / Reset */}
+                <div className="flex items-end gap-2 pt-2">
+                  <button className="px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white text-xs font-medium rounded-lg shadow-sm transition">Apply</button>
+                  <button className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-medium rounded-lg transition">Reset</button>
                 </div>
               </div>
             </div>
@@ -371,8 +401,10 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
           </div>
         );
       case "booking":
+        if (!isAllowed("booking")) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
         return <Booking />;
       case "confirmation":
+        if (!isAllowed("confirmation")) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
         return (
           <ConfirmationTab 
             orders={confirmationOrders}
@@ -386,6 +418,7 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
           />
         );
       case "withdrawal":
+        if (!isAllowed("withdrawal")) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
         return (
           <WithdrawalTab 
             loading={loading}
@@ -398,6 +431,7 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
           />
         );
       case "access":
+        if (!isAllowed("access")) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
         return (
           <AccessTab 
             loading={loading}
@@ -407,6 +441,7 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
           />
         );
       case "images":
+        if (!isAllowed("images")) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
         return (
           <ImagesTab 
             loading={loading}
@@ -416,6 +451,7 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
           />
         );
       case "users":
+        if (!isAllowed("users")) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
         return (
           <UsersTab 
             onResetRewardPoints={handleResetRewardPoints}
@@ -423,6 +459,12 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
             onExport={handleExportUsers}
           />
         );
+      case 'seller-orders':
+        if (!isAllowed('booking')) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
+        return <OrderTab orders={confirmationOrders} loading={loading} error={error} />;
+      case 'inventory':
+        if (!isAllowed('inventory')) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
+        return <InventoryTab />;
       default:
         return null;
     }
@@ -434,6 +476,8 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
         return "Dashboard";
       case "booking":
         return "Booking";
+      case 'seller-orders':
+        return 'Seller Orders';
       case "confirmation":
         return "Confirmation";
       case "withdrawal":
@@ -444,6 +488,8 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
         return "Images";
       case "users":
         return "Users";
+      case "inventory":
+        return "Inventory";
       default:
         return "Dashboard";
     }
@@ -455,6 +501,8 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
         return `Welcome back, ${user.name || user.email}`;
       case "booking":
         return "Manage dental appointments and bookings";
+      case 'seller-orders':
+        return 'Manage seller order statuses and actions';
       case "confirmation":
         return "Review and confirm patient appointments";
       case "withdrawal":
@@ -465,6 +513,8 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
         return "Manage dental images, x-rays, and patient photos";
       case "users":
         return "Manage patients, staff, and user accounts";
+      case "inventory":
+        return "Manage clinic stock levels and adjustments";
       default:
         return "";
     }

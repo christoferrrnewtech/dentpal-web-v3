@@ -1,56 +1,40 @@
-import React, {ReactNode} from "react";
-import { AuthStatusBanner, AuthStatusBannerProps } from "./AuthStatusBanner"
-import { AuthLoadingOverlay } from "./AuthLoadingOverlay";
-import { AuthBrandPanel } from "./AuthBrandPanel";
-import { AuthFormShell } from "./AuthFormShell";
+import React from "react";
+type BannerType = "info" | "error" | "success";
 
-type Props = {
-  children: ReactNode;
-  title: string;
-  subtitle?: string;
-  backgroundClassName?: string;
-  showLoading?: boolean;
-  banner?: AuthStatusBannerProps;
-  brand?: {
-    gradientClassName?: string;
-    logoSrc: string;
-    title?: string;
-    subtitle?: string;
-  };
+export type AuthStatusBannerProps = {
+  type: BannerType;
+  message: string;
+  onClose: () => void;
 };
 
-export default function AuthLayout({
-  children, 
-  title,
-  subtitle,
-  backgroundClassName = "bg-gradient-to-br from-teal-50 via-white to-cyan-50",
-  showLoading,
-  banner,
-  brand,
-}: Props) {
+const colors: Record<BannerType, string> = {
+  info: "bg-blue-100 border-blue-400 text-blue-700",
+  error: "bg-red-100 border-red-400 text-red-700",
+  success: "bg-green-100 border-green-400 text-green-700",
+};
+
+export function AuthStatusBanner({type, message, onClose}: AuthStatusBannerProps) {
+  const role = type === "error" ? "alert" : "status";
+  const live = type === "error" ? "assertive" : "polite";
+
   return (
-    <main
-      role="main"
-      aria-busy={showLoading ? true : undefined}
-      className={`relative min-h-screen flex items-center justify-center ${backgroundClassName}`}
+    <div
+    role={role}
+    aria-live={live}
+    className={`w-full border ${colors[type]} px-4 py-3 rounded relative mb-4`}
     >
-    <div className="container mx-auto px-4">
-      <div className="mx-auto max-w-6xl bg-white/95 backdrop-blur-sm rounded-3xl shadow-2xl overflow-hidden grid grid-cols-1 lg:grid-cols-2">
-      <AuthBrandPanel
-        gradientClassName={brand?.gradientClassName}
-        logoSrc={brand?.logoSrc}
-        title={brand?.title}
-        subtitle={brand?.subtitle}
-      />
-      <div className="relative">
-        <div className="p-6">{banner ? <AuthStatusBanner {...banner} /> : null}</div>
-        <AuthFormShell title={title} subtitle={subtitle}>{children}</AuthFormShell>
-        <AuthLoadingOverlay show={showLoading} />
-       </div>
-      </div>
+      <p className="text-sm">{message}</p>
+      {onClose && (
+        <button
+            aria-label="Dismmis Banner"
+            className="ml-4 text-sm underline"
+            onClick={onClose}
+      >
+          Dismiss
+        </button>
+      )}
     </div>
-  </main>
- );
+  );
 }
 
 // import { ReactNode } from "react";
