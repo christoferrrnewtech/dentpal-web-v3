@@ -216,6 +216,39 @@ export class AuthService {
     }
   }
   
+  // ✅ Create custom admin user
+  static async createCustomAdmin(email: string, password: string) {
+    try {
+      console.log('🔧 Creating custom admin user...');
+      
+      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      const user = userCredential.user;
+      
+      const userProfile: UserProfile = {
+        uid: user.uid,
+        email,
+        name: 'Custom Admin',
+        role: 'admin',
+        createdAt: new Date(),
+        isActive: true
+      };
+      
+      await setDoc(doc(db, 'web_users', user.uid), userProfile);
+      
+      console.log('✅ Custom admin created successfully:', email);
+      return {
+        user,
+        profile: userProfile,
+        success: true,
+        message: 'Admin account created successfully!'
+      };
+      
+    } catch (error: any) {
+      console.error('❌ Custom admin creation error:', error);
+      throw new Error(AuthService.getAuthErrorMessage(error));
+    }
+  }
+
   // 🛠️ Helper: Convert Firebase auth errors to user-friendly messages
   static getAuthErrorMessage(error: AuthError | Error): string {
     if ('code' in error) {
@@ -250,6 +283,7 @@ export const onAuthStateChange = AuthService.onAuthStateChange;
 export const getCurrentUserProfile = AuthService.getCurrentUserProfile;
 export const updateUserProfile = AuthService.updateUserProfile;
 export const initializeDefaultAdmin = AuthService.ensureDefaultAdmin;
+export const createCustomAdmin = AuthService.createCustomAdmin;
 
 // 🔐 Export Firebase auth instance for direct access if needed
 export { auth } from '../lib/firebase';

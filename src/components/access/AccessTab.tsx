@@ -10,8 +10,6 @@ import {
   Trash2, 
   Shield, 
   Key, 
-  Eye, 
-  EyeOff,
   CheckCircle,
   XCircle,
   Clock,
@@ -27,8 +25,9 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 // Add dropdown UI for export actions
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Dialog, DialogContent, DialogHeader, DialogFooter, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 // Replace backend partner provisioning with direct web user service (Firestore + password email)
-import { createWebUser, updateWebUserAccess, setWebUserStatus, getWebUsers } from '@/services/webUserService';
+import { createWebUser, updateWebUserAccess, setWebUserStatus, getWebUsers, resendUserInvite } from '@/services/webUserService';
 import type { WebUserProfile } from '@/types/webUser';
 // Export libs
 import * as XLSX from 'xlsx';
@@ -38,6 +37,7 @@ import 'jspdf-autotable';
 import ExcelJS from 'exceljs';
 import { saveAs } from 'file-saver';
 import dentpalLogo from '@/assets/dentpal_logo.png';
+import { useToast } from '@/hooks/use-toast';
 
 // Helper to normalize Firestore Timestamp/number/string to epoch millis
 function normalizeTimestamp(value: any): number | null {
@@ -78,6 +78,11 @@ function normalizeTimestamp(value: any): number | null {
     'seller-orders': true
   });
 
+  // Normalize any loaded permissions to include all keys for the role
+  const ensurePermissions = (role: 'admin' | 'seller', perms: Partial<User['permissions']> | undefined | null): User['permissions'] => {
+    return { ...defaultPermissionsByRole(role), ...(perms || {}) } as User['permissions'];
+  };
+
 interface User {
   id: string;
   username: string;
@@ -105,9 +110,10 @@ interface AccessTabProps {
   error?: string | null;
   setError?: (error: string | null) => void;
   onTabChange?: (tab: string) => void;
+  onEditUser?: (user: User) => void; // optional callback when clicking Edit
 }
 
-const AccessTab = ({ loading = false, error, setError, onTabChange }: AccessTabProps) => {
+const AccessTab = ({ loading = false, error, setError, onTabChange, onEditUser }: AccessTabProps) => {
   const [activeSection, setActiveSection] = useState<'add' | 'admin' | 'seller'>('add');
   const [users, setUsers] = useState<User[]>([
     {
@@ -175,8 +181,9 @@ const AccessTab = ({ loading = false, error, setError, onTabChange }: AccessTabP
   const [filterStatus, setFilterStatus] = useState<string>("all");
   const [showAddForm, setShowAddForm] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
-  const [showPasswords, setShowPasswords] = useState<{ [key: string]: boolean }>({});
-
+  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  
   // Form states
   const [newUser, setNewUser] = useState<Partial<User>>({
     username: "",
@@ -185,6 +192,8 @@ const AccessTab = ({ loading = false, error, setError, onTabChange }: AccessTabP
     status: "pending",
     permissions: defaultPermissionsByRole('seller')
   });
+
+  const { toast } = useToast();
 
   const filteredUsers = users.filter(user => {
     const matchesSearch = user.username.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -220,20 +229,20 @@ const AccessTab = ({ loading = false, error, setError, onTabChange }: AccessTabP
       try {
         const webUsers = await getWebUsers(); // fetch all roles
         const mapped: User[] = webUsers.map((u: WebUserProfile) => {
-          const createdAtMs = normalizeTimestamp((u as any).createdAt);
-          const lastLoginMs = normalizeTimestamp((u as any).lastLogin);
-          const perms = (u as any).permissions || defaultPermissionsByRole(u.role) || defaultPermissionsByRole('seller');
-          return {
-            id: u.uid,
-            username: u.name,
-            email: u.email,
-            role: u.role,
-            status: u.isActive ? 'active' : 'inactive',
-            permissions: perms,
-            lastLogin: lastLoginMs ? new Date(lastLoginMs).toISOString() : undefined,
-            createdAt: createdAtMs ? new Date(createdAtMs).toISOString() : new Date().toISOString(),
-          };
-        });
+           const createdAtMs = normalizeTimestamp((u as any).createdAt);
+           const lastLoginMs = normalizeTimestamp((u as any).lastLogin);
+          const perms = ensurePermissions(u.role, (u as any).permissions);
+           return {
+             id: u.uid,
+             username: u.name,
+             email: u.email,
+             role: u.role,
+             status: u.isActive ? 'active' : 'inactive',
+             permissions: perms,
+             lastLogin: lastLoginMs ? new Date(lastLoginMs).toISOString() : undefined,
+             createdAt: createdAtMs ? new Date(createdAtMs).toISOString() : new Date().toISOString(),
+           };
+         });
         setUsers(mapped);
       } catch (e: any) {
         console.error('Failed to load web users:', e);
@@ -263,7 +272,9 @@ const AccessTab = ({ loading = false, error, setError, onTabChange }: AccessTabP
           withdrawal: false,
           access: false,
           images: false,
-          users: false
+          users: false,
+          inventory: false,
+          'seller-orders': true
         }
       );
 
@@ -282,20 +293,20 @@ const AccessTab = ({ loading = false, error, setError, onTabChange }: AccessTabP
       try {
         const webUsers = await getWebUsers();
         const mapped: User[] = webUsers.map((u: WebUserProfile) => {
-          const createdAtMs = normalizeTimestamp((u as any).createdAt);
-          const lastLoginMs = normalizeTimestamp((u as any).lastLogin);
-          const perms = (u as any).permissions || defaultPermissionsByRole(u.role) || defaultPermissionsByRole('seller');
-          return {
-            id: u.uid,
-            username: u.name,
-            email: u.email,
-            role: u.role,
-            status: u.isActive ? 'active' : 'inactive',
-            permissions: perms,
-            lastLogin: lastLoginMs ? new Date(lastLoginMs).toISOString() : undefined,
-            createdAt: createdAtMs ? new Date(createdAtMs).toISOString() : new Date().toISOString(),
-          };
-        });
+           const createdAtMs = normalizeTimestamp((u as any).createdAt);
+           const lastLoginMs = normalizeTimestamp((u as any).lastLogin);
+          const perms = ensurePermissions(u.role, (u as any).permissions);
+           return {
+             id: u.uid,
+             username: u.name,
+             email: u.email,
+             role: u.role,
+             status: u.isActive ? 'active' : 'inactive',
+             permissions: perms,
+             lastLogin: lastLoginMs ? new Date(lastLoginMs).toISOString() : undefined,
+             createdAt: createdAtMs ? new Date(createdAtMs).toISOString() : new Date().toISOString(),
+           };
+         });
         setUsers(mapped);
       } catch {}
       setNewUser({
@@ -313,8 +324,33 @@ const AccessTab = ({ loading = false, error, setError, onTabChange }: AccessTabP
   };
 
   const handleEditUser = (user: User) => {
+    if (onEditUser) {
+      onEditUser(user);
+      return;
+    }
     setEditingUser(user);
-    setShowAddForm(true);
+    setIsEditDialogOpen(true);
+  };
+
+  const handleResendInvite = async (user: User) => {
+    try {
+      const confirmed = window.confirm(`Resend invitation email to ${user.email}?`);
+      if (!confirmed) return;
+      await resendUserInvite(user.email);
+      toast({ title: 'Invite sent', description: `Password reset link sent to ${user.email}` });
+    } catch (e: any) {
+      setError?.(e.message || 'Failed to resend invitation email');
+      toast({ title: 'Failed to send invite', description: e.message || 'Please try again.' });
+    }
+  };
+
+  const handleToggleActive = async (user: User) => {
+    const next = user.status === 'active' ? 'inactive' : 'active';
+    const verb = next === 'active' ? 'activate' : 'deactivate';
+    const confirmed = window.confirm(`Are you sure you want to ${verb} ${user.username}?`);
+    if (!confirmed) return;
+    await handleStatusChange(user.id, next as any);
+    toast({ title: `User ${next}`, description: `${user.username} is now ${next}.` });
   };
 
   const handleUpdateUser = async () => {
@@ -334,32 +370,45 @@ const AccessTab = ({ loading = false, error, setError, onTabChange }: AccessTabP
       try {
         const webUsers = await getWebUsers();
         const mapped: User[] = webUsers.map((u: WebUserProfile) => {
-          const createdAtMs = normalizeTimestamp((u as any).createdAt);
-          const lastLoginMs = normalizeTimestamp((u as any).lastLogin);
-          const perms = (u as any).permissions || defaultPermissionsByRole(u.role) || defaultPermissionsByRole('seller');
-          return {
-            id: u.uid,
-            username: u.name,
-            email: u.email,
-            role: u.role,
-            status: u.isActive ? 'active' : 'inactive',
-            permissions: perms,
-            lastLogin: lastLoginMs ? new Date(lastLoginMs).toISOString() : undefined,
-            createdAt: createdAtMs ? new Date(createdAtMs).toISOString() : new Date().toISOString(),
-          };
-        });
+           const createdAtMs = normalizeTimestamp((u as any).createdAt);
+           const lastLoginMs = normalizeTimestamp((u as any).lastLogin);
+          const perms = ensurePermissions(u.role, (u as any).permissions);
+           return {
+             id: u.uid,
+             username: u.name,
+             email: u.email,
+             role: u.role,
+             status: u.isActive ? 'active' : 'inactive',
+             permissions: perms,
+             lastLogin: lastLoginMs ? new Date(lastLoginMs).toISOString() : undefined,
+             createdAt: createdAtMs ? new Date(createdAtMs).toISOString() : new Date().toISOString(),
+           };
+         });
         setUsers(mapped);
       } catch {}
       setEditingUser(null);
       setShowAddForm(false);
       setError?.(null);
+      toast({ title: 'User updated', description: 'Access and permissions saved.' });
     } catch (e: any) {
       setError?.(e.message || 'Failed to update user');
     }
   };
 
+  // Save from dialog
+  const handleSaveEdit = async () => {
+    if (!editingUser) return;
+    try {
+      setSaving(true);
+      await handleUpdateUser();
+      setIsEditDialogOpen(false);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const handleDeleteUser = (userId: string) => {
-    if (window.confirm("Are you sure you want to delete this user?")) {
+    if (window.confirm("Are you sure you want to delete this user? This action cannot be undone.")) {
       setUsers(prev => prev.filter(user => user.id !== userId));
     }
   };
@@ -377,20 +426,20 @@ const AccessTab = ({ loading = false, error, setError, onTabChange }: AccessTabP
       try {
         const webUsers = await getWebUsers();
         const mapped: User[] = webUsers.map((u: WebUserProfile) => {
-          const createdAtMs = normalizeTimestamp((u as any).createdAt);
-          const lastLoginMs = normalizeTimestamp((u as any).lastLogin);
-          const perms = (u as any).permissions || defaultPermissionsByRole(u.role) || defaultPermissionsByRole('seller');
-          return {
-            id: u.uid,
-            username: u.name,
-            email: u.email,
-            role: u.role,
-            status: u.isActive ? 'active' : 'inactive',
-            permissions: perms,
-            lastLogin: lastLoginMs ? new Date(lastLoginMs).toISOString() : undefined,
-            createdAt: createdAtMs ? new Date(createdAtMs).toISOString() : new Date().toISOString(),
-          };
-        });
+           const createdAtMs = normalizeTimestamp((u as any).createdAt);
+           const lastLoginMs = normalizeTimestamp((u as any).lastLogin);
+          const perms = ensurePermissions(u.role, (u as any).permissions);
+           return {
+             id: u.uid,
+             username: u.name,
+             email: u.email,
+             role: u.role,
+             status: u.isActive ? 'active' : 'inactive',
+             permissions: perms,
+             lastLogin: lastLoginMs ? new Date(lastLoginMs).toISOString() : undefined,
+             createdAt: createdAtMs ? new Date(createdAtMs).toISOString() : new Date().toISOString(),
+           };
+         });
         setUsers(mapped);
       } catch {}
     } catch (e: any) {
@@ -404,13 +453,6 @@ const AccessTab = ({ loading = false, error, setError, onTabChange }: AccessTabP
         ? { ...user, permissions: { ...user.permissions, [permission]: value } }
         : user
     )));
-  };
-
-  const togglePasswordVisibility = (userId: string) => {
-    setShowPasswords(prev => ({
-      ...prev,
-      [userId]: !prev[userId]
-    }));
   };
 
   const formatUserForExport = (u: User) => ({
@@ -855,28 +897,48 @@ const AccessTab = ({ loading = false, error, setError, onTabChange }: AccessTabP
                       {user.lastLogin ? formatDate(user.lastLogin) : 'Never'}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                      <div className="flex items-center space-x-2">
+                      <div className="flex items-center space-x-1">
                         <Button
                           variant="ghost"
                           size="sm"
-                          onClick={() => handleEditUser(user)}
+                          title="Edit access"
+                          aria-label="Edit access"
                           className="text-blue-600 hover:text-blue-800"
+                          onClick={() => handleEditUser(user)}
                         >
                           <Edit3 className="w-4 h-4" />
                         </Button>
                         <Button
                           variant="ghost"
                           size="sm"
-                          onClick={() => togglePasswordVisibility(user.id)}
-                          className="text-gray-600 hover:text-gray-800"
+                          title={user.status === 'active' ? 'Deactivate' : 'Activate'}
+                          aria-label={user.status === 'active' ? 'Deactivate' : 'Activate'}
+                          className={user.status === 'active' ? 'text-amber-600 hover:text-amber-800' : 'text-green-600 hover:text-green-800'}
+                          onClick={() => handleToggleActive(user)}
                         >
-                          {showPasswords[user.id] ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                          {user.status === 'active' ? (
+                            <Lock className="w-4 h-4" />
+                          ) : (
+                            <Unlock className="w-4 h-4" />
+                          )}
                         </Button>
                         <Button
                           variant="ghost"
                           size="sm"
-                          onClick={() => handleDeleteUser(user.id)}
+                          title="Resend invite"
+                          aria-label="Resend invite"
+                          className="text-gray-600 hover:text-gray-800"
+                          onClick={() => handleResendInvite(user)}
+                        >
+                          <Key className="w-4 h-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          title="Delete user"
+                          aria-label="Delete user"
                           className="text-red-600 hover:text-red-800"
+                          onClick={() => handleDeleteUser(user.id)}
                         >
                           <Trash2 className="w-4 h-4" />
                         </Button>
@@ -1043,6 +1105,73 @@ const AccessTab = ({ loading = false, error, setError, onTabChange }: AccessTabP
 
       {activeSection === 'admin' && renderUserList(adminUsers, 'Admin Users')}
       {activeSection === 'seller' && renderUserList(sellerUsers, 'Seller Users')}
+
+      {/* Edit Access Dialog */}
+      <Dialog open={isEditDialogOpen} onOpenChange={(open) => {
+        setIsEditDialogOpen(open);
+        if (!open) setEditingUser(null);
+      }}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Edit access</DialogTitle>
+            <DialogDescription>
+              {editingUser ? (
+                <span>Update role and permissions for <strong>{editingUser.username}</strong> ({editingUser.email})</span>
+              ) : (
+                'Update role and permissions'
+              )}
+            </DialogDescription>
+          </DialogHeader>
+
+          {editingUser && (
+            <div className="space-y-6">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Role</label>
+                <select
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                  value={editingUser.role}
+                  onChange={(e) => {
+                    const role = e.target.value as 'admin' | 'seller';
+                    setEditingUser(prev => prev ? { ...prev, role, permissions: defaultPermissionsByRole(role) } : prev);
+                  }}
+                >
+                  <option value="seller">Seller</option>
+                  <option value="admin">Admin</option>
+                </select>
+              </div>
+
+              <div>
+                <h4 className="text-sm font-medium text-gray-900 mb-3">Access permissions</h4>
+                <div className="space-y-3 max-h-72 overflow-auto pr-1">
+                  {Object.entries(editingUser.permissions || {}).map(([permission, enabled]) => (
+                    <div key={permission} className="flex items-center justify-between">
+                      <label className="text-sm text-gray-700 capitalize">{permission}</label>
+                      <input
+                        type="checkbox"
+                        checked={!!enabled}
+                        onChange={(e) => setEditingUser(prev => prev ? {
+                          ...prev,
+                          permissions: { ...prev.permissions, [permission]: e.target.checked }
+                        } : prev)}
+                        className="w-4 h-4 text-green-600 rounded focus:ring-green-500"
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          <DialogFooter className="mt-6">
+            <Button variant="outline" onClick={() => { setIsEditDialogOpen(false); setEditingUser(null); }}>
+              Cancel
+            </Button>
+            <Button onClick={handleSaveEdit} disabled={saving} className="bg-green-600 hover:bg-green-700 text-white">
+              {saving ? 'Saving...' : 'Save changes'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

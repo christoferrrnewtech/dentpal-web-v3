@@ -5,16 +5,31 @@ import RecipientForm from './RecipientForm';
 import DropPointSelector from './DropPointSelector';
 import OrderDetailsForm from './OrderDetailsForm';
 import OrderSummary from './OrderSummary';
+import { BookingService } from '../../services/booking';
 
 interface BookingFormData {
   sender: {
     name: string;
-    address: string;
+    address: {
+      houseNumber: string;
+      street: string;
+      barangay: string;
+      city: string;
+      province: string;
+      zipCode: string;
+    };
     phone: string;
   };
   recipient: {
     name: string;
-    address: string;
+    address: {
+      houseNumber: string;
+      street: string;
+      barangay: string;
+      city: string;
+      province: string;
+      zipCode: string;
+    };
     phone: string;
   };
   dropPoint: string;
@@ -29,8 +44,16 @@ interface BookingFormData {
 const NewBookingForm: React.FC = () => {
   const [currentStep, setCurrentStep] = useState(0);
   const [formData, setFormData] = useState<BookingFormData>({
-    sender: { name: '', address: '', phone: '' },
-    recipient: { name: '', address: '', phone: '' },
+    sender: { 
+      name: '', 
+      address: { houseNumber: '', street: '', barangay: '', city: '', province: '', zipCode: '' }, 
+      phone: '' 
+    },
+    recipient: { 
+      name: '', 
+      address: { houseNumber: '', street: '', barangay: '', city: '', province: '', zipCode: '' }, 
+      phone: '' 
+    },
     dropPoint: '',
     orderDetails: { itemDescription: '', exclusiveDiscount: '', voucher: '' },
     termsAccepted: false,
@@ -67,18 +90,22 @@ const NewBookingForm: React.FC = () => {
     setFormData(prev => ({ ...prev, termsAccepted: accepted }));
   };
 
+  const isValidPhone = (p: string) => /^09\d{9}$/.test(p);
+  const isCompleteAddress = (a: BookingFormData['sender']['address']) =>
+    !!(a.houseNumber && a.street && a.barangay && a.city && a.province && a.zipCode.length === 4);
+
   const isStepValid = (step: number): boolean => {
     switch (step) {
       case 0: // Sender
-        return !!(formData.sender.name && formData.sender.address && formData.sender.phone);
+        return !!(formData.sender.name && isValidPhone(formData.sender.phone) && isCompleteAddress(formData.sender.address));
       case 1: // Recipient
-        return !!(formData.recipient.name && formData.recipient.address && formData.recipient.phone);
+        return !!(formData.recipient.name && isValidPhone(formData.recipient.phone) && isCompleteAddress(formData.recipient.address));
       case 2: // Drop Point
         return !!formData.dropPoint;
       case 3: // Order Details
         return !!formData.orderDetails.itemDescription;
       case 4: // Summary
-        return formData.termsAccepted;
+        return formData.termsAccepted && isValidPhone(formData.sender.phone) && isValidPhone(formData.recipient.phone);
       default:
         return false;
     }
@@ -96,10 +123,19 @@ const NewBookingForm: React.FC = () => {
     }
   };
 
-  const handleSubmit = () => {
-    console.log('Submitting order:', formData);
-    // Handle form submission
-    alert('Order submitted successfully!');
+  const handleSubmit = async () => {
+    if (!isValidPhone(formData.sender.phone) || !isValidPhone(formData.recipient.phone)) {
+      alert('Invalid phone numbers. They must start with 09 and be exactly 11 digits.');
+      return;
+    }
+    try {
+      console.log('Submitting order:', formData);
+      const id = await BookingService.createFromForm(formData, { status: 'pending' });
+      alert('Order submitted successfully! ID: ' + id);
+    } catch (e) {
+      console.error('Failed to create booking', e);
+      alert('Failed to submit order. Check console for details.');
+    }
   };
 
   const renderCurrentStep = () => {
@@ -115,14 +151,10 @@ const NewBookingForm: React.FC = () => {
       case 4:
         return (
           <OrderSummary
-            estimatedCost="₱150.00"
-            expectedDelivery="2-3 business days"
-            requiredInfo={[
-              'Valid sender and recipient information',
-              'Complete delivery address',
-              'Item description provided',
-              'Drop point selected'
-            ]}
+            sender={formData.sender}
+            recipient={formData.recipient}
+            dropPoint={formData.dropPoint}
+            orderDetails={formData.orderDetails}
             termsAccepted={formData.termsAccepted}
             onTermsChange={updateTerms}
             onSubmit={handleSubmit}

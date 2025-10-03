@@ -35,13 +35,21 @@ const menuItems = [
 
 const Sidebar = ({ activeItem, onItemClick, onLogout }: SidebarProps) => {
   const [isCollapsed, setIsCollapsed] = useState(false);
-  const { hasPermission, loading } = useAuth();
+  const { hasPermission, loading, isAdmin, isSeller, role } = useAuth();
+
+  const panelLabel = isAdmin
+    ? 'Admin Panel'
+    : isSeller
+    ? 'Seller Panel'
+    : role
+    ? `${role.charAt(0).toUpperCase()}${role.slice(1)} Panel`
+    : 'Panel';
 
   const permissionByMenuId: Record<string, string> = {
     dashboard: "dashboard",
     booking: "bookings",
-    'seller-orders': 'bookings',
-    inventory: 'dashboard',
+    'seller-orders': 'seller-orders',
+    inventory: 'inventory',
     confirmation: "confirmation",
     withdrawal: "withdrawal",
     access: "access",
@@ -87,7 +95,7 @@ const Sidebar = ({ activeItem, onItemClick, onLogout }: SidebarProps) => {
               </div>
               <div>
                 <h2 className="font-bold text-lg text-foreground">DentPal</h2>
-                <p className="text-xs text-muted-foreground">Admin Panel</p>
+                <p className="text-xs text-muted-foreground">{panelLabel}</p>
               </div>
             </div>
           )}

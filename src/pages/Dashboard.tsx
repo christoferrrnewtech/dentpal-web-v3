@@ -35,8 +35,8 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
     access: "access",
     images: "images",
     users: "users",
-    'seller-orders': 'bookings',
-    inventory: 'dashboard'
+    'seller-orders': 'seller-orders',
+    inventory: 'inventory'
   } as any;
 
   const isAllowed = (itemId: string) => hasPermission((permissionByMenuId[itemId] || 'dashboard') as any);
@@ -45,7 +45,7 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
   useEffect(() => {
     if (authLoading) return;
     if (!isAllowed(activeItem)) {
-      const order = ["dashboard", "booking", "confirmation", "withdrawal", "access", "images", "users"];
+      const order = ["dashboard", "booking", "seller-orders", "inventory", "confirmation", "withdrawal", "access", "images", "users"];
       const firstAllowed = order.find((id) => isAllowed(id));
       if (firstAllowed) setActiveItem(firstAllowed);
     }
@@ -460,7 +460,7 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
           />
         );
       case 'seller-orders':
-        if (!isAllowed('booking')) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
+        if (!isAllowed('seller-orders')) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
         return <OrderTab orders={confirmationOrders} loading={loading} error={error} />;
       case 'inventory':
         if (!isAllowed('inventory')) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;

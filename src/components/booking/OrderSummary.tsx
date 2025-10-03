@@ -1,57 +1,87 @@
 import React from 'react';
+import type { Address } from '../../types/booking';
+
+interface PartyView {
+  name: string;
+  phone: string;
+  address: Address;
+}
+
+interface OrderDetailsView {
+  itemDescription: string;
+  exclusiveDiscount: string;
+  voucher: string;
+}
 
 interface OrderSummaryProps {
-  estimatedCost: string;
-  expectedDelivery: string;
-  requiredInfo: string[];
+  sender: PartyView;
+  recipient: PartyView;
+  dropPoint: string;
+  orderDetails: OrderDetailsView;
   termsAccepted: boolean;
   onTermsChange: (accepted: boolean) => void;
   onSubmit: () => void;
   isValid: boolean;
 }
 
+const formatAddress = (a: Address) =>
+  [a.houseNumber, a.street, `Brgy. ${a.barangay}`, a.city, a.province, a.zipCode]
+    .filter(Boolean)
+    .join(', ');
+
+const SummaryRow: React.FC<{ label: string; value: React.ReactNode }> = ({ label, value }) => (
+  <div className="flex justify-between items-start py-2">
+    <span className="text-sm font-medium text-gray-600">{label}</span>
+    <div className="text-sm text-gray-900 text-right whitespace-pre-wrap max-w-[70%]">{value}</div>
+  </div>
+);
+
 const OrderSummary: React.FC<OrderSummaryProps> = ({
-  estimatedCost,
-  expectedDelivery,
-  requiredInfo,
+  sender,
+  recipient,
+  dropPoint,
+  orderDetails,
   termsAccepted,
   onTermsChange,
   onSubmit,
-  isValid
+  isValid,
 }) => {
   return (
     <div className="space-y-6">
       <div>
-        <h3 className="text-lg font-semibold text-gray-900 mb-2">Order Summary</h3>
-        <p className="text-sm text-gray-500 mb-6">Review your order details before submission</p>
+        <h3 className="text-lg font-semibold text-gray-900 mb-2">Review & Confirm</h3>
+        <p className="text-sm text-gray-500 mb-4">Double-check the details below before submission.</p>
       </div>
-      
-      <div className="bg-gray-50 rounded-lg p-6 space-y-4">
-        <div className="flex justify-between items-center">
-          <span className="text-sm font-medium text-gray-700">Estimated Cost:</span>
-          <span className="text-lg font-semibold text-teal-600">{estimatedCost}</span>
+
+      {/* Sender and Recipient */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
+          <h4 className="text-sm font-semibold text-gray-800 mb-3">Sender</h4>
+          <SummaryRow label="Name" value={sender.name} />
+          <SummaryRow label="Phone" value={sender.phone} />
+          <SummaryRow label="Address" value={formatAddress(sender.address)} />
         </div>
-        
-        <div className="flex justify-between items-center">
-          <span className="text-sm font-medium text-gray-700">Expected Delivery:</span>
-          <span className="text-sm text-gray-900">{expectedDelivery}</span>
-        </div>
-        
-        <div>
-          <span className="text-sm font-medium text-gray-700 block mb-2">Required Information:</span>
-          <ul className="text-sm text-gray-600 space-y-1">
-            {requiredInfo.map((info, index) => (
-              <li key={index} className="flex items-center">
-                <svg className="h-4 w-4 text-green-500 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                </svg>
-                {info}
-              </li>
-            ))}
-          </ul>
+        <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
+          <h4 className="text-sm font-semibold text-gray-800 mb-3">Recipient</h4>
+          <SummaryRow label="Name" value={recipient.name} />
+          <SummaryRow label="Phone" value={recipient.phone} />
+          <SummaryRow label="Address" value={formatAddress(recipient.address)} />
         </div>
       </div>
-      
+
+      {/* Drop point + Order details */}
+      <div className="bg-white rounded-lg p-4 border border-gray-200 space-y-3">
+        <SummaryRow label="Drop Point" value={dropPoint} />
+        <SummaryRow label="Item" value={orderDetails.itemDescription} />
+        {orderDetails.exclusiveDiscount && (
+          <SummaryRow label="Exclusive Discount" value={orderDetails.exclusiveDiscount} />
+        )}
+        {orderDetails.voucher && (
+          <SummaryRow label="Voucher" value={orderDetails.voucher} />
+        )}
+      </div>
+
+      {/* Terms */}
       <div className="border border-gray-200 rounded-lg p-4">
         <label className="flex items-start">
           <input
@@ -61,14 +91,11 @@ const OrderSummary: React.FC<OrderSummaryProps> = ({
             className="mt-1 mr-3 text-teal-600 focus:ring-teal-500"
           />
           <span className="text-sm text-gray-700">
-            I have read, understand and agreed to the{' '}
-            <button className="text-teal-600 hover:text-teal-700 underline">
-              terms and conditions
-            </button>
+            I have reviewed the information and agree to the terms and conditions.
           </span>
         </label>
       </div>
-      
+
       <button
         onClick={onSubmit}
         disabled={!isValid || !termsAccepted}
