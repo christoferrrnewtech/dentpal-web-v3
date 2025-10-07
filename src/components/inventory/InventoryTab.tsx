@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { InventoryItem } from './types';
 import { useInventory } from './hooks';
 import InventoryAdjustForm from './InventoryAdjustForm';
@@ -16,6 +16,8 @@ import { useToast } from '@/hooks/use-toast';
 import { storage } from '@/lib/firebase';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { ProductService } from '@/services/product';
+import CatalogTable from './CatalogTable';
+import { CalendarClock } from 'lucide-react';
 
 // Category and subcategory options
 const CATEGORY_OPTIONS = ['Consumables', 'Dental Equipment', 'Disposables', 'Equipment'] as const;
@@ -64,6 +66,9 @@ const SUBCATEGORY_NAME_TO_ID: Record<string, string> = {
   'Bonding Agents': 'OEtF1TsohK0Re8RT9rOf',
 };
 
+// New: shared item status type for UI
+type ItemStatus = 'active' | 'inactive' | 'draft' | 'pending_qc' | 'violation' | 'deleted';
+
 interface InventoryTabProps {
   sellerId?: string; // filter by seller id
 }
@@ -80,6 +85,15 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
   const { filtered, query, setQuery, draft, selectItem, setDelta, setReason, resetDraft } = useInventory(items);
   const [submitting, setSubmitting] = useState(false);
   const [activeTab, setActiveTab] = useState<'add' | 'history' | 'active' | 'stockout' | 'listing'>('add');
+  const [catalogTab, setCatalogTab] = useState<'all' | 'active' | 'inactive' | 'draft' | 'pending_qc' | 'violation' | 'deleted'>('all');
+  const [filterName, setFilterName] = useState<string>('');
+  const [filterCategory, setFilterCategory] = useState<string>('');
+  const [sortBy, setSortBy] = useState<'name' | 'stock' | 'updatedAt'>('name');
+
+  // History tab state
+  const [history, setHistory] = useState<Array<{ id: string; adjustmentNo: string; dateISO: string; reason: string; itemName: string; stockAfter: number }>>([]);
+  const [historyDate, setHistoryDate] = useState<string>('');
+  const [historyReason, setHistoryReason] = useState<string>('');
 
   // Auth + toast
   const { uid, isSeller, isAdmin } = useAuth();
@@ -212,9 +226,43 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
       return;
     }
     setLoading(true);
-    const unsub = InventoryService.listenBySeller(effectiveSellerId, (rows) => {
-      setItems(rows);
+    // Switched: use Product as the source of truth
+    const unsub = ProductService.listenBySeller(effectiveSellerId, (rows) => {
+      // Map product rows to InventoryItem-like shape used by the table
+      const mapped = rows.map(r => ({
+        id: r.id,
+        name: r.name,
+        suggestedThreshold: 0,
+        inStock: r.inStock,
+        unit: undefined,
+        updatedAt: r.updatedAt,
+        description: '',
+        imageUrl: r.imageUrl,
+        category: undefined,
+        subcategory: undefined,
+        variations: [],
+        price: r.price,
+        specialPrice: r.specialPrice,
+        status: r.status,
+        sku: undefined,
+        weight: undefined,
+        dimensions: undefined,
+        available: true,
+        preOrder: false,
+        hasVariants: true,
+        variants: [],
+      }));
+      setItems(mapped as any);
       setLoading(false);
+    });
+    return () => unsub();
+  }, [effectiveSellerId]);
+
+  // Subscribe to adjustments for effective seller
+  useEffect(() => {
+    if (!effectiveSellerId) { setHistory([]); return; }
+    const unsub = InventoryService.listenAdjustmentsBySeller(effectiveSellerId, (rows) => {
+      setHistory(rows);
     });
     return () => unsub();
   }, [effectiveSellerId]);
@@ -320,26 +368,8 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
 
       await ProductService.addVariations(productRef.id, variationsForProduct);
 
-      await InventoryService.createItem({
-        sellerId: effectiveSellerId!,
-        name: newItem.name.trim(),
-        description: newItem.description.trim(),
-        imageUrl: productImageUrl,
-        category: newItem.category.trim() || undefined,
-        subcategory: newItem.subcategory.trim() || undefined,
-        price: Number(newItem.price) || 0,
-        specialPrice: Number(newItem.specialPrice) || undefined,
-        sku: newItem.sku.trim() || undefined,
-        weight: Number(newItem.weight) || 0,
-        dimensions: { length: Number(newItem.dimensions.length)||0, width: Number(newItem.dimensions.width)||0, height: Number(newItem.dimensions.height)||0 },
-        suggestedThreshold: Number(newItem.suggestedThreshold) || 0,
-        unit: newItem.unit.trim() || undefined,
-        inStock: Number(newItem.inStock) || 0,
-        hasVariants: variantsToSave.length > 0,
-        variants: variantsToSave,
-        available,
-        preOrder,
-      });
+      // Removed: do not create inventory_items entry; Product is the source of truth
+      // await InventoryService.createItem({ ... })
 
       // Revoke product preview URL if set
       if (newItem.imagePreview) URL.revokeObjectURL(newItem.imagePreview);
@@ -350,7 +380,7 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
       resetNewItem();
       setVariants([]);
       setActiveTab('add');
-      toast({ title: 'Product created', description: `${newItem.name} has been added to inventory.` });
+      toast({ title: 'Product created', description: `${newItem.name} has been added to catalog.` });
     } catch (e) {
       console.error('Create item failed', e);
       toast({ title: 'Failed to create product', description: 'Please try again.' });
@@ -374,246 +404,511 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
+  // Compute filtered catalog items based on current tab and filters
+  const filteredCatalog = useMemo(() => {
+    const nameQuery = (filterName || '').trim().toLowerCase();
+    return items
+      .filter(i => {
+        const status = (i.status ?? 'active');
+        if (catalogTab === 'all') return true;
+        if (catalogTab === 'pending_qc') return status === 'pending_qc';
+        return status === catalogTab;
+      })
+      .filter(i => {
+        if (!nameQuery) return true;
+        const n = (i.name || '').toLowerCase();
+        const s = (i.sku || '').toLowerCase();
+        return n.includes(nameQuery) || s.includes(nameQuery);
+      })
+      .filter(i => {
+        if (!filterCategory) return true;
+        return (i.category || '') === filterCategory;
+      })
+      .sort((a, b) => {
+        if (sortBy === 'stock') {
+          const diff = (Number(b.inStock || 0) - Number(a.inStock || 0));
+          if (diff !== 0) return diff;
+          return (a.name || '').localeCompare(b.name || '');
+        }
+        if (sortBy === 'updatedAt') {
+          const diff = (Number(b.updatedAt || 0) - Number(a.updatedAt || 0));
+          if (diff !== 0) return diff;
+          return (a.name || '').localeCompare(b.name || '');
+        }
+        // default: name asc
+        return (a.name || '').localeCompare(b.name || '');
+      });
+  }, [items, catalogTab, filterName, filterCategory, sortBy]);
+
+  // Edit flow: open item data in form
+  const [editingId, setEditingId] = useState<string | null>(null);
+
+  // Load item into form for editing
+  const openEdit = useCallback(async (id: string) => {
+    setSubmitting(true);
+    try {
+      // Fetch from Product + Variation instead of legacy inventory_items
+      const detail = await ProductService.getProductDetail(id);
+      if (!detail) { setSubmitting(false); return; }
+      const p: any = detail.product;
+      const vars: any[] = Array.isArray(detail.variations) ? detail.variations : [];
+
+      // Prefill product-level fields
+      setNewItem({
+        name: String(p.name || ''),
+        description: String(p.description || ''),
+        imageUrl: String(p.imageURL || ''),
+        imageFile: null,
+        imagePreview: null,
+        category: '', // unknown without reverse lookup
+        subcategory: '', // unknown without reverse lookup
+        price: Number(p.price ?? 0) || 0,
+        specialPrice: Number(p.specialPrice ?? 0) || 0,
+        sku: '',
+        // Take weight/dimensions from first variation if present
+        weight: vars.length ? Number(vars[0].weight || vars[0]?.dimension?.weight || 0) : 0,
+        dimensions: {
+          length: Number(vars[0]?.dimensions?.length || 0),
+          width: Number(vars[0]?.dimensions?.width || 0),
+          height: Number(vars[0]?.dimensions?.height || 0),
+        },
+        suggestedThreshold: 0,
+        unit: '',
+        inStock: vars.reduce((sum, v: any) => sum + (Number(v.stock || 0)), 0),
+      });
+
+      // Prefill variants from Variation subcollection
+      setVariants(vars.map((v: any, i: number) => ({
+        key: v.id || `var-${i}`,
+        options: {},
+        price: Number(v.price || 0),
+        stock: Number(v.stock || 0),
+        sku: v.sku || v.SKU || undefined,
+        specialPrice: undefined, // per-variation discount not modeled yet
+        available: true,
+        imageUrl: v.imageURL || undefined,
+        imageFile: null,
+        imagePreview: null,
+      })));
+
+      setAvailable(true);
+      setPreOrder(false);
+      setEditingId(id);
+      setShowAdd(true);
+    } catch (e) {
+      console.error('Open edit failed', e);
+    } finally {
+      setSubmitting(false);
+    }
+  }, []);
+
+  // Open a fresh Add Product modal (ensure no edit state bleeds over)
+  const openAddNew = useCallback(() => {
+    // Revoke previews if any
+    if (newItem.imagePreview) URL.revokeObjectURL(newItem.imagePreview);
+    variants.forEach(v => { if (v.imagePreview) URL.revokeObjectURL(v.imagePreview); });
+    setEditingId(null);
+    resetNewItem();
+    setVariants([]);
+    setAvailable(true);
+    setPreOrder(false);
+    setShowAdd(true);
+  }, [newItem.imagePreview, variants]);
+
+  // Submit handler decides create vs update
+  const handleSaveItem = useCallback(async (statusOverride?: ItemStatus) => {
+    if (!effectiveSellerId) {
+      toast({ title: 'Select a seller first', description: 'Choose a seller to save items under.' });
+      return;
+    }
+    if (!newItem.name.trim()) {
+      toast({ title: 'Name is required' });
+      return;
+    }
+    try {
+      setSubmitting(true);
+
+      // Upload any newly selected images
+      let productImageUrl: string | undefined = newItem.imageUrl?.trim() || undefined;
+      let imageVersion: string | null = null;
+      if (newItem.imageFile) {
+        const ts = Date.now().toString();
+        const safeName = encodeURIComponent(newItem.imageFile.name);
+        const p = `ProductImages/${ts}/${safeName}`;
+        const r = storageRef(storage, p);
+        await uploadBytes(r, newItem.imageFile);
+        productImageUrl = await getDownloadURL(r);
+        imageVersion = ts;
+      }
+
+      // Prepare variants payload and upload new variant images if any
+      const variantsToSave = [] as Array<{ key: string; options: Record<string, string>; price: number; stock: number; sku?: string; specialPrice?: number; available?: boolean; imageUrl?: string }>;
+      for (let idx = 0; idx < variants.length; idx++) {
+        const v = variants[idx];
+        let vUrl = v.imageUrl;
+        if (v.imageFile) {
+          const ts = Date.now().toString();
+          const safeV = encodeURIComponent(v.imageFile.name);
+          const path = `ProductImages/${effectiveSellerId}/variants/${ts}_${safeV}`;
+          const ref = storageRef(storage, path);
+          await uploadBytes(ref, v.imageFile);
+          vUrl = await getDownloadURL(ref);
+        }
+        variantsToSave.push({ key: v.key, options: v.options, price: Number(v.price) || 0, stock: Number(v.stock) || 0, sku: v.sku, specialPrice: v.specialPrice, available: v.available, imageUrl: vUrl });
+      }
+
+      if (editingId) {
+        // Update existing Product (basic fields only for now)
+        await ProductService.updateProduct(editingId, {
+          name: newItem.name.trim(),
+          description: newItem.description.trim(),
+          ...(productImageUrl !== undefined ? { imageURL: productImageUrl } : {} as any),
+          // category mapping omitted until reverse map is available
+          ...(statusOverride ? { status: statusOverride } : {} as any),
+        });
+        // Note: variation updates not yet implemented in this flow
+      } else {
+        // Create new product in Product collection (not inventory_items)
+        await handleCreateItem();
+        return;
+      }
+
+      // Cleanup previews
+      if (newItem.imagePreview) URL.revokeObjectURL(newItem.imagePreview);
+      variants.forEach(v => { if (v.imagePreview) URL.revokeObjectURL(v.imagePreview); });
+
+      setShowAdd(false);
+      setEditingId(null);
+      resetNewItem();
+      setVariants([]);
+      if (statusOverride === 'draft') setCatalogTab('draft');
+      toast({ title: 'Product updated', description: `${newItem.name} has been updated.` });
+    } catch (e) {
+      console.error('Save item failed', e);
+      toast({ title: 'Failed to save product', description: 'Please try again.' });
+    } finally {
+      setSubmitting(false);
+    }
+  }, [newItem, effectiveSellerId, variants, available, preOrder, editingId]);
+
+  // Counts for status badges
+  const statusCounts = useMemo(() => {
+    const counts = { active: 0, inactive: 0, draft: 0, pending_qc: 0, violation: 0, deleted: 0 } as const;
+    const acc: Record<keyof typeof counts, number> = { active: 0, inactive: 0, draft: 0, pending_qc: 0, violation: 0, deleted: 0 };
+    items.forEach((i) => {
+      const s = (i.status ?? 'active') as keyof typeof counts;
+      if (s in acc) acc[s] += 1;
+    });
+    return acc;
+  }, [items]);
+
+  // Price editing dialog state
+  const [priceDialogOpen, setPriceDialogOpen] = useState(false);
+  const [priceEditingItem, setPriceEditingItem] = useState<InventoryItem | null>(null);
+  const [priceForm, setPriceForm] = useState<{ price: number | '' ; specialPrice: number | '' ; promoMode: 'long' | 'dated'; start?: string; end?: string }>({ price: '', specialPrice: '', promoMode: 'long', start: undefined, end: undefined });
+
+  // New: inline stock adjust dialog state
+  const [stockDialogOpen, setStockDialogOpen] = useState(false);
+  const [stockEditingItem, setStockEditingItem] = useState<InventoryItem | null>(null);
+  const [stockForm, setStockForm] = useState<{ delta: number | ''; reason: string }>({ delta: '', reason: '' });
+
+  // Delete dialog state
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<InventoryItem | null>(null);
+
+  const openPriceDialog = (item: InventoryItem) => {
+    setPriceEditingItem(item);
+    setPriceForm({
+      price: Number(item.price ?? 0) || 0,
+      specialPrice: Number(item.specialPrice ?? 0) || 0,
+      promoMode: item?.promoStart && item?.promoEnd ? 'dated' : 'long',
+      start: item?.promoStart ? new Date(item.promoStart).toISOString().slice(0,10) : undefined,
+      end: item?.promoEnd ? new Date(item.promoEnd).toISOString().slice(0,10) : undefined,
+    });
+    setPriceDialogOpen(true);
+  };
+
+  // Restored: save price dialog
+  const savePriceDialog = async () => {
+    if (!priceEditingItem) return;
+    try {
+      setSubmitting(true);
+      const payload: any = {
+        price: priceForm.price === '' ? null : Number(priceForm.price),
+        specialPrice: priceForm.specialPrice === '' ? null : Number(priceForm.specialPrice),
+        promoStart: null as number | null,
+        promoEnd: null as number | null,
+      };
+      if (priceForm.promoMode === 'dated') {
+        const startMs = priceForm.start ? new Date(priceForm.start + 'T00:00:00').getTime() : null;
+        const endMs = priceForm.end ? new Date(priceForm.end + 'T23:59:59').getTime() : null;
+        payload.promoStart = startMs;
+        payload.promoEnd = endMs;
+      }
+      await ProductService.updatePriceAndPromo(priceEditingItem.id, payload);
+      setPriceDialogOpen(false);
+      setPriceEditingItem(null);
+      toast({ title: 'Price updated', description: 'The product pricing has been saved.' });
+    } catch (e) {
+      console.error('Update price failed', e);
+      toast({ title: 'Failed to update price', description: 'Please try again.' });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // New: open stock dialog
+  const openStockDialog = (item: InventoryItem) => {
+    setStockEditingItem(item);
+    setStockForm({ delta: '', reason: '' });
+    setStockDialogOpen(true);
+  };
+
+  const saveStockDialog = async () => {
+    if (!stockEditingItem) return;
+    const deltaNum = stockForm.delta === '' ? 0 : Number(stockForm.delta);
+    if (!deltaNum || !stockForm.reason) return;
+    try {
+      setSubmitting(true);
+      // TODO: Stock is tracked at Variation level. Implement variation selection and update here.
+      console.warn('Stock adjust attempted, but variation-level updates are not yet implemented.');
+      toast({ title: 'Coming soon', description: 'Stock is managed per-variation. Update via the product edit until inline variation stock is added.' });
+      setStockDialogOpen(false);
+      setStockEditingItem(null);
+    } catch (e) {
+      console.error('Adjust stock failed', e);
+      toast({ title: 'Failed to adjust stock', description: 'Please try again.' });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // Open delete confirmation dialog
+  const openDeleteDialog = (item: InventoryItem) => {
+    setDeleteTarget(item);
+    setDeleteDialogOpen(true);
+  };
+
   return (
     <div className="space-y-8">
-      {/* Tab Navigation */}
-      <div className="flex space-x-4 border-b border-gray-200 pb-2">
-        {['add', 'history', 'active', 'stockout', 'listing'].map((tab) => (
+      {/* New Catalog Tabs */}
+      <div className="flex flex-wrap gap-2 border-b border-gray-200 pb-2">
+        {[
+          { key: 'all', label: 'All' },
+          { key: 'active', label: 'Active' },
+          { key: 'inactive', label: 'Inactive' },
+          { key: 'draft', label: 'Draft' },
+          { key: 'pending_qc', label: 'Pending QC' },
+          { key: 'violation', label: 'Violation' },
+          { key: 'deleted', label: 'Deleted' },
+        ].map(t => (
           <button
-            key={tab}
-            className={`px-4 py-2 text-sm font-medium ${activeTab === tab ? 'border-b-2 border-teal-500 text-teal-600' : 'text-gray-500'}`}
-            onClick={() => setActiveTab(tab as typeof activeTab)}
+            key={t.key}
+            className={`relative px-3 py-1.5 text-sm font-medium rounded ${catalogTab === t.key ? 'bg-teal-50 text-teal-700 border border-teal-200' : 'text-gray-600 hover:bg-gray-50 border border-transparent'}`}
+            onClick={() => setCatalogTab(t.key as any)}
           >
-            {tab.charAt(0).toUpperCase() + tab.slice(1)}
+            {t.label}
+            {t.key === 'active' && statusCounts.active > 0 && (
+              <span className="absolute -top-2 -right-2 inline-flex items-center justify-center h-5 min-w-5 px-1.5 rounded-full bg-teal-600 text-white text-[10px] leading-none shadow ring-2 ring-white">
+                {statusCounts.active}
+              </span>
+            )}
+            {t.key === 'inactive' && statusCounts.inactive > 0 && (
+              <span className="absolute -top-2 -right-2 inline-flex items-center justify-center h-5 min-w-5 px-1.5 rounded-full bg-gray-500 text-white text-[10px] leading-none shadow ring-2 ring-white">
+                {statusCounts.inactive}
+              </span>
+            )}
           </button>
         ))}
       </div>
 
-      {/* Tab Content */}
-      {activeTab === 'add' && (
-        <div>
-          {/* Header + Search */}
-          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-            <div>
-              <h2 className="text-xl font-semibold text-gray-900">Inventory</h2>
-              <p className="text-sm text-gray-500">Add stock / remove stock</p>
+      {/* Filters */}
+      <div className="flex flex-wrap gap-3 items-center">
+        <input
+          value={filterName}
+          onChange={(e) => setFilterName(e.target.value)}
+          placeholder="Filter by product name"
+          className="w-64 max-w-full text-sm p-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+        />
+        <select
+          value={filterCategory}
+          onChange={(e) => setFilterCategory(e.target.value)}
+          className="w-48 max-w-full text-sm p-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+        >
+          <option value="">All categories</option>
+          {CATEGORY_OPTIONS.map((c) => (
+            <option key={c} value={c}>{c}</option>
+          ))}
+        </select>
+        <select
+          value={sortBy}
+          onChange={(e) => setSortBy(e.target.value as any)}
+          className="w-48 max-w-full text-sm p-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+        >
+          <option value="name">Sort by: Name</option>
+          <option value="stock">Sort by: Stock</option>
+          <option value="updatedAt">Sort by: Updated</option>
+        </select>
+        <div className="flex-1" />
+        <button
+          onClick={openAddNew}
+          className="px-4 py-2 text-sm font-medium bg-teal-600 text-white rounded-lg hover:bg-teal-700"
+          disabled={!effectiveSellerId}
+        >
+          + Add Product
+        </button>
+      </div>
+
+      {/* Catalog Table */}
+      <CatalogTable
+        items={filteredCatalog}
+        onToggleActive={async (id, next) => {
+          await ProductService.toggleActive(id, next);
+        }}
+        onEdit={openEdit}
+        onEditPrice={openPriceDialog}
+        onEditStock={openStockDialog}
+        onDelete={(item) => { setDeleteTarget(item); setDeleteDialogOpen(true); }}
+        onRestore={async (item) => {
+          try {
+            await ProductService.restore(item.id);
+            setCatalogTab('inactive');
+            toast({ title: 'Product restored', description: 'Moved to Inactive tab. Toggle to activate when ready.' });
+          } catch (e) {
+            console.error('Restore failed', e);
+            toast({ title: 'Failed to restore', description: 'Please try again.' });
+          }
+        }}
+      />
+
+      {/* Delete Confirmation Dialog */}
+      {deleteDialogOpen && deleteTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/40" onClick={() => setDeleteDialogOpen(false)} />
+          <div className="relative bg-white rounded-lg shadow-xl w-full max-w-md p-6">
+            <h3 className="text-lg font-semibold text-gray-900 mb-1">Delete product</h3>
+            <p className="text-xs text-gray-600 mb-4">Are you sure you want to delete this product? It will be moved to the Deleted tab and can be restored later.</p>
+            <div className="p-3 border rounded-lg bg-gray-50 mb-4">
+              <div className="text-xs text-gray-500 mb-1">Product</div>
+              <div className="text-sm font-medium text-gray-900">{deleteTarget.name}</div>
             </div>
-            <div className="flex gap-3 items-center">
-              {/* Admin seller selector */}
-              {isAdmin && (
-                <div className="w-64">
-                  <select
-                    value={selectedSellerId ?? ''}
-                    onChange={(e) => setSelectedSellerId(e.target.value || null)}
-                    className="w-full text-sm p-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
-                  >
-                    <option value="">Select seller...</option>
-                    {sellers.map((s) => (
-                      <option key={s.uid} value={s.uid}>
-                        {s.name || s.email}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              )}
-              <div className="w-64">
-                <input
-                  value={query}
-                  onChange={e => setQuery(e.target.value)}
-                  placeholder="Search items..."
-                  className="w-full text-sm p-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
-                />
-              </div>
+            <div className="mt-6 flex justify-end gap-3">
+              <button className="px-3 py-2 text-sm font-medium text-gray-600 hover:text-gray-800" onClick={() => setDeleteDialogOpen(false)}>Cancel</button>
               <button
-                onClick={() => setShowAdd(true)}
-                className="whitespace-nowrap px-4 py-2 text-sm font-medium bg-teal-600 text-white rounded-lg hover:bg-teal-700 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:ring-offset-2"
-                disabled={!effectiveSellerId}
-                title={!effectiveSellerId ? 'Select a seller to add products' : ''}
+                className="px-3 py-2 text-sm font-medium bg-red-600 text-white rounded-lg hover:bg-red-700"
+                onClick={async () => {
+                  try {
+                    await ProductService.markDeleted(deleteTarget.id);
+                    setDeleteDialogOpen(false);
+                    setDeleteTarget(null);
+                    setCatalogTab('deleted');
+                    toast({ title: 'Product deleted', description: 'Moved to Deleted tab.' });
+                  } catch (e) {
+                    console.error('Delete failed', e);
+                    toast({ title: 'Failed to delete', description: 'Please try again.' });
+                  }
+                }}
               >
-                + Add Product
+                Yes, delete
               </button>
             </div>
           </div>
-
-          {/* Inventory Adjust Form */}
-          <InventoryAdjustForm
-            draft={draft}
-            items={items}
-            onChangeItem={selectItem}
-            onChangeDelta={setDelta}
-            onChangeReason={setReason}
-            onClear={resetDraft}
-            onSubmit={handleSubmit}
-            disabled={submitting || loading}
-          />
-
-          {/* Inventory Table */}
-          <InventoryTable items={filtered} onSelect={selectItem} activeId={draft.itemId} />
         </div>
       )}
 
-      {/* Tab Content */}
-      {activeTab === 'history' && (
-        <div>
-          <h2 className="text-xl font-semibold text-gray-900">History</h2>
-          <p className="text-sm text-gray-500">View adjustment history</p>
+      {/* Edit Price Dialog */}
+      {priceDialogOpen && priceEditingItem && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/40" onClick={() => !submitting && setPriceDialogOpen(false)} />
+          <div className="relative bg-white rounded-lg shadow-xl w-full max-w-lg p-6">
+            <h3 className="text-lg font-semibold text-gray-900 mb-1">Edit Price</h3>
+            <p className="text-xs text-gray-500 mb-4">Update retail and discount price. Optionally schedule a promotion.</p>
+            <div className="space-y-4">
+              <div className="p-3 border rounded-lg bg-gray-50">
+                <div className="text-xs text-gray-500 mb-1">Product</div>
+                <div className="text-sm font-medium text-gray-900">{priceEditingItem.name}</div>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Retail Price</label>
+                  <input type="number" value={priceForm.price} onChange={(e)=> setPriceForm(s=> ({...s, price: e.target.value === '' ? '' : Number(e.target.value)}))} className="w-full text-sm p-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Discount Price</label>
+                  <div className="flex items-center gap-2">
+                    <input type="number" value={priceForm.specialPrice} onChange={(e)=> setPriceForm(s=> ({...s, specialPrice: e.target.value === '' ? '' : Number(e.target.value)}))} className="w-full text-sm p-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent" />
+                    <button type="button" className="p-2 rounded border border-gray-200 hover:bg-gray-50" title="Promotion schedule" onClick={()=> setPriceForm(s=> ({...s, promoMode: s.promoMode === 'long' ? 'dated' : 'long'}))}>
+                      <CalendarClock className="w-4 h-4 text-gray-600" />
+                    </button>
+                  </div>
+                </div>
+              </div>
 
-          {/* Filters */}
-          <HistoryFilters
-            dateOptions={["2025-09-01", "2025-09-02"]}
-            reasonOptions={["Stock Added", "Stock Removed"]}
-            onDateChange={(date) => console.log("Date selected:", date)}
-            onReasonChange={(reason) => console.log("Reason selected:", reason)}
-          />
-
-          {/* History Table */}
-          <HistoryTable
-            data={[
-              {
-                adjustmentNo: "ADJ-001",
-                date: "2025-09-01",
-                reason: "Stock Added",
-                itemName: "Alginate Powder",
-                stockAfter: 15,
-              },
-              {
-                adjustmentNo: "ADJ-002",
-                date: "2025-09-02",
-                reason: "Stock Removed",
-                itemName: "Composite A2",
-                stockAfter: 5,
-              },
-            ]}
-          />
-
-          {/* Export Section */}
-          <div className="mt-4">
-            <button className="text-sm font-medium text-teal-700 hover:text-teal-800">Export CSV</button>
+              {/* Promotion schedule */}
+              {priceForm.promoMode === 'dated' && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Start Date</label>
+                    <input type="date" value={priceForm.start || ''} onChange={(e)=> setPriceForm(s=> ({...s, start: e.target.value}))} className="w-full text-sm p-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">End Date</label>
+                    <input type="date" value={priceForm.end || ''} onChange={(e)=> setPriceForm(s=> ({...s, end: e.target.value}))} className="w-full text-sm p-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent" />
+                  </div>
+                </div>
+              )}
+            </div>
+            <div className="mt-6 flex justify-end gap-3">
+              <button className="px-3 py-2 text-sm font-medium text-gray-600 hover:text-gray-800" onClick={()=> setPriceDialogOpen(false)} disabled={submitting}>Cancel</button>
+              <button className="px-3 py-2 text-sm font-medium bg-teal-600 text-white rounded-lg hover:bg-teal-700 disabled:opacity-40" onClick={savePriceDialog} disabled={submitting}>Save</button>
+            </div>
           </div>
         </div>
       )}
 
-      {activeTab === 'active' && (
-        <div>
-          <h2 className="text-xl font-semibold text-gray-900">Active</h2>
-          <p className="text-sm text-gray-500">Browse active and inactive products.</p>
-
-          {/* Filters */}
-          <StatusFilters
-            statusOptions={["Active", "Inactive"]}
-            onStatusChange={(status) => console.log("Status selected:", status)}
-          />
-
-          {/* Add spacing between filters and table */}
-          <div className="mt-6">
-            <ActiveTable
-              data={[
-                {
-                  sku: "SKU-001",
-                  itemName: "Alginate Powder",
-                  stockCount: 12,
-                  status: "Active",
-                },
-                {
-                  sku: "SKU-002",
-                  itemName: "Composite A2",
-                  stockCount: 0,
-                  status: "Inactive",
-                },
-              ]}
-            />
-          </div>
-
-          {/* Export Section */}
-          <div className="mt-4">
-            <button className="text-sm font-medium text-teal-700 hover:text-teal-800">Export CSV</button>
+      {/* Edit Stock Dialog */}
+      {stockDialogOpen && stockEditingItem && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/40" onClick={() => !submitting && setStockDialogOpen(false)} />
+          <div className="relative bg-white rounded-lg shadow-xl w-full max-w-md p-6">
+            <h3 className="text-lg font-semibold text-gray-900 mb-1">Adjust Stock</h3>
+            <p className="text-xs text-gray-500 mb-4">Increase or decrease available stock for this item.</p>
+            <div className="space-y-4">
+              <div className="p-3 border rounded-lg bg-gray-50">
+                <div className="text-xs text-gray-500 mb-1">Product</div>
+                <div className="text-sm font-medium text-gray-900">{stockEditingItem.name}</div>
+                <div className="text-xs text-gray-500">Current stock: <span className="font-semibold text-gray-700">{stockEditingItem.inStock}</span></div>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Delta</label>
+                  <input type="number" value={stockForm.delta} onChange={(e)=> setStockForm(s=> ({...s, delta: e.target.value === '' ? '' : Number(e.target.value)}))} placeholder="e.g. +5 or -2" className="w-full text-sm p-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Reason</label>
+                  <select value={stockForm.reason} onChange={(e)=> setStockForm(s=> ({...s, reason: e.target.value}))} className="w-full text-sm p-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent">
+                    <option value="">Select reason</option>
+                    {['Restock','Correction','Damage','Expiration','Return'].map(r => <option key={r} value={r}>{r}</option>)}
+                  </select>
+                </div>
+              </div>
+            </div>
+            <div className="mt-6 flex justify-end gap-3">
+              <button className="px-3 py-2 text-sm font-medium text-gray-600 hover:text-gray-800" onClick={()=> setStockDialogOpen(false)} disabled={submitting}>Cancel</button>
+              <button className="px-3 py-2 text-sm font-medium bg-teal-600 text-white rounded-lg hover:bg-teal-700 disabled:opacity-40" onClick={saveStockDialog} disabled={submitting || stockForm.delta === '' || !stockForm.reason}>Save</button>
+            </div>
           </div>
         </div>
       )}
 
-      {activeTab === 'stockout' && (
-        <div>
-          <h2 className="text-xl font-semibold text-gray-900">Stockout</h2>
-          <p className="text-sm text-gray-500">View items that are out of stock.</p>
-
-          {/* Filters */}
-          <HistoryFilters
-            dateOptions={["2025-09-01", "2025-09-02"]}
-            reasonOptions={["Out of Stock"]}
-            onDateChange={(date) => console.log("Date selected:", date)}
-            onReasonChange={(reason) => console.log("Reason selected:", reason)}
-          />
-
-          {/* Stockout Table */}
-          <StockoutTable
-            data={[
-              {
-                sku: "SKU-001",
-                itemName: "Alginate Powder",
-                stockCount: 0,
-                suggestedRestock: 10,
-              },
-              {
-                sku: "SKU-002",
-                itemName: "Composite A2",
-                stockCount: 0,
-                suggestedRestock: 15,
-              },
-            ]}
-          />
-
-          {/* Export Section */}
-          <div className="mt-4">
-            <button className="text-sm font-medium text-teal-700 hover:text-teal-800">Export CSV</button>
-          </div>
-        </div>
-      )}
-
-      {activeTab === 'listing' && (
-        <div>
-          <h2 className="text-xl font-semibold text-gray-900">Listing</h2>
-          <p className="text-sm text-gray-500">Active / Low Stock / Stockout</p>
-
-          {/* Filters */}
-          <HistoryFilters
-            dateOptions={["2025-09-01", "2025-09-02"]}
-            reasonOptions={["Low Stock", "Stockout"]}
-            onDateChange={(date) => console.log("Date selected:", date)}
-            onReasonChange={(reason) => console.log("Reason selected:", reason)}
-          />
-
-          {/* Listing Table */}
-          <ListingTable
-            data={[
-              {
-                itemName: "Alginate Powder",
-                stockCount: 12,
-                suggestedThreshold: 5,
-                status: "Active",
-              },
-              {
-                itemName: "Composite A2",
-                stockCount: 3,
-                suggestedThreshold: 10,
-                status: "Low Stock",
-              },
-            ]}
-          />
-
-          {/* Export Section */}
-          <div className="mt-4">
-            <button className="text-sm font-medium text-teal-700 hover:text-teal-800">Export CSV</button>
-          </div>
-        </div>
-      )}
-
-      {/* Add Product Modal */}
+      {/* Existing modals and forms remain available */}
+      {/* Add/Edit Product Modal */}
       {showAdd && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
-          <div className="absolute inset-0 bg-black/40" onClick={() => !submitting && setShowAdd(false)} />
+          <div className="absolute inset-0 bg-black/40" onClick={() => !submitting && (setShowAdd(false), setEditingId(null))} />
           <div className="relative bg-white rounded-lg shadow-xl w-full max-w-2xl p-6">
-            <h3 className="text-lg font-semibold text-gray-900">Add Product</h3>
-            <p className="text-sm text-gray-500 mb-4">Create a new inventory item.</p>
+            <h3 className="text-lg font-semibold text-gray-900">{editingId ? 'Edit Product' : 'Add Product'}</h3>
+            <p className="text-sm text-gray-500 mb-4">{editingId ? 'Update the product details.' : 'Create a new inventory item.'}</p>
             <div className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
@@ -903,17 +1198,26 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
             <div className="mt-6 flex justify-end gap-3">
               <button
                 className="px-3 py-2 text-sm font-medium text-gray-600 hover:text-gray-800"
-                onClick={() => setShowAdd(false)}
+                onClick={() => { setShowAdd(false); setEditingId(null); }}
                 disabled={submitting}
               >
                 Cancel
               </button>
+              {/* New: Save as Draft button */}
+              <button
+                className="px-3 py-2 text-sm font-medium border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-40"
+                onClick={() => handleSaveItem('draft')}
+                disabled={submitting || !newItem.name.trim()}
+                title="Save this product as a draft"
+              >
+                {submitting ? 'Saving...' : 'Save as Draft'}
+              </button>
               <button
                 className="px-3 py-2 text-sm font-medium bg-teal-600 text-white rounded-lg hover:bg-teal-700 disabled:opacity-40"
-                onClick={handleCreateItem}
+                onClick={() => handleSaveItem()}
                 disabled={submitting || !newItem.name.trim()}
               >
-                {submitting ? 'Creating...' : 'Create'}
+                {submitting ? (editingId ? 'Saving...' : 'Creating...') : (editingId ? 'Save' : 'Create')}
               </button>
             </div>
           </div>
@@ -921,6 +1225,6 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
       )}
     </div>
   );
-};
+}
 
 export default InventoryTab;

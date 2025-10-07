@@ -14,7 +14,8 @@ export interface Order {
     weight: string;
   };
   priority: 'normal' | 'priority' | 'urgent';
-  status: 'pending' | 'processing' | 'completed';
+  // Extended to support additional lifecycle stages in Seller Orders
+  status: 'pending' | 'processing' | 'completed' | 'cancelled' | 'returned' | 'refunded' | 'return_refund' | 'failed-delivery';
 }
 
 // Props for booking-related components

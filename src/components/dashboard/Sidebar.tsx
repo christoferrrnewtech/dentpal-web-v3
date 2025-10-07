@@ -10,7 +10,9 @@ import {
   Images,
   LogOut,
   Menu,
-  X
+  X,
+  IdCard,
+  BarChart3
 } from "lucide-react";
 import dentalLogo from "@/assets/dentpal_logo.png";
 import { useAuth } from "@/hooks/use-auth";
@@ -23,6 +25,8 @@ interface SidebarProps {
 
 const menuItems = [
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { id: "profile", label: "Profile", icon: IdCard },
+  { id: "reports", label: "Reports", icon: BarChart3 }, // New: Reports tab
   { id: "booking", label: "Booking", icon: Calendar },
   { id: 'seller-orders', label: 'Seller Orders', icon: Calendar },
   { id: "inventory", label: "Inventory", icon: LayoutDashboard },
@@ -47,6 +51,8 @@ const Sidebar = ({ activeItem, onItemClick, onLogout }: SidebarProps) => {
 
   const permissionByMenuId: Record<string, string> = {
     dashboard: "dashboard",
+    profile: "dashboard",
+    reports: "dashboard", // New: allow reports for sellers by default
     booking: "bookings",
     'seller-orders': 'seller-orders',
     inventory: 'inventory',
@@ -60,7 +66,7 @@ const Sidebar = ({ activeItem, onItemClick, onLogout }: SidebarProps) => {
   const visibleMenuItems = loading
     ? []
     : menuItems.filter((item) => {
-        const key = permissionByMenuId[item.id] || "dashboard";
+        const key = permissionByMenuId[item.id] || 'dashboard';
         return hasPermission(key as any);
       });
 

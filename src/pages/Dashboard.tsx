@@ -16,6 +16,8 @@ import { Order } from "@/types/order";
 import { DollarSign, Users, ShoppingCart, TrendingUp } from "lucide-react";
 // Add permission-aware auth hook
 import { useAuth } from "@/hooks/use-auth";
+import SellerProfileTab from '@/components/profile/SellerProfileTab';
+import ReportsTab from '@/components/reports/ReportsTab';
 
 interface DashboardProps {
   user: { name?: string; email: string };
@@ -29,6 +31,8 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
   // Map page ids to permission keys stored in Firestore
   const permissionByMenuId: Record<string, keyof ReturnType<typeof useAuth>["permissions"] | 'dashboard'> = {
     dashboard: "dashboard",
+    profile: "dashboard",
+    reports: "dashboard", // New: Reports allowed by default for sellers
     booking: "bookings",
     confirmation: "confirmation",
     withdrawal: "withdrawal",
@@ -45,7 +49,7 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
   useEffect(() => {
     if (authLoading) return;
     if (!isAllowed(activeItem)) {
-      const order = ["dashboard", "booking", "seller-orders", "inventory", "confirmation", "withdrawal", "access", "images", "users"];
+      const order = ["dashboard", "profile", "reports", "booking", "seller-orders", "inventory", "confirmation", "withdrawal", "access", "images", "users"];
       const firstAllowed = order.find((id) => isAllowed(id));
       if (firstAllowed) setActiveItem(firstAllowed);
     }
@@ -400,6 +404,12 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
             </div>
           </div>
         );
+      case "profile":
+        if (!isAllowed("profile")) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
+        return <SellerProfileTab />;
+      case "reports":
+        if (!isAllowed("reports")) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
+        return <ReportsTab />;
       case "booking":
         if (!isAllowed("booking")) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
         return <Booking />;
@@ -474,6 +484,10 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
     switch (activeItem) {
       case "dashboard":
         return "Dashboard";
+      case "profile":
+        return "Profile";
+      case "reports":
+        return "Reports";
       case "booking":
         return "Booking";
       case 'seller-orders':
@@ -499,6 +513,10 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
     switch (activeItem) {
       case "dashboard":
         return `Welcome back, ${user.name || user.email}`;
+      case "profile":
+        return "Manage seller profile, documents, and security";
+      case "reports":
+        return "Sales analytics by brand, category, item, and payment type";
       case "booking":
         return "Manage dental appointments and bookings";
       case 'seller-orders':

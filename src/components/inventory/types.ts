@@ -10,6 +10,8 @@ export interface ProductVariant {
   imageUrl?: string;
 }
 
+export type InventoryStatus = 'active' | 'inactive' | 'draft' | 'pending_qc' | 'violation' | 'deleted';
+
 export interface InventoryItem {
   id: string;
   name: string;
@@ -24,6 +26,13 @@ export interface InventoryItem {
   subcategory?: string;
   variations?: string[]; // simple string variations e.g., sizes/colors (legacy)
   price?: number; // base price (for simple products)
+  // Added: optional special price for simple products
+  specialPrice?: number;
+  // Promotion schedule
+  promoStart?: number | null;
+  promoEnd?: number | null;
+  // Status for new inventory tabs
+  status?: InventoryStatus;
   sku?: string; // base SKU (for simple products)
   weight?: number; // kg or grams (client-defined)
   dimensions?: {
