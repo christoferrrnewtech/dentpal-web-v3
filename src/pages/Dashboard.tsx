@@ -12,6 +12,7 @@ import ImagesTab from "@/components/images/ImagesTab";
 import UsersTab from "@/components/users/UsersTab";
 import OrderTab from '@/components/orders/SellerOrdersTab';
 import InventoryTab from '@/components/inventory/InventoryTab';
+import ProductQCTab from '@/components/admin/ProductQCTab';
 import { Order } from "@/types/order";
 import { DollarSign, Users, ShoppingCart, TrendingUp } from "lucide-react";
 // Add permission-aware auth hook
@@ -27,6 +28,7 @@ interface DashboardProps {
 const Dashboard = ({ user, onLogout }: DashboardProps) => {
   const [activeItem, setActiveItem] = useState("dashboard");
   const { hasPermission, loading: authLoading } = useAuth();
+  const { isAdmin } = useAuth();
 
   // Map page ids to permission keys stored in Firestore
   const permissionByMenuId: Record<string, keyof ReturnType<typeof useAuth>["permissions"] | 'dashboard'> = {
@@ -475,6 +477,9 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
       case 'inventory':
         if (!isAllowed('inventory')) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
         return <InventoryTab />;
+      case 'product-qc':
+        if (!isAllowed('dashboard') || !isAdmin) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
+        return <ProductQCTab />;
       default:
         return null;
     }
@@ -504,6 +509,8 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
         return "Users";
       case "inventory":
         return "Inventory";
+      case 'product-qc':
+        return 'Product QC';
       default:
         return "Dashboard";
     }
@@ -533,6 +540,8 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
         return "Manage patients, staff, and user accounts";
       case "inventory":
         return "Manage clinic stock levels and adjustments";
+      case 'product-qc':
+        return 'Review and approve seller-submitted products before publishing';
       default:
         return "";
     }

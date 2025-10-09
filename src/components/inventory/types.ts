@@ -46,6 +46,8 @@ export interface InventoryItem {
   // Variants
   hasVariants?: boolean;
   variants?: ProductVariant[];
+  // New: Violation reason from Product.qcReason
+  qcReason?: string;
 }
 
 export interface StockAdjustmentDraft {

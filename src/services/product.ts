@@ -1,5 +1,5 @@
 import { db } from '@/lib/firebase';
-import { addDoc, collection, serverTimestamp, onSnapshot, query, where, updateDoc, doc, getDocs, getDoc } from 'firebase/firestore';
+import { addDoc, collection, serverTimestamp, onSnapshot, query, where, updateDoc, doc, getDocs, getDoc, orderBy, increment } from 'firebase/firestore';
 
 export type CreateProductInput = {
   sellerId: string;
@@ -13,12 +13,15 @@ export type CreateProductInput = {
   clickCounter?: number;
   lowestPrice?: number | null;
   variationImageVersions?: Record<string, string> | null;
+  // New: optional status override for creation (e.g., 'draft')
+  status?: 'active' | 'inactive' | 'draft' | 'pending_qc' | 'violation' | 'deleted';
 };
 
 const PRODUCT_COLLECTION = 'Product';
 
 export const ProductService = {
   async createProduct(input: CreateProductInput) {
+    const initialStatus = input.status ?? 'pending_qc';
     const payload = {
       sellerId: input.sellerId,
       name: input.name,
@@ -29,12 +32,15 @@ export const ProductService = {
       // Write both spellings to satisfy consumers and requested schema
       subCategoryID: input.subCategoryID ?? null,
       subcategoryID: input.subCategoryID ?? null,
-      isActive: input.isActive ?? true,
+      // QC-first: new products are pending review by default unless overridden
+      isActive: false,
+      status: initialStatus,
+      // Explicit approval flag
+      IsApproved: false,
       clickCounter: input.clickCounter ?? 0,
       lowestPrice: input.lowestPrice ?? null,
       variationImageVersions: input.variationImageVersions ?? null,
-      // New: status and product-level pricing fields
-      status: 'active',
+      // product-level pricing fields
       price: null,
       specialPrice: null,
       promoStart: null,
@@ -86,18 +92,110 @@ export const ProductService = {
     await Promise.all(tasks);
   },
 
-  // Fetch variations for a product
-  async getVariations(productId: string) {
-    const varSnap = await getDocs(collection(db, PRODUCT_COLLECTION, productId, 'Variation'));
-    return varSnap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
+  // Admin QC: approve -> active
+  async approveProduct(productId: string) {
+    const pRef = doc(db, PRODUCT_COLLECTION, productId);
+    await updateDoc(pRef, {
+      status: 'active',
+      isActive: true,
+      // Mark as approved
+      IsApproved: true,
+      qcReviewedAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
   },
 
-  // Convenience: fetch product with variations
-  async getProductDetail(productId: string) {
-    const prod = await this.getProductById(productId);
-    if (!prod) return null;
-    const vars = await this.getVariations(productId);
-    return { product: prod, variations: vars };
+  // Admin QC: reject -> violation (keep inactive)
+  async rejectProduct(productId: string, reason: string) {
+    const pRef = doc(db, PRODUCT_COLLECTION, productId);
+    await updateDoc(pRef, {
+      status: 'violation',
+      isActive: false,
+      // Keep unapproved
+      IsApproved: false,
+      qcRejectedAt: serverTimestamp(),
+      qcReason: reason ?? '',
+      updatedAt: serverTimestamp(),
+    });
+  },
+
+  // Record a QC audit entry with a snapshot of product at action time
+  async addQCAudit(productId: string, entry: { action: 'approve' | 'reject' | 'violation'; at?: number; reason?: string; adminId?: string | null; }) {
+    try {
+      const pRef = doc(db, PRODUCT_COLLECTION, productId);
+      const snap = await getDoc(pRef);
+      const productSnapshot = snap.exists() ? snap.data() : null;
+      const payload = {
+        productId,
+        action: entry.action,
+        reason: entry.reason ?? '',
+        adminId: entry.adminId ?? null,
+        at: entry.at ?? Date.now(),
+        createdAt: serverTimestamp(),
+        // store a lightweight copy of product for audit purposes
+        productSnapshot,
+        productSnapshotId: productId,
+      } as const;
+      await addDoc(collection(db, 'Product_QC_Audit'), payload as any);
+    } catch (e) {
+      console.error('addQCAudit failed', e);
+    }
+  },
+
+  // Admin QC: listen to products needing QC (pending or not approved yet)
+  listenPendingQC(cb: (rows: Array<{ id: string; data: any }>) => void) {
+    // Broad query; filter client-side so older items (without the flag) are included
+    const qRef = query(collection(db, PRODUCT_COLLECTION));
+    const unsub = onSnapshot(qRef, (snap) => {
+      const rows = snap.docs
+        .map((d) => ({ id: d.id, data: d.data() }))
+        .filter(({ data }) => {
+          const status = data.status || 'inactive';
+          // Backward compatibility: treat QCProduct true as approved as well
+          const approved = data.IsApproved === true || data.QCProduct === true;
+          const excluded = status === 'deleted' || status === 'violation';
+          return !excluded && !approved; // include anything not approved yet
+        })
+        .sort((a, b) => {
+          const aTs = a.data.createdAt?.toMillis?.() ? Number(a.data.createdAt.toMillis()) : 0;
+          const bTs = b.data.createdAt?.toMillis?.() ? Number(b.data.createdAt.toMillis()) : 0;
+          return bTs - aTs;
+        });
+      cb(rows);
+    });
+    return unsub;
+  },
+
+  // Admin QC: listen to approved products
+  listenApproved(cb: (rows: Array<{ id: string; data: any }>) => void) {
+    const qRef = query(collection(db, PRODUCT_COLLECTION), where('IsApproved', '==', true));
+    const unsub = onSnapshot(qRef, (snap) => {
+      const rows = snap.docs
+        .map((d) => ({ id: d.id, data: d.data() }))
+        .sort((a, b) => {
+          const aTs = a.data.updatedAt?.toMillis?.() ? Number(a.data.updatedAt.toMillis()) : 0;
+          const bTs = b.data.updatedAt?.toMillis?.() ? Number(b.data.updatedAt.toMillis()) : 0;
+          return bTs - aTs;
+        });
+      cb(rows);
+    });
+    return unsub;
+  },
+
+  // Admin QC: listen to violation products
+  listenViolation(cb: (rows: Array<{ id: string; data: any }>) => void) {
+    const qRef = query(collection(db, PRODUCT_COLLECTION), where('status', '==', 'violation'));
+    const unsub = onSnapshot(qRef, (snap) => {
+      const rows = snap.docs
+        .map((d) => ({ id: d.id, data: d.data() }))
+        .sort((a, b) => {
+          const aTs = a.data.updatedAt?.toMillis?.() ? Number(a.data.updatedAt.toMillis()) : 0;
+          const bTs = b.data.updatedAt?.toMillis?.() ? Number(b.data.updatedAt.toMillis()) : 0;
+          return bTs - aTs;
+        });
+      cb(rows);
+    });
+    return unsub;
   },
 
   // New: Toggle product active flag
@@ -121,6 +219,7 @@ export const ProductService = {
       sku?: string;
       category?: string;
       subcategory?: string;
+      qcReason?: string;
     }>) => void
   ) {
     const qRef = query(collection(db, PRODUCT_COLLECTION), where('sellerId', '==', sellerId));
@@ -161,6 +260,7 @@ export const ProductService = {
           sku: undefined as string | undefined,
           category: undefined as string | undefined,
           subcategory: undefined as string | undefined,
+          qcReason: typeof pd.qcReason === 'string' ? pd.qcReason : undefined,
         };
       }));
       // sort name asc like before
@@ -168,6 +268,15 @@ export const ProductService = {
       cb(products);
     });
     return unsub;
+  },
+
+  // New: Adjust stock for a specific variation
+  async adjustVariationStock(productId: string, variationId: string, delta: number) {
+    const vRef = doc(db, PRODUCT_COLLECTION, productId, 'Variation', variationId);
+    await updateDoc(vRef, { stock: increment(Number(delta) || 0), updatedAt: serverTimestamp() });
+    // Nudge parent product so product snapshot listeners refresh totals
+    const pRef = doc(db, PRODUCT_COLLECTION, productId);
+    await updateDoc(pRef, { updatedAt: serverTimestamp() });
   },
 
   async updateProduct(productId: string, updates: Partial<{
@@ -228,6 +337,47 @@ export const ProductService = {
     const snap = await getDoc(pRef);
     if (!snap.exists()) return null;
     return { id: snap.id, ...(snap.data() as any) };
+  },
+
+  // Fetch variations for a product
+  async getVariations(productId: string) {
+    const varSnap = await getDocs(collection(db, PRODUCT_COLLECTION, productId, 'Variation'));
+    return varSnap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
+  },
+
+  // Convenience: fetch product with variations
+  async getProductDetail(productId: string) {
+    const prod = await this.getProductById(productId);
+    if (!prod) return null;
+    const vars = await this.getVariations(productId);
+    return { product: prod, variations: vars };
+  },
+
+  // New: Ensure a default variation exists for a product, create one if missing
+  async ensureDefaultVariation(productId: string) {
+    // Reuse getVariations to check existing
+    const existing = await this.getVariations(productId);
+    if (existing.length > 0) return existing[0].id;
+
+    const vCol = collection(db, PRODUCT_COLLECTION, productId, 'Variation');
+    const ref = await addDoc(vCol, {
+      SKU: null,
+      sku: null,
+      name: 'default',
+      price: null,
+      stock: 0,
+      weight: null,
+      dimension: { height: null, width: null, weight: null },
+      dimensions: null,
+      imageURL: null,
+      productId,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    } as any);
+    // Touch parent product so listeners recalc totals
+    const pRef = doc(db, PRODUCT_COLLECTION, productId);
+    await updateDoc(pRef, { updatedAt: serverTimestamp() });
+    return ref.id;
   },
 };
 

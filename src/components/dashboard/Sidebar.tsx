@@ -30,6 +30,7 @@ const menuItems = [
   { id: "booking", label: "Booking", icon: Calendar },
   { id: 'seller-orders', label: 'Seller Orders', icon: Calendar },
   { id: "inventory", label: "Inventory", icon: LayoutDashboard },
+  { id: "product-qc", label: "QC Product", icon: CheckCircle },
   { id: "confirmation", label: "Confirmation", icon: CheckCircle },
   { id: "withdrawal", label: "Withdrawal", icon: CreditCard },
   { id: "access", label: "Access", icon: Key },
@@ -56,6 +57,7 @@ const Sidebar = ({ activeItem, onItemClick, onLogout }: SidebarProps) => {
     booking: "bookings",
     'seller-orders': 'seller-orders',
     inventory: 'inventory',
+    'product-qc': 'dashboard',
     confirmation: "confirmation",
     withdrawal: "withdrawal",
     access: "access",
@@ -63,12 +65,27 @@ const Sidebar = ({ activeItem, onItemClick, onLogout }: SidebarProps) => {
     users: "users",
   };
 
+  // Compute visible menu items with role-based ordering for sellers
   const visibleMenuItems = loading
     ? []
-    : menuItems.filter((item) => {
-        const key = permissionByMenuId[item.id] || 'dashboard';
-        return hasPermission(key as any);
-      });
+    : (() => {
+        // First, apply permission and admin-only filters
+        const permitted = menuItems.filter((item) => {
+          if (item.id === 'product-qc' && !isAdmin) return false;
+          const key = permissionByMenuId[item.id] || 'dashboard';
+          return hasPermission(key as any);
+        });
+
+        // For sellers (non-admin), enforce requested order and subset
+        if (isSeller && !isAdmin) {
+          const sellerOrder = ['dashboard', 'seller-orders', 'reports', 'inventory', 'profile'];
+          const map = new Map(permitted.map((i) => [i.id, i] as const));
+          return sellerOrder.map((id) => map.get(id)).filter(Boolean) as typeof permitted;
+        }
+
+        // Admins keep full permitted list and original order
+        return permitted;
+      })();
 
   return (
     <div className={`bg-card border-r border-border flex flex-col transition-all duration-300 ${
@@ -122,6 +139,10 @@ const Sidebar = ({ activeItem, onItemClick, onLogout }: SidebarProps) => {
           {visibleMenuItems.map((item) => {
             const Icon = item.icon;
             const isActive = activeItem === item.id;
+            // Seller-specific label adjustments
+            const displayLabel = (isSeller && !isAdmin)
+              ? (item.id === 'seller-orders' ? 'Orders' : item.id === 'reports' ? 'Report' : item.label)
+              : item.label;
             
             return (
               <button
@@ -134,7 +155,7 @@ const Sidebar = ({ activeItem, onItemClick, onLogout }: SidebarProps) => {
                 }`}
               >
                 <Icon className="w-5 h-5 flex-shrink-0" />
-                {!isCollapsed && <span className="font-medium">{item.label}</span>}
+                {!isCollapsed && <span className="font-medium">{displayLabel}</span>}
               </button>
             );
           })}

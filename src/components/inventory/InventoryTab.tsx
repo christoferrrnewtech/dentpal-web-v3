@@ -129,6 +129,8 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
     suggestedThreshold: number;
     unit: string;
     inStock: number;
+    // New: default/simple variation name when no variants
+    simpleVariantName?: string;
   }>({
     name: '',
     description: '',
@@ -145,18 +147,20 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
     suggestedThreshold: 0,
     unit: '',
     inStock: 0,
+    simpleVariantName: '',
   });
   const resetNewItem = () => setNewItem({
     name: '', description: '', imageUrl: '', imageFile: null, imagePreview: null, category: '', subcategory: '', price: 0, specialPrice: 0, sku: '', weight: 0,
     dimensions: { length: 0, width: 0, height: 0 }, suggestedThreshold: 0, unit: '', inStock: 0,
+    simpleVariantName: '',
   });
 
-  // Availability / preorder for simple product
-  const [available, setAvailable] = useState(true);
-  const [preOrder, setPreOrder] = useState(false);
+  // New: simple availability flags for the Add Product modal (simple product row)
+  const [available, setAvailable] = useState<boolean>(true);
+  const [preOrder, setPreOrder] = useState<boolean>(false);
 
   // Variant state (manual rows only) + local preview fields
-  const [variants, setVariants] = useState<Array<{ key: string; options: Record<string, string>; price: number; stock: number; sku?: string; specialPrice?: number; available?: boolean; imageUrl?: string; imageFile?: File | null; imagePreview?: string | null }>>([]);
+  const [variants, setVariants] = useState<Array<{ key: string; options: Record<string, string>; price: number; stock: number; sku?: string; specialPrice?: number; available?: boolean; imageUrl?: string; imageFile?: File | null; imagePreview?: string | null; name?: string }>>([]);
   // removed: variantUploading flag; previews only before create
   const variantFileInputs = useRef<Record<string, HTMLInputElement | null>>({});
   // When a new variant is added, auto-trigger its file picker
@@ -192,7 +196,7 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
   // New: add a blank variant row (manual variant)
   const addBlankVariant = () => {
     const key = `manual-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-    setVariants((prev) => [...prev, { key, options: {}, price: 0, stock: 0, sku: undefined, specialPrice: 0, available: true, imageUrl: undefined, imageFile: null, imagePreview: null }]);
+    setVariants((prev) => [...prev, { key, options: {}, price: 0, stock: 0, sku: undefined, specialPrice: 0, available: true, imageUrl: undefined, imageFile: null, imagePreview: null, name: '' }]);
     setPendingVariantPick(key);
   };
 
@@ -282,7 +286,7 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
     }
   }, [draft, resetDraft]);
 
-  const handleCreateItem = useCallback(async () => {
+  const handleCreateItem = useCallback(async (createStatus?: ItemStatus) => {
     if (!effectiveSellerId) {
       toast({ title: 'Select a seller first', description: 'Choose a seller to create items under.' });
       return;
@@ -309,7 +313,7 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
 
       // Prepare variants payload first and capture variant image versions
       const variationImageVersions: Record<string, string> = {};
-      const variantsToSave = [] as Array<{ key: string; options: Record<string, string>; price: number; stock: number; sku?: string; specialPrice?: number; available?: boolean; imageUrl?: string }>;
+      const variantsToSave = [] as Array<{ key: string; options: Record<string, string>; price: number; stock: number; sku?: string; specialPrice?: number; available?: boolean; imageUrl?: string; name?: string }>;
       for (let idx = 0; idx < variants.length; idx++) {
         const v = variants[idx];
         let vUrl = v.imageUrl;
@@ -322,7 +326,7 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
           vUrl = await getDownloadURL(ref);
           variationImageVersions[String(idx)] = ts;
         }
-        variantsToSave.push({ key: v.key, options: v.options, price: Number(v.price) || 0, stock: Number(v.stock) || 0, sku: v.sku, specialPrice: v.specialPrice, available: v.available, imageUrl: vUrl });
+        variantsToSave.push({ key: v.key, options: v.options, price: Number(v.price) || 0, stock: Number(v.stock) || 0, sku: v.sku, specialPrice: v.specialPrice, available: v.available, imageUrl: vUrl, name: (v.name || '').trim() || undefined });
       }
 
       // Compute lowestPrice for Product
@@ -339,11 +343,13 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
         imageVersion,
         categoryID: CATEGORY_NAME_TO_ID[newItem.category] || null,
         subCategoryID: SUBCATEGORY_NAME_TO_ID[newItem.subcategory] || null,
-        isActive: true,
+        // If saving as draft, keep inactive and mark status as draft
+        isActive: createStatus === 'draft' ? false : true,
+        status: createStatus === 'draft' ? 'draft' : undefined,
         clickCounter: 0,
         lowestPrice,
         variationImageVersions,
-      });
+      } as any);
 
       // Add Variation subcollection under Product (always create at least one)
       const variationsForProduct = (variantsToSave.length > 0)
@@ -354,7 +360,7 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
             weight: newItem.weight || undefined,
             dimensions: newItem.dimensions || undefined,
             imageURL: v.imageUrl || null,
-            name: `batch${i}`,
+            name: v.name?.trim() || `batch${i}`,
           }))
         : [{
             sku: newItem.sku || undefined,
@@ -363,13 +369,10 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
             weight: newItem.weight || undefined,
             dimensions: newItem.dimensions || undefined,
             imageURL: productImageUrl || null,
-            name: 'default',
+            name: (newItem.simpleVariantName || '').trim() || 'default',
           }];
 
       await ProductService.addVariations(productRef.id, variationsForProduct);
-
-      // Removed: do not create inventory_items entry; Product is the source of truth
-      // await InventoryService.createItem({ ... })
 
       // Revoke product preview URL if set
       if (newItem.imagePreview) URL.revokeObjectURL(newItem.imagePreview);
@@ -380,7 +383,12 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
       resetNewItem();
       setVariants([]);
       setActiveTab('add');
-      toast({ title: 'Product created', description: `${newItem.name} has been added to catalog.` });
+      if (createStatus === 'draft') {
+        setCatalogTab('draft');
+        toast({ title: 'Draft saved', description: `${newItem.name} has been saved as a draft.` });
+      } else {
+        toast({ title: 'Product created', description: `${newItem.name} has been added to catalog.` });
+      }
     } catch (e) {
       console.error('Create item failed', e);
       toast({ title: 'Failed to create product', description: 'Please try again.' });
@@ -489,6 +497,7 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
         imageUrl: v.imageURL || undefined,
         imageFile: null,
         imagePreview: null,
+        name: typeof v.name === 'string' ? v.name : '',
       })));
 
       setAvailable(true);
@@ -542,7 +551,7 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
       }
 
       // Prepare variants payload and upload new variant images if any
-      const variantsToSave = [] as Array<{ key: string; options: Record<string, string>; price: number; stock: number; sku?: string; specialPrice?: number; available?: boolean; imageUrl?: string }>;
+      const variantsToSave = [] as Array<{ key: string; options: Record<string, string>; price: number; stock: number; sku?: string; specialPrice?: number; available?: boolean; imageUrl?: string; name?: string }>;
       for (let idx = 0; idx < variants.length; idx++) {
         const v = variants[idx];
         let vUrl = v.imageUrl;
@@ -554,7 +563,7 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
           await uploadBytes(ref, v.imageFile);
           vUrl = await getDownloadURL(ref);
         }
-        variantsToSave.push({ key: v.key, options: v.options, price: Number(v.price) || 0, stock: Number(v.stock) || 0, sku: v.sku, specialPrice: v.specialPrice, available: v.available, imageUrl: vUrl });
+        variantsToSave.push({ key: v.key, options: v.options, price: Number(v.price) || 0, stock: Number(v.stock) || 0, sku: v.sku, specialPrice: v.specialPrice, available: v.available, imageUrl: vUrl, name: v.name?.trim() || undefined });
       }
 
       if (editingId) {
@@ -569,7 +578,7 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
         // Note: variation updates not yet implemented in this flow
       } else {
         // Create new product in Product collection (not inventory_items)
-        await handleCreateItem();
+        await handleCreateItem(statusOverride);
         return;
       }
 
@@ -610,7 +619,10 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
   // New: inline stock adjust dialog state
   const [stockDialogOpen, setStockDialogOpen] = useState(false);
   const [stockEditingItem, setStockEditingItem] = useState<InventoryItem | null>(null);
-  const [stockForm, setStockForm] = useState<{ delta: number | ''; reason: string }>({ delta: '', reason: '' });
+  const [stockForm, setStockForm] = useState<{ delta: number | ''; reason: string; variationId?: string }>(() => ({ delta: '', reason: '' }));
+  const [stockVariations, setStockVariations] = useState<Array<{ id: string; name?: string | null; stock: number }>>([]);
+  // New: per-variation rows for bulk adjust
+  const [stockRows, setStockRows] = useState<Array<{ id: string; name?: string | null; stock: number; delta: number | ''; reason: string }>>([]);
 
   // Delete dialog state
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -658,23 +670,53 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
   };
 
   // New: open stock dialog
-  const openStockDialog = (item: InventoryItem) => {
+  const openStockDialog = async (item: InventoryItem) => {
     setStockEditingItem(item);
-    setStockForm({ delta: '', reason: '' });
+    setStockForm({ delta: '', reason: '', variationId: undefined });
+    try {
+      // Load variations for this product
+      let vars = await ProductService.getVariations(item.id);
+
+      // If none exist, create a default one and reload list
+      if (!vars || vars.length === 0) {
+        try {
+          const vid = await ProductService.ensureDefaultVariation(item.id);
+          vars = [{ id: vid, name: 'default', stock: 0 } as any];
+        } catch (e) {
+          console.error('ensureDefaultVariation failed', e);
+        }
+      }
+
+      const normalized = vars.map((v: any) => ({ id: v.id, name: v.name ?? '', stock: Number(v.stock ?? 0) }));
+      setStockVariations(normalized);
+      // Build editable rows (one per variation)
+      setStockRows(normalized.map(v => ({ id: v.id, name: v.name, stock: v.stock, delta: '', reason: '' })));
+    } catch (e) {
+      console.error('Failed to load variations', e);
+      setStockVariations([]);
+      setStockRows([]);
+    }
     setStockDialogOpen(true);
   };
 
   const saveStockDialog = async () => {
     if (!stockEditingItem) return;
-    const deltaNum = stockForm.delta === '' ? 0 : Number(stockForm.delta);
-    if (!deltaNum || !stockForm.reason) return;
     try {
       setSubmitting(true);
-      // TODO: Stock is tracked at Variation level. Implement variation selection and update here.
-      console.warn('Stock adjust attempted, but variation-level updates are not yet implemented.');
-      toast({ title: 'Coming soon', description: 'Stock is managed per-variation. Update via the product edit until inline variation stock is added.' });
+      const tasks = stockRows
+        .filter(r => r.delta !== '' && Number(r.delta) !== 0 && r.reason)
+        .map(r => ProductService.adjustVariationStock(stockEditingItem.id, r.id, Number(r.delta)));
+
+      if (tasks.length === 0) {
+        // Require at least one row to have a valid delta and reason
+        toast({ title: 'No changes', description: 'Enter a delta and reason for at least one variation.' });
+        return;
+      }
+
+      await Promise.all(tasks);
       setStockDialogOpen(false);
       setStockEditingItem(null);
+      toast({ title: 'Stock updated', description: `${tasks.length} variation${tasks.length > 1 ? 's' : ''} adjusted.` });
     } catch (e) {
       console.error('Adjust stock failed', e);
       toast({ title: 'Failed to adjust stock', description: 'Please try again.' });
@@ -700,7 +742,7 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
           { key: 'draft', label: 'Draft' },
           { key: 'pending_qc', label: 'Pending QC' },
           { key: 'violation', label: 'Violation' },
-          { key: 'deleted', label: 'Deleted' },
+          { key: 'deleted', label: 'Archive' },
         ].map(t => (
           <button
             key={t.key}
@@ -762,6 +804,7 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
       {/* Catalog Table */}
       <CatalogTable
         items={filteredCatalog}
+        tabKey={catalogTab}
         onToggleActive={async (id, next) => {
           await ProductService.toggleActive(id, next);
         }}
@@ -787,7 +830,7 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
           <div className="absolute inset-0 bg-black/40" onClick={() => setDeleteDialogOpen(false)} />
           <div className="relative bg-white rounded-lg shadow-xl w-full max-w-md p-6">
             <h3 className="text-lg font-semibold text-gray-900 mb-1">Delete product</h3>
-            <p className="text-xs text-gray-600 mb-4">Are you sure you want to delete this product? It will be moved to the Deleted tab and can be restored later.</p>
+            <p className="text-xs text-gray-600 mb-4">Are you sure you want to delete this product? It will be moved to the Archive tab and can be restored later.</p>
             <div className="p-3 border rounded-lg bg-gray-50 mb-4">
               <div className="text-xs text-gray-500 mb-1">Product</div>
               <div className="text-sm font-medium text-gray-900">{deleteTarget.name}</div>
@@ -802,7 +845,7 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
                     setDeleteDialogOpen(false);
                     setDeleteTarget(null);
                     setCatalogTab('deleted');
-                    toast({ title: 'Product deleted', description: 'Moved to Deleted tab.' });
+                    toast({ title: 'Product deleted', description: 'Moved to Archive tab.' });
                   } catch (e) {
                     console.error('Delete failed', e);
                     toast({ title: 'Failed to delete', description: 'Please try again.' });
@@ -870,32 +913,96 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
       {stockDialogOpen && stockEditingItem && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
           <div className="absolute inset-0 bg-black/40" onClick={() => !submitting && setStockDialogOpen(false)} />
-          <div className="relative bg-white rounded-lg shadow-xl w-full max-w-md p-6">
+          <div className="relative bg-white rounded-lg shadow-xl w-full max-w-2xl p-6">
             <h3 className="text-lg font-semibold text-gray-900 mb-1">Adjust Stock</h3>
-            <p className="text-xs text-gray-500 mb-4">Increase or decrease available stock for this item.</p>
+            <p className="text-xs text-gray-500 mb-4">Increase or decrease available stock per variation.</p>
             <div className="space-y-4">
               <div className="p-3 border rounded-lg bg-gray-50">
-                <div className="text-xs text-gray-500 mb-1">Product</div>
-                <div className="text-sm font-medium text-gray-900">{stockEditingItem.name}</div>
-                <div className="text-xs text-gray-500">Current stock: <span className="font-semibold text-gray-700">{stockEditingItem.inStock}</span></div>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">Delta</label>
-                  <input type="number" value={stockForm.delta} onChange={(e)=> setStockForm(s=> ({...s, delta: e.target.value === '' ? '' : Number(e.target.value)}))} placeholder="e.g. +5 or -2" className="w-full text-sm p-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent" />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">Reason</label>
-                  <select value={stockForm.reason} onChange={(e)=> setStockForm(s=> ({...s, reason: e.target.value}))} className="w-full text-sm p-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent">
-                    <option value="">Select reason</option>
-                    {['Restock','Correction','Damage','Expiration','Return'].map(r => <option key={r} value={r}>{r}</option>)}
-                  </select>
+                <div className="flex items-center gap-3">
+                  {stockEditingItem.imageUrl ? (
+                    <img src={stockEditingItem.imageUrl} alt={stockEditingItem.name} className="h-10 w-10 rounded object-cover border" />
+                  ) : (
+                    <div className="h-10 w-10 rounded bg-gray-100 border" />
+                  )}
+                  <div>
+                    <div className="text-sm font-medium text-gray-900">{stockEditingItem.name}</div>
+                    <div className="text-xs text-gray-500">Total stock (all variations): <span className="font-semibold text-gray-700">{stockEditingItem.inStock}</span></div>
+                  </div>
                 </div>
               </div>
-            </div>
-            <div className="mt-6 flex justify-end gap-3">
-              <button className="px-3 py-2 text-sm font-medium text-gray-600 hover:text-gray-800" onClick={()=> setStockDialogOpen(false)} disabled={submitting}>Cancel</button>
-              <button className="px-3 py-2 text-sm font-medium bg-teal-600 text-white rounded-lg hover:bg-teal-700 disabled:opacity-40" onClick={saveStockDialog} disabled={submitting || stockForm.delta === '' || !stockForm.reason}>Save</button>
+
+              {/* Variations table */}
+              <div className="overflow-auto border rounded">
+                <table className="min-w-full text-xs">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="text-left p-2 font-medium text-gray-600">Image</th>
+                      <th className="text-left p-2 font-medium text-gray-600">Product</th>
+                      <th className="text-right p-2 font-medium text-gray-600">Current Stock</th>
+                      <th className="text-right p-2 font-medium text-gray-600">Delta</th>
+                      <th className="text-left p-2 font-medium text-gray-600">Reason</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {stockRows.map((row) => (
+                      <tr key={row.id} className="border-t">
+                        <td className="p-2">
+                          {stockEditingItem.imageUrl ? (
+                            <img src={stockEditingItem.imageUrl} alt={stockEditingItem.name} className="h-8 w-8 rounded object-cover border" />
+                          ) : (
+                            <div className="h-8 w-8 rounded bg-gray-100 border" />
+                          )}
+                        </td>
+                        <td className="p-2">
+                          <div className="text-gray-900 font-medium">{stockEditingItem.name}</div>
+                          <div className="text-[11px] text-gray-500">Variant: {row.name || 'default'}</div>
+                        </td>
+                        <td className="p-2 text-right">{row.stock}</td>
+                        <td className="p-2 text-right">
+                          <input
+                            type="number"
+                            value={row.delta}
+                            onChange={(e)=> {
+                              const v = e.target.value === '' ? '' : Number(e.target.value);
+                              setStockRows(list => list.map(r => r.id === row.id ? { ...r, delta: v } : r));
+                            }}
+                            placeholder="e.g. +5 or -2"
+                            className="w-24 p-1 border rounded text-right"
+                          />
+                        </td>
+                        <td className="p-2">
+                          <select
+                            value={row.reason}
+                            onChange={(e)=> setStockRows(list => list.map(r => r.id === row.id ? { ...r, reason: e.target.value } : r))}
+                            className="w-full p-1 border rounded"
+                          >
+                            <option value="">Select reason</option>
+                            {['Restock','Correction','Damage','Expiration','Return'].map(r => (
+                              <option key={r} value={r}>{r}</option>
+                            ))}
+                          </select>
+                        </td>
+                      </tr>
+                    ))}
+                    {stockRows.length === 0 && (
+                      <tr>
+                        <td colSpan={5} className="p-4 text-center text-gray-500">No variations found.</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="mt-4 flex justify-end gap-3">
+                <button className="px-3 py-2 text-sm font-medium text-gray-600 hover:text-gray-800" onClick={() => setStockDialogOpen(false)} disabled={submitting}>Cancel</button>
+                <button
+                  className="px-3 py-2 text-sm font-medium bg-teal-600 text-white rounded-lg hover:bg-teal-700 disabled:opacity-40"
+                  onClick={saveStockDialog}
+                  disabled={submitting || stockRows.every(r => r.delta === '' || Number(r.delta) === 0 || !r.reason)}
+                >
+                  Save
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -1102,15 +1209,16 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
                 {/* Simple product price/stock if no variants */}
                 {variants.length === 0 && (
                   <div className="border rounded overflow-hidden">
-                    <div className="grid grid-cols-6 text-xs bg-gray-50">
+                    <div className="grid grid-cols-7 text-xs bg-gray-50">
                       <div className="p-2 font-medium text-gray-600">Image</div>
+                      <div className="p-2 font-medium text-gray-600">Name</div>
                       <div className="p-2 font-medium text-gray-600">Price</div>
                       <div className="p-2 font-medium text-gray-600">Special Price</div>
                       <div className="p-2 font-medium text-gray-600">Stock</div>
                       <div className="p-2 font-medium text-gray-600">SellerSKU</div>
                       <div className="p-2 font-medium text-gray-600">Availability</div>
                     </div>
-                    <div className="grid grid-cols-6 items-center text-xs">
+                    <div className="grid grid-cols-7 items-center text-xs">
                       <div className="p-2">
                         <button
                           type="button"
@@ -1125,6 +1233,7 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
                           <img src={newItem.imagePreview || newItem.imageUrl} alt="preview" className="inline-block ml-2 h-8 w-8 rounded object-cover border" />
                         )}
                       </div>
+                      <div className="p-2"><input value={newItem.simpleVariantName || ''} onChange={(e)=> setNewItem(s=> ({...s, simpleVariantName: e.target.value}))} className="w-full p-1 border rounded" placeholder="e.g. default" /></div>
                       <div className="p-2"><input type="number" value={newItem.price} onChange={(e)=> setNewItem(s=> ({...s, price: Number(e.target.value)}))} className="w-full p-1 border rounded" /></div>
                       <div className="p-2"><input type="number" value={newItem.specialPrice} onChange={(e)=> setNewItem(s=> ({...s, specialPrice: Number(e.target.value)}))} className="w-full p-1 border rounded" /></div>
                       <div className="p-2"><input type="number" value={newItem.inStock} onChange={(e)=> setNewItem(s=> ({...s, inStock: Number(e.target.value)}))} className="w-full p-1 border rounded" /></div>
@@ -1141,6 +1250,7 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
                       <thead className="bg-gray-50">
                         <tr>
                           <th className="text-left p-2 font-medium text-gray-600">Image</th>
+                          <th className="text-left p-2 font-medium text-gray-600">Name</th>
                           <th className="text-left p-2 font-medium text-gray-600">Price</th>
                           <th className="text-left p-2 font-medium text-gray-600">Special Price</th>
                           <th className="text-left p-2 font-medium text-gray-600">Stock</th>
@@ -1170,6 +1280,9 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
                               {(v.imagePreview || v.imageUrl) && (
                                 <img src={v.imagePreview || v.imageUrl} alt="variant" className="inline-block ml-2 h-8 w-8 rounded object-cover border" />
                               )}
+                            </td>
+                            <td className="p-2">
+                              <input value={v.name || ''} onChange={(e)=> setVariants((list)=> list.map(x=> x.key===v.key?{...x, name: e.target.value}:x))} className="w-full p-1 border rounded" placeholder={`Variant ${idx+1}`} />
                             </td>
                             <td className="p-2">
                               <input type="number" value={v.price} onChange={(e)=> setVariants((list)=> list.map(x=> x.key===v.key?{...x, price: Number(e.target.value)}:x))} className="w-24 p-1 border rounded" />

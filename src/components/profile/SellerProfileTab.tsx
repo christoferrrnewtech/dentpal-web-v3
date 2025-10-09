@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { useAuth } from '@/hooks/use-auth';
-import { Check, Pencil, ShieldCheck, Wallet, FileText, Store, Lock, LogOut, Save, X, Loader2 } from 'lucide-react';
+import { Check, Pencil, ShieldCheck, Wallet, FileText, Store, Lock, Save, X, Loader2 } from 'lucide-react';
 
 /**
  * SellerProfileTab
@@ -96,10 +96,6 @@ const SellerProfileTab: React.FC = () => {
 							<span className="text-sm font-medium">{label}</span>
 						</button>
 					))}
-					<button className="w-full flex items-center gap-3 px-3 py-2 rounded-lg border border-gray-200 hover:bg-gray-50">
-						<LogOut className="w-4 h-4" />
-						<span className="text-sm font-medium">Log out</span>
-					</button>
 				</div>
 
 				<div className="md:col-span-3">
