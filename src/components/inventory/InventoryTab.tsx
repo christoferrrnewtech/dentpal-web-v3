@@ -110,6 +110,9 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
   // Compute effective sellerId for data ops
   const effectiveSellerId = sellerId ?? (isSeller ? uid : selectedSellerId);
 
+  // New: low-stock only filter
+  const [lowOnly, setLowOnly] = useState<boolean>(false);
+
   // Add Product modal state
   const [showAdd, setShowAdd] = useState(false);
   const [newItem, setNewItem] = useState<{
@@ -236,7 +239,8 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
       const mapped = rows.map(r => ({
         id: r.id,
         name: r.name,
-        suggestedThreshold: 0,
+        // Default threshold to 5 if not set
+        suggestedThreshold: r.suggestedThreshold != null ? Number(r.suggestedThreshold) : 5,
         inStock: r.inStock,
         unit: undefined,
         updatedAt: r.updatedAt,
@@ -349,6 +353,8 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
         clickCounter: 0,
         lowestPrice,
         variationImageVersions,
+        // New: persist suggested threshold (null when 0)
+        suggestedThreshold: newItem.suggestedThreshold > 0 ? newItem.suggestedThreshold : null,
       } as any);
 
       // Add Variation subcollection under Product (always create at least one)
@@ -432,9 +438,20 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
         if (!filterCategory) return true;
         return (i.category || '') === filterCategory;
       })
+      .filter(i => {
+        if (!lowOnly) return true;
+        const thr = Number(i.suggestedThreshold ?? 5);
+        const stock = Number(i.inStock || 0);
+        return stock === 0 || (thr > 0 && stock > 0 && stock <= thr);
+      })
       .sort((a, b) => {
         if (sortBy === 'stock') {
           const diff = (Number(b.inStock || 0) - Number(a.inStock || 0));
+          if (diff !== 0) return diff;
+          return (a.name || '').localeCompare(b.name || '');
+        }
+        if ((sortBy as any) === 'stockAsc') {
+          const diff = (Number(a.inStock || 0) - Number(b.inStock || 0));
           if (diff !== 0) return diff;
           return (a.name || '').localeCompare(b.name || '');
         }
@@ -446,7 +463,7 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
         // default: name asc
         return (a.name || '').localeCompare(b.name || '');
       });
-  }, [items, catalogTab, filterName, filterCategory, sortBy]);
+  }, [items, catalogTab, filterName, filterCategory, sortBy, lowOnly]);
 
   // Edit flow: open item data in form
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -480,7 +497,7 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
           width: Number(vars[0]?.dimensions?.width || 0),
           height: Number(vars[0]?.dimensions?.height || 0),
         },
-        suggestedThreshold: 0,
+        suggestedThreshold: Number(p.suggestedThreshold ?? 5),
         unit: '',
         inStock: vars.reduce((sum, v: any) => sum + (Number(v.stock || 0)), 0),
       });
@@ -574,6 +591,8 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
           ...(productImageUrl !== undefined ? { imageURL: productImageUrl } : {} as any),
           // category mapping omitted until reverse map is available
           ...(statusOverride ? { status: statusOverride } : {} as any),
+          // New: persist threshold updates
+          suggestedThreshold: newItem.suggestedThreshold > 0 ? newItem.suggestedThreshold : null,
         });
         // Note: variation updates not yet implemented in this flow
       } else {
@@ -609,6 +628,19 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
       if (s in acc) acc[s] += 1;
     });
     return acc;
+  }, [items]);
+
+  // Stock summary banner (counts of low/out)
+  const stockSummary = useMemo(() => {
+    let low = 0, out = 0;
+    items.forEach(i => {
+      const status = (i.status ?? 'active');
+      if (status === 'deleted') return;
+      const thr = Number(i.suggestedThreshold ?? 5);
+      const stock = Number(i.inStock || 0);
+      if (stock === 0) out += 1; else if (thr > 0 && stock <= thr) low += 1;
+    });
+    return { low, out };
   }, [items]);
 
   // Price editing dialog state
@@ -788,9 +820,14 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
           className="w-48 max-w-full text-sm p-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
         >
           <option value="name">Sort by: Name</option>
-          <option value="stock">Sort by: Stock</option>
+          <option value="stock">Sort by: Stock (desc)</option>
+          <option value="stockAsc">Sort by: Stock (asc)</option>
           <option value="updatedAt">Sort by: Updated</option>
         </select>
+        <label className="inline-flex items-center gap-2 text-sm text-gray-700">
+          <input type="checkbox" className="accent-teal-600" checked={lowOnly} onChange={(e)=> setLowOnly(e.target.checked)} />
+          Low stock only
+        </label>
         <div className="flex-1" />
         <button
           onClick={openAddNew}
@@ -800,6 +837,15 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
           + Add Product
         </button>
       </div>
+
+      {/* Stock summary banner */}
+      {(stockSummary.low > 0 || stockSummary.out > 0) && (
+        <div className="flex items-center gap-3 text-xs px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-800">
+          <span className="font-medium">Inventory alerts:</span>
+          {stockSummary.out > 0 && (<span className="inline-flex items-center px-2 py-0.5 rounded-full bg-red-600 text-white">{stockSummary.out} Out of stock</span>)}
+          {stockSummary.low > 0 && (<span className="inline-flex items-center px-2 py-0.5 rounded-full bg-amber-500 text-white">{stockSummary.low} Low stock</span>)}
+        </div>
+      )}
 
       {/* Catalog Table */}
       <CatalogTable

@@ -15,6 +15,8 @@ export type CreateProductInput = {
   variationImageVersions?: Record<string, string> | null;
   // New: optional status override for creation (e.g., 'draft')
   status?: 'active' | 'inactive' | 'draft' | 'pending_qc' | 'violation' | 'deleted';
+  // New: suggested threshold for low-stock alerts
+  suggestedThreshold?: number | null;
 };
 
 const PRODUCT_COLLECTION = 'Product';
@@ -45,6 +47,8 @@ export const ProductService = {
       specialPrice: null,
       promoStart: null,
       promoEnd: null,
+      // New: low-stock threshold (optional)
+      suggestedThreshold: input.suggestedThreshold ?? null,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     } as const;
@@ -220,6 +224,8 @@ export const ProductService = {
       category?: string;
       subcategory?: string;
       qcReason?: string;
+      // New: expose threshold
+      suggestedThreshold?: number | null;
     }>) => void
   ) {
     const qRef = query(collection(db, PRODUCT_COLLECTION), where('sellerId', '==', sellerId));
@@ -261,6 +267,7 @@ export const ProductService = {
           category: undefined as string | undefined,
           subcategory: undefined as string | undefined,
           qcReason: typeof pd.qcReason === 'string' ? pd.qcReason : undefined,
+          suggestedThreshold: pd.suggestedThreshold != null ? Number(pd.suggestedThreshold) : null,
         };
       }));
       // sort name asc like before
@@ -288,6 +295,7 @@ export const ProductService = {
     isActive: boolean;
     lowestPrice: number | null;
     status: 'active' | 'inactive' | 'draft' | 'pending_qc' | 'violation' | 'deleted';
+    suggestedThreshold: number | null;
   }>) {
     const pRef = doc(db, PRODUCT_COLLECTION, productId);
     const payload: any = {
@@ -299,6 +307,7 @@ export const ProductService = {
       ...(updates.isActive !== undefined ? { isActive: !!updates.isActive } : {}),
       ...(updates.lowestPrice !== undefined ? { lowestPrice: updates.lowestPrice } : {}),
       ...(updates.status !== undefined ? { status: updates.status } : {}),
+      ...(updates.suggestedThreshold !== undefined ? { suggestedThreshold: updates.suggestedThreshold } : {}),
       updatedAt: serverTimestamp(),
     };
     await updateDoc(pRef, payload);

@@ -16,6 +16,7 @@ interface Props {
 
 const CatalogTable: React.FC<Props> = ({ items, onToggleActive, onEdit, onEditPrice, onEditStock, onDelete, onRestore, tabKey }) => {
   const isViolationView = tabKey === 'violation';
+  const isPendingView = tabKey === 'pending_qc';
 
   // Simple client-side pagination
   const [page, setPage] = React.useState(1);
@@ -36,6 +37,13 @@ const CatalogTable: React.FC<Props> = ({ items, onToggleActive, onEdit, onEditPr
             {isViolationView ? (
               <>
                 <th className="px-4 py-2">REASON</th>
+                <th className="px-4 py-2">ACTIONS</th>
+              </>
+            ) : isPendingView ? (
+              <>
+                <th className="px-4 py-2 hidden sm:table-cell">TIMESTAMP</th>
+                <th className="px-4 py-2 hidden sm:table-cell">PRICE</th>
+                <th className="px-4 py-2">STOCK</th>
                 <th className="px-4 py-2">ACTIONS</th>
               </>
             ) : (
@@ -85,6 +93,64 @@ const CatalogTable: React.FC<Props> = ({ items, onToggleActive, onEdit, onEditPr
                         >
                           <Edit3 className="w-3.5 h-3.5" /> Edit
                         </button>
+                      </div>
+                    </td>
+                  </>
+                ) : isPendingView ? (
+                  <>
+                    <td className="px-4 py-2 text-gray-700 hidden sm:table-cell">
+                      <div className="text-xs text-gray-600">{i.updatedAt ? new Date(Number(i.updatedAt)).toLocaleString() : '—'}</div>
+                    </td>
+                    <td className="px-4 py-2 text-gray-700 hidden sm:table-cell">
+                      <button
+                        type="button"
+                        className={`inline-flex items-center gap-2 ${isDeleted ? 'text-gray-400 cursor-not-allowed' : 'hover:underline'}`}
+                        onClick={() => !isDeleted && onEditPrice && onEditPrice(i)}
+                        title={isDeleted ? 'Unavailable for archived items' : 'Edit price'}
+                      >
+                        {i.price != null ? (
+                          showSale ? (
+                            <>
+                              <span className="font-semibold text-teal-700">₱{Number(i.specialPrice).toLocaleString()}</span>
+                              <span className="line-through text-gray-400">₱{Number(i.price).toLocaleString()}</span>
+                            </>
+                          ) : (
+                            <span>₱{Number(i.price).toLocaleString()}</span>
+                          )
+                        ) : (
+                          <span className="text-gray-400">—</span>
+                        )}
+                        <Pencil className={`w-3.5 h-3.5 ${isDeleted ? 'text-gray-300' : 'text-gray-500'}`} />
+                      </button>
+                    </td>
+                    <td className="px-4 py-2 text-gray-700">
+                      <button
+                        type="button"
+                        className={`inline-flex items-center gap-2 ${isDeleted ? 'text-gray-400 cursor-not-allowed' : 'hover:underline'}`}
+                        onClick={() => !isDeleted && onEditStock && onEditStock(i)}
+                        title={isDeleted ? 'Unavailable for archived items' : 'Adjust stock'}
+                      >
+                        {i.inStock}
+                        <Pencil className={`w-3.5 h-3.5 ${isDeleted ? 'text-gray-300' : 'text-gray-500'}`} />
+                      </button>
+                    </td>
+                    <td className="px-4 py-2">
+                      <div className="flex items-center gap-2">
+                        <button
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-white border border-gray-300 hover:bg-gray-50 shadow-sm"
+                          onClick={() => onEdit(i.id)}
+                        >
+                          <Edit3 className="w-3.5 h-3.5" /> Edit
+                        </button>
+                        {onDelete && (
+                          <button
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-white border border-gray-300 text-red-600 hover:bg-red-50 hover:border-red-200 shadow-sm"
+                            onClick={() => onDelete(i)}
+                            title="Delete product"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" /> Delete
+                          </button>
+                        )}
                       </div>
                     </td>
                   </>
@@ -179,7 +245,7 @@ const CatalogTable: React.FC<Props> = ({ items, onToggleActive, onEdit, onEditPr
           })}
           {paged.length === 0 && (
             <tr>
-              <td colSpan={isViolationView ? 3 : 5} className="px-4 py-8 text-center text-xs text-gray-500">No products found.</td>
+              <td colSpan={isViolationView ? 3 : isPendingView ? 5 : 5} className="px-4 py-8 text-center text-xs text-gray-500">No products found.</td>
             </tr>
           )}
         </tbody>
