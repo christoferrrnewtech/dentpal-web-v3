@@ -19,6 +19,7 @@ import { DollarSign, Users, ShoppingCart, TrendingUp } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import SellerProfileTab from '@/components/profile/SellerProfileTab';
 import ReportsTab from '@/components/reports/ReportsTab';
+import OrdersService from '@/services/orders';
 
 interface DashboardProps {
   user: { name?: string; email: string };
@@ -29,6 +30,16 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
   const [activeItem, setActiveItem] = useState("dashboard");
   const { hasPermission, loading: authLoading } = useAuth();
   const { isAdmin } = useAuth();
+  const { uid } = useAuth();
+
+  // Initialize active tab from query string (e.g., /?tab=inventory)
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const tab = params.get('tab');
+      if (tab) setActiveItem(tab);
+    } catch {}
+  }, []);
 
   // Map page ids to permission keys stored in Firestore
   const permissionByMenuId: Record<string, keyof ReturnType<typeof useAuth>["permissions"] | 'dashboard'> = {
@@ -546,6 +557,18 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
         return "";
     }
   };
+
+  // Live Orders subscription for Orders tab
+  useEffect(() => {
+    if (!uid) return;
+    let unsub: (() => void) | undefined;
+    if (isAdmin) {
+      unsub = OrdersService.listenAll(setConfirmationOrders);
+    } else {
+      unsub = OrdersService.listenBySeller(uid, setConfirmationOrders);
+    }
+    return () => { try { unsub && unsub(); } catch {} };
+  }, [uid, isAdmin]);
 
   return (
     <div className="min-h-screen bg-background flex">

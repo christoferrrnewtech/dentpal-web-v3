@@ -8,6 +8,15 @@ export interface Order {
     name: string;
     contact: string;
   };
+  // New: seller display name (may be "Multiple Sellers" in admin view)
+  sellerName?: string;
+  // New: brief of items like "Product A x 2 + 1 more"
+  itemsBrief?: string;
+  // New: monetary total and currency
+  total?: number;
+  currency?: string;
+  // New: thumbnail of the first item purchased
+  imageUrl?: string;
   package: {
     size: 'small' | 'medium' | 'large';
     dimensions: string;
@@ -15,7 +24,7 @@ export interface Order {
   };
   priority: 'normal' | 'priority' | 'urgent';
   // Extended to support additional lifecycle stages in Seller Orders
-  status: 'pending' | 'processing' | 'completed' | 'cancelled' | 'returned' | 'refunded' | 'return_refund' | 'failed-delivery';
+  status: 'pending' | 'to-ship' | 'processing' | 'completed' | 'cancelled' | 'returned' | 'refunded' | 'return_refund' | 'failed-delivery';
 }
 
 // Props for booking-related components

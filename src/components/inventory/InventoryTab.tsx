@@ -18,6 +18,7 @@ import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage
 import { ProductService } from '@/services/product';
 import CatalogTable from './CatalogTable';
 import { CalendarClock } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 
 // Category and subcategory options
 const CATEGORY_OPTIONS = ['Consumables', 'Dental Equipment', 'Disposables', 'Equipment'] as const;
@@ -98,6 +99,7 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
   // Auth + toast
   const { uid, isSeller, isAdmin } = useAuth();
   const { toast } = useToast();
+  const navigate = useNavigate();
 
   // Image upload state
   // removed: immediate uploading flag; we only preview before create
@@ -830,7 +832,7 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
         </label>
         <div className="flex-1" />
         <button
-          onClick={openAddNew}
+          onClick={() => navigate('/inventory/new')}
           className="px-4 py-2 text-sm font-medium bg-teal-600 text-white rounded-lg hover:bg-teal-700"
           disabled={!effectiveSellerId}
         >
@@ -1054,8 +1056,8 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
         </div>
       )}
 
-      {/* Existing modals and forms remain available */}
       {/* Add/Edit Product Modal */}
+      {/* The modal remains for edit for now; creation uses the dedicated page */}
       {showAdd && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
           <div className="absolute inset-0 bg-black/40" onClick={() => !submitting && (setShowAdd(false), setEditingId(null))} />

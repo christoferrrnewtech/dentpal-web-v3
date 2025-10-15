@@ -62,6 +62,9 @@ export const ProductService = {
     price?: number;
     stock?: number;
     weight?: number;
+    // New: units
+    weightUnit?: string;
+    dimensionsUnit?: string;
     dimensions?: { length?: number; width?: number; height?: number } | null;
     imageURL?: string | null;
     name?: string;
@@ -77,6 +80,9 @@ export const ProductService = {
         price: v.price != null ? Number(v.price) : null,
         stock: v.stock != null ? Number(v.stock) : 0,
         weight: v.weight != null ? Number(v.weight) : null,
+        // New: store units
+        weightUnit: v.weightUnit ?? null,
+        dimensionsUnit: v.dimensionsUnit ?? null,
         // New: singular `dimension` object with height, width, weight
         dimension: {
           height: dim?.height ?? null,

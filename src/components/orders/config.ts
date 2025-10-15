@@ -12,6 +12,7 @@ export interface SubTabConfig {
 export const mapOrderToStage = (o: Order): LifecycleStage => {
   switch (o.status) {
     case 'pending': return 'unpaid';
+    case 'to-ship': return 'to-ship';
     case 'processing': return 'shipping';
     case 'completed': return 'delivered';
     case 'failed-delivery': return 'failed-delivery';
@@ -27,7 +28,7 @@ export const mapOrderToStage = (o: Order): LifecycleStage => {
 export const SUB_TABS: SubTabConfig[] = [
   { id: 'all', label: 'All', predicate: () => true },
   { id: 'unpaid', label: 'Unpaid', predicate: (o) => mapOrderToStage(o) === 'unpaid' },
-  { id: 'to-ship', label: 'To Ship', predicate: (o) => mapOrderToStage(o) === 'to-ship' }, // placeholder until backend distinguishes
+  { id: 'to-ship', label: 'To Ship', predicate: (o) => mapOrderToStage(o) === 'to-ship' },
   { id: 'shipping', label: 'Shipping', predicate: (o) => mapOrderToStage(o) === 'shipping' },
   { id: 'delivered', label: 'Delivered', predicate: (o) => mapOrderToStage(o) === 'delivered' },
   { id: 'failed-delivery', label: 'Failed Delivery', predicate: (o) => o.status === 'failed-delivery' },
