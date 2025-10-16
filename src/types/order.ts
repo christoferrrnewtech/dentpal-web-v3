@@ -25,6 +25,15 @@ export interface Order {
   priority: 'normal' | 'priority' | 'urgent';
   // Extended to support additional lifecycle stages in Seller Orders
   status: 'pending' | 'to-ship' | 'processing' | 'completed' | 'cancelled' | 'returned' | 'refunded' | 'return_refund' | 'failed-delivery';
+  // New: full line items for invoices/exports
+  items?: Array<{
+    name: string;
+    quantity: number;
+    price?: number;
+    productId?: string;
+    sku?: string;
+    imageUrl?: string;
+  }>;
 }
 
 // Props for booking-related components

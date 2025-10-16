@@ -1,84 +1,166 @@
-import React, { useMemo, useState } from 'react';
-import { Calendar, ChevronDown, Download, RefreshCcw, Search, SlidersHorizontal } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Calendar, Download, RefreshCcw, Search, SlidersHorizontal } from 'lucide-react';
+import { useAuth } from '@/hooks/use-auth';
+import { OrdersService } from '@/services/orders';
+import type { Order } from '@/types/order';
 
-// Types for local state (stub; wire to backend later)
+// Aggregated row shape for the grid
 interface ReportRow {
-  brand: string;
+  key: string; // group key (Item name or Payment Type)
   itemsSold: number;
   grossSales: number;
   itemsRefunded: number;
   refunds: number;
   netSales: number;
-  cogs?: number;
-  grossProfit?: number;
-  margin?: number; // percentage 0..1
-  taxes?: number;
 }
 
-type SubTab = 'brand' | 'category' | 'item' | 'payment';
-
-const sampleData: ReportRow[] = [
-  { brand: '3M', itemsSold: 120, grossSales: 320000, itemsRefunded: 4, refunds: 6000, netSales: 314000, cogs: 210000, grossProfit: 104000, margin: 0.331, taxes: 28000 },
-  { brand: 'GC', itemsSold: 85, grossSales: 210000, itemsRefunded: 2, refunds: 2500, netSales: 207500, cogs: 145000, grossProfit: 62500, margin: 0.300, taxes: 18500 },
-  { brand: 'Coltene', itemsSold: 64, grossSales: 155000, itemsRefunded: 1, refunds: 1500, netSales: 153500, cogs: 98000, grossProfit: 55500, margin: 0.358, taxes: 14200 },
-];
+type SubTab = 'item' | 'payment';
 
 const formatCurrency = (n: number) => `₱${(n || 0).toLocaleString()}`;
-const formatPct = (p?: number) => p == null ? '-' : `${Math.round(p * 100)}%`;
+
+const withinRange = (dateStr: string, range: string) => {
+  const d = new Date(dateStr + 'T00:00:00');
+  const today = new Date();
+  today.setHours(0,0,0,0);
+  const clone = (dt: Date) => new Date(dt.getTime());
+  let from = new Date(0);
+  let to = clone(today);
+  switch (range) {
+    case 'today': from = clone(today); break;
+    case 'last_7': from = new Date(today.getTime() - 6*86400000); break;
+    case 'last_30': from = new Date(today.getTime() - 29*86400000); break;
+    case 'this_month': from = new Date(today.getFullYear(), today.getMonth(), 1); break;
+    case 'last_month': from = new Date(today.getFullYear(), today.getMonth()-1, 1); to = new Date(today.getFullYear(), today.getMonth(), 0); break;
+    case 'ytd': from = new Date(today.getFullYear(), 0, 1); break;
+    default: return true;
+  }
+  return d >= from && d <= to;
+};
+
+const getPaymentBucket = (o: Order): string => {
+  switch (o.status) {
+    case 'pending': return 'Unpaid';
+    case 'cancelled': return 'Cancelled';
+    case 'failed-delivery': return 'Failed Delivery';
+    case 'returned':
+    case 'refunded':
+    case 'return_refund':
+      return 'Refunded';
+    case 'to-ship':
+    case 'processing':
+    case 'completed':
+      return 'Paid';
+    default: return 'Unknown';
+  }
+};
 
 const ReportsTab: React.FC = () => {
-  const [active, setActive] = useState<SubTab>('brand');
+  const { isAdmin, uid } = useAuth();
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [active, setActive] = useState<SubTab>('item');
   const [dateRange, setDateRange] = useState<string>('last_30');
   const [query, setQuery] = useState('');
-  const [displayed, setDisplayed] = useState<Record<string, boolean>>({
-    brand: true,
-    itemsSold: true,
-    grossSales: true,
-    itemsRefunded: true,
-    refunds: true,
-    netSales: true,
-    cogs: true,
-    grossProfit: true,
-    margin: true,
-    taxes: true,
-  });
+
+  // Subscribe to orders based on role
+  useEffect(() => {
+    let unsub = () => {};
+    if (isAdmin) unsub = OrdersService.listenAll(setOrders);
+    else if (uid) unsub = OrdersService.listenBySeller(uid, setOrders);
+    return () => unsub();
+  }, [isAdmin, uid]);
+
+  // Filter by date range
+  const filteredOrders = useMemo(() => {
+    return orders.filter(o => withinRange(o.timestamp, dateRange));
+  }, [orders, dateRange]);
+
+  // Helpers to compute numbers from orders/items
+  const sumItemsSold = (os: Order[]) => os.reduce((acc, o) => acc + (o.items?.reduce((s, it) => s + (it.quantity || 0), 0) || 0), 0);
+  const sumGrossSales = (os: Order[]) => os.reduce((acc, o) => {
+    if (typeof o.total === 'number') return acc + o.total;
+    const itemsTotal = o.items?.reduce((s, it) => s + ((it.price || 0) * (it.quantity || 0)), 0) || 0;
+    return acc + itemsTotal;
+  }, 0);
+  const refundStatuses: Order['status'][] = ['returned','refunded','return_refund'];
+  const sumRefunds = (os: Order[]) => os.filter(o => refundStatuses.includes(o.status)).reduce((acc, o) => acc + (o.total || 0), 0);
+  const sumItemsRefunded = (os: Order[]) => os.filter(o => refundStatuses.includes(o.status)).reduce((acc, o) => acc + (o.items?.reduce((s, it) => s + (it.quantity || 0), 0) || 0), 0);
+
+  // Aggregations
+  const itemRows: ReportRow[] = useMemo(() => {
+    const byKey = new Map<string, ReportRow>();
+    filteredOrders.forEach(o => {
+      (o.items || []).forEach(it => {
+        const key = it.name || 'Unknown Item';
+        const r = byKey.get(key) || { key, itemsSold: 0, grossSales: 0, itemsRefunded: 0, refunds: 0, netSales: 0 };
+        r.itemsSold += it.quantity || 0;
+        r.grossSales += (it.price || 0) * (it.quantity || 0);
+        if (refundStatuses.includes(o.status)) {
+          r.itemsRefunded += it.quantity || 0;
+          r.refunds += (it.price || 0) * (it.quantity || 0);
+        }
+        byKey.set(key, r);
+      });
+    });
+    return Array.from(byKey.values()).map(r => ({ ...r, netSales: Math.max(0, r.grossSales - r.refunds) }));
+  }, [filteredOrders]);
+
+  const paymentRows: ReportRow[] = useMemo(() => {
+    const byKey = new Map<string, ReportRow>();
+    filteredOrders.forEach(o => {
+      const key = getPaymentBucket(o);
+      const r = byKey.get(key) || { key, itemsSold: 0, grossSales: 0, itemsRefunded: 0, refunds: 0, netSales: 0 };
+      r.itemsSold += (o.items?.reduce((s, it) => s + (it.quantity || 0), 0) || 0);
+      r.grossSales += typeof o.total === 'number' ? o.total : (o.items?.reduce((s, it) => s + ((it.price || 0) * (it.quantity || 0)), 0) || 0);
+      if (refundStatuses.includes(o.status)) {
+        r.itemsRefunded += (o.items?.reduce((s, it) => s + (it.quantity || 0), 0) || 0);
+        r.refunds += typeof o.total === 'number' ? o.total : (o.items?.reduce((s, it) => s + ((it.price || 0) * (it.quantity || 0)), 0) || 0);
+      }
+      byKey.set(key, r);
+    });
+    return Array.from(byKey.values()).map(r => ({ ...r, netSales: Math.max(0, r.grossSales - r.refunds) }));
+  }, [filteredOrders]);
 
   const data = useMemo(() => {
-    const rows = sampleData.filter(r => !query || r.brand.toLowerCase().includes(query.toLowerCase()));
+    const rows = (active === 'item' ? itemRows : paymentRows)
+      .filter(r => !query || r.key.toLowerCase().includes(query.toLowerCase()));
     return rows;
-  }, [query]);
+  }, [active, itemRows, paymentRows, query]);
+
+  const firstColHeader = active === 'item' ? 'Item' : 'Payment Type';
+
+  // Totals for footer
+  const totals = useMemo(() => {
+    const grossSales = sumGrossSales(filteredOrders);
+    const refunds = sumRefunds(filteredOrders);
+    const netSales = Math.max(0, grossSales - refunds);
+    const itemsSold = sumItemsSold(filteredOrders);
+    const itemsRefunded = sumItemsRefunded(filteredOrders);
+    return { grossSales, refunds, netSales, itemsSold, itemsRefunded };
+  }, [filteredOrders]);
 
   const exportCsv = () => {
-    const cols = Object.entries(displayed).filter(([, v]) => v).map(([k]) => k);
+    const cols = [firstColHeader, 'Items Sold', 'Gross Sales', 'Items Refunded', 'Refunds', 'Net Sales'];
     const header = cols.join(',');
-    const body = data.map(r => cols.map(c => {
-      const v = (r as any)[c];
-      return typeof v === 'number' ? v : String(v ?? '');
-    }).join(',')).join('\n');
+    const body = data.map(r => [r.key, r.itemsSold, r.grossSales, r.itemsRefunded, r.refunds, r.netSales].join(',')).join('\n');
     const csv = header + '\n' + body;
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url;
-    a.download = `reports-${active}.csv`;
-    a.click();
+    a.href = url; a.download = `reports-${active}.csv`; a.click();
     URL.revokeObjectURL(url);
   };
 
   return (
     <div className="space-y-6">
-    
       {/* Sub Tabs */}
       <div className="flex flex-wrap gap-2 border-b border-gray-200 pb-2">
         {[
-          { id: 'brand', label: 'Sales by Brand' },
-          { id: 'category', label: 'Sales by Category' },
           { id: 'item', label: 'Sales by Item' },
-          { id: 'payment', label: 'Sales by Payment Type' },
+          { id: 'payment', label: 'Sales by Payment' },
         ].map(t => (
           <button
             key={t.id}
-            className={`px-3 py-1.5 text-sm font-medium rounded ${active === t.id ? 'bg-teal-50 text-teal-700 border border-teal-200' : 'text-gray-600 hover:bg-gray-50 border border-transparent'}`}
+            className={`px-3 py-1.5 text-sm font-medium rounded ${active === (t.id as SubTab) ? 'bg-teal-50 text-teal-700 border border-teal-200' : 'text-gray-600 hover:bg-gray-50 border border-transparent'}`}
             onClick={() => setActive(t.id as SubTab)}
           >
             {t.label}
@@ -108,25 +190,15 @@ const ReportsTab: React.FC = () => {
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search brand"
+            placeholder={`Search ${firstColHeader.toLowerCase()}`}
             className="text-sm p-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
           />
         </div>
         <div className="ml-auto flex items-center gap-2">
-          <button
-            className="inline-flex items-center gap-1 px-3 py-1.5 text-sm rounded-lg border border-gray-300 hover:bg-gray-50"
-            onClick={() => setDisplayed((d) => ({ ...d }))}
-            title="Displayed fields"
-          >
-            <SlidersHorizontal className="w-4 h-4" /> Displayed Fields
-          </button>
-          <button
-            className="inline-flex items-center gap-1 px-3 py-1.5 text-sm rounded-lg border border-gray-300 hover:bg-gray-50"
-            onClick={() => exportCsv()}
-          >
+          <button className="inline-flex items-center gap-1 px-3 py-1.5 text-sm rounded-lg border border-gray-300 hover:bg-gray-50" onClick={() => exportCsv()}>
             <Download className="w-4 h-4" /> Export CSV
           </button>
-          <button className="inline-flex items-center gap-1 px-3 py-1.5 text-sm rounded-lg border border-gray-300 hover:bg-gray-50">
+          <button className="inline-flex items-center gap-1 px-3 py-1.5 text-sm rounded-lg border border-gray-300 hover:bg-gray-50" onClick={() => {/* no-op, data is live */}}>
             <RefreshCcw className="w-4 h-4" /> Refresh
           </button>
         </div>
@@ -137,33 +209,30 @@ const ReportsTab: React.FC = () => {
         <table className="min-w-full text-sm">
           <thead className="bg-gray-50">
             <tr className="text-left text-xs font-semibold text-gray-600">
-              {displayed.brand && <th className="px-3 py-2">Brand</th>}
-              {displayed.itemsSold && <th className="px-3 py-2">Items Sold</th>}
-              {displayed.grossSales && <th className="px-3 py-2">Gross Sales</th>}
-              {displayed.itemsRefunded && <th className="px-3 py-2">Items Refunded</th>}
-              {displayed.refunds && <th className="px-3 py-2">Refunds</th>}
-              {displayed.netSales && <th className="px-3 py-2">Net Sales</th>}
-              {displayed.cogs && <th className="px-3 py-2">Cost of Goods</th>}
-              {displayed.grossProfit && <th className="px-3 py-2">Gross Profit</th>}
-              {displayed.margin && <th className="px-3 py-2">Margin</th>}
-              {displayed.taxes && <th className="px-3 py-2">Taxes</th>}
+              <th className="px-3 py-2">{firstColHeader}</th>
+              <th className="px-3 py-2">Items Sold</th>
+              <th className="px-3 py-2">Gross Sales</th>
+              <th className="px-3 py-2">Items Refunded</th>
+              <th className="px-3 py-2">Refunds</th>
+              <th className="px-3 py-2">Net Sales</th>
             </tr>
           </thead>
           <tbody>
             {data.map((r, idx) => (
-              <tr key={r.brand} className={idx % 2 ? 'bg-white' : 'bg-gray-50'}>
-                {displayed.brand && <td className="px-3 py-2 font-medium text-gray-900">{r.brand}</td>}
-                {displayed.itemsSold && <td className="px-3 py-2">{r.itemsSold.toLocaleString()}</td>}
-                {displayed.grossSales && <td className="px-3 py-2">{formatCurrency(r.grossSales)}</td>}
-                {displayed.itemsRefunded && <td className="px-3 py-2">{r.itemsRefunded.toLocaleString()}</td>}
-                {displayed.refunds && <td className="px-3 py-2">{formatCurrency(r.refunds)}</td>}
-                {displayed.netSales && <td className="px-3 py-2 font-semibold text-teal-700">{formatCurrency(r.netSales)}</td>}
-                {displayed.cogs && <td className="px-3 py-2">{formatCurrency(r.cogs || 0)}</td>}
-                {displayed.grossProfit && <td className="px-3 py-2">{formatCurrency(r.grossProfit || 0)}</td>}
-                {displayed.margin && <td className="px-3 py-2">{formatPct(r.margin)}</td>}
-                {displayed.taxes && <td className="px-3 py-2">{formatCurrency(r.taxes || 0)}</td>}
+              <tr key={r.key} className={idx % 2 ? 'bg-white' : 'bg-gray-50'}>
+                <td className="px-3 py-2 font-medium text-gray-900">{r.key}</td>
+                <td className="px-3 py-2">{r.itemsSold.toLocaleString()}</td>
+                <td className="px-3 py-2">{formatCurrency(r.grossSales)}</td>
+                <td className="px-3 py-2">{r.itemsRefunded.toLocaleString()}</td>
+                <td className="px-3 py-2">{formatCurrency(r.refunds)}</td>
+                <td className="px-3 py-2 font-semibold text-teal-700">{formatCurrency(r.netSales)}</td>
               </tr>
             ))}
+            {data.length === 0 && (
+              <tr>
+                <td colSpan={6} className="px-3 py-6 text-center text-sm text-gray-500">No data for the selected range.</td>
+              </tr>
+            )}
           </tbody>
         </table>
       </div>
@@ -171,11 +240,11 @@ const ReportsTab: React.FC = () => {
       {/* Totals footer */}
       <div className="bg-white border border-gray-200 rounded-lg p-4">
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-sm">
-          <div><div className="text-xs text-gray-500">Gross Sales</div><div className="font-semibold">{formatCurrency(sampleData.reduce((s, r) => s + r.grossSales, 0))}</div></div>
-          <div><div className="text-xs text-gray-500">Refunds</div><div className="font-semibold">{formatCurrency(sampleData.reduce((s, r) => s + r.refunds, 0))}</div></div>
-          <div><div className="text-xs text-gray-500">Net Sales</div><div className="font-semibold text-teal-700">{formatCurrency(sampleData.reduce((s, r) => s + r.netSales, 0))}</div></div>
-          <div><div className="text-xs text-gray-500">Gross Profit</div><div className="font-semibold">{formatCurrency(sampleData.reduce((s, r) => s + (r.grossProfit || 0), 0))}</div></div>
-          <div><div className="text-xs text-gray-500">Taxes</div><div className="font-semibold">{formatCurrency(sampleData.reduce((s, r) => s + (r.taxes || 0), 0))}</div></div>
+          <div><div className="text-xs text-gray-500">Gross Sales</div><div className="font-semibold">{formatCurrency(totals.grossSales)}</div></div>
+          <div><div className="text-xs text-gray-500">Refunds</div><div className="font-semibold">{formatCurrency(totals.refunds)}</div></div>
+          <div><div className="text-xs text-gray-500">Net Sales</div><div className="font-semibold text-teal-700">{formatCurrency(totals.netSales)}</div></div>
+          <div><div className="text-xs text-gray-500">Items Sold</div><div className="font-semibold">{totals.itemsSold.toLocaleString()}</div></div>
+          <div><div className="text-xs text-gray-500">Items Refunded</div><div className="font-semibold">{totals.itemsRefunded.toLocaleString()}</div></div>
         </div>
       </div>
     </div>

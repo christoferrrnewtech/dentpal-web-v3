@@ -13,6 +13,17 @@ const makeItemsBrief = (items: any[] = []): string => {
   return more > 0 ? `${name} x ${qty} + ${more} more` : `${name} x ${qty}`;
 };
 
+const mapItems = (items: any[] = []): Order['items'] => {
+  return items.map((it: any) => ({
+    name: String(it.productName || it.name || 'Item'),
+    quantity: Number(it.quantity || 0),
+    price: it.price != null ? Number(it.price) : undefined,
+    productId: it.productId || it.productID || it.product?.id,
+    sku: it.sku || it.SKU,
+    imageUrl: it.imageURL || it.imageUrl || it.thumbnail || it.photoUrl,
+  }));
+};
+
 const firstItemImage = (items: any[] = []): string | undefined => {
   const first = items[0];
   if (!first) return undefined;
@@ -20,26 +31,38 @@ const firstItemImage = (items: any[] = []): string | undefined => {
 };
 
 const mapDocToOrder = (id: string, data: any): Order => {
-  const items = Array.isArray(data.items) ? data.items : [];
+  const itemsRaw = Array.isArray(data.items) ? data.items : [];
 
   // Make date string only (no time)
   const createdAtMs = data.createdAt?.toMillis?.() ? Number(data.createdAt.toMillis()) : (typeof data.createdAt === 'number' ? data.createdAt : Date.now());
   const dateOnly = new Date(createdAtMs).toISOString().split('T')[0];
 
+  // Prefer tracking number for barcode field, with sensible fallbacks
+  const tracking = String(
+    data.shippingInfo?.trackingNumber ||
+    data.trackingNumber ||
+    data.checkoutSessionId ||
+    data.paymentInfo?.checkoutSessionId ||
+    id
+  );
+
+  const items = mapItems(itemsRaw);
+
   return {
     id,
-    orderCount: Number(data.summary?.totalItems || items.length || 0),
-    barcode: String(data.checkoutSessionId || (data.paymentInfo?.checkoutSessionId) || id),
+    orderCount: Number(data.summary?.totalItems || itemsRaw.length || 0),
+    barcode: tracking,
     timestamp: dateOnly,
     customer: {
       name: String((data.shippingInfo?.fullName) || data.customerName || 'Unknown Customer'),
       contact: String((data.shippingInfo?.phoneNumber) || data.customerPhone || ''),
     },
-    sellerName: String(data.sellerName || (Array.isArray(data.sellerIds) && data.sellerIds.length > 1 ? 'Multiple Sellers' : items[0]?.sellerName || '')) || undefined,
-    itemsBrief: makeItemsBrief(items),
+    sellerName: String(data.sellerName || (Array.isArray(data.sellerIds) && data.sellerIds.length > 1 ? 'Multiple Sellers' : itemsRaw[0]?.sellerName || '')) || undefined,
+    itemsBrief: makeItemsBrief(itemsRaw),
+    items,
     total: Number(data.summary?.total ?? data.paymentInfo?.amount ?? 0) || undefined,
     currency: String((data.paymentInfo?.currency) || 'PHP'),
-    imageUrl: firstItemImage(items),
+    imageUrl: firstItemImage(itemsRaw),
     package: { size: 'medium', dimensions: `${data.shippingInfo?.addressLine1 ? '' : ''}`.trim(), weight: '' },
     priority: 'normal',
     status: (() => {

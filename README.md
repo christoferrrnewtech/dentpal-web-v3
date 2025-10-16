@@ -1,4 +1,4 @@
-# DentPal - Dental Management 
+# DentPal - Dental Management
 
 [![Professional Frontend](https://img.shields.io/badge/Status-Production%20Ready-brightgreen)](https://github.com)
 [![React](https://img.shields.io/badge/React-18.3.1-blue)](https://reactjs.org/)
@@ -24,7 +24,7 @@ Role: Administrator
 
 🚀 Key Features
 
-Advanced Authentication System**
+Advanced Authentication System\*\*
 
 - Secure login/signup with Firebase Authentication
 - Professional branding with DentPal logo integration
@@ -32,21 +32,21 @@ Advanced Authentication System**
 - Split-screen responsive layout matching Figma designs
 - Form validation and error handling
 
-Comprehensive Dashboard**
+Comprehensive Dashboard\*\*
 
 - Real-time analytics and metrics cards
 - Revenue tracking with interactive charts
 - Advanced filtering system (date, payment method, location, seller)
 - Dynamic stats cards with growth indicators
 
-Complete Booking Workflow**
+Complete Booking Workflow\*\*
 
 - **Scan Tab**: Barcode scanning and order creation with validation
 - **Process Tab**: Order processing queue with priority handling and bulk actions
 - **Completed Tab**: Order history with analytics and export functionality
 - Smart tab navigation with proper state management
 
-Confirmation Management**
+Confirmation Management\*\*
 
 - Dedicated confirmation interface separate from booking workflow
 - Priority filtering and customer search functionality
@@ -80,8 +80,8 @@ This application follows a **separated frontend-backend architecture**:
 - **Authentication**: Firebase Auth SDK
 - **Port**: 5174 (development)
 
-
 ### Communication
+
 - **CORS**: Configured for localhost:5174
 - **Rate Limiting**: Implemented on API endpoints
 - Professional user interface with avatar generation

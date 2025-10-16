@@ -53,6 +53,10 @@ export const OrderTab: React.FC<OrderTabProps> = ({
   // Pagination state
   const [page, setPage] = useState<number>(1);
   const [pageSize, setPageSize] = useState<number>(10);
+  // New: details dialog state
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
+  const [copied, setCopied] = useState<null | 'id' | 'barcode'>(null);
 
   // Reset to first page when filters or tab change
   useEffect(() => { setPage(1); }, [activeSubTab, dateFrom, dateTo]);
@@ -95,6 +99,71 @@ export const OrderTab: React.FC<OrderTabProps> = ({
   const rangeEnd = Math.min(startIdx + pageSize, total);
 
   const ActiveView = viewMap[activeSubTab];
+
+  // When a row asks to show details, open dialog and also bubble if parent provided handler
+  const handleSelectOrder = (o: Order) => {
+    setSelectedOrder(o);
+    setDetailsOpen(true);
+    onSelectOrder?.(o);
+  };
+
+  // Accessibility: close on Escape
+  useEffect(() => {
+    if (!detailsOpen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setDetailsOpen(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [detailsOpen]);
+
+  const statusClasses = (s: Order['status']) => {
+    switch (s) {
+      case 'pending': return 'bg-amber-100 text-amber-800 border-amber-200';
+      case 'to-ship': return 'bg-sky-100 text-sky-800 border-sky-200';
+      case 'processing': return 'bg-indigo-100 text-indigo-800 border-indigo-200';
+      case 'completed': return 'bg-emerald-100 text-emerald-800 border-emerald-200';
+      case 'cancelled': return 'bg-rose-100 text-rose-800 border-rose-200';
+      case 'failed-delivery': return 'bg-orange-100 text-orange-800 border-orange-200';
+      case 'returned':
+      case 'refunded':
+      case 'return_refund':
+        return 'bg-violet-100 text-violet-800 border-violet-200';
+      default: return 'bg-gray-100 text-gray-700 border-gray-200';
+    }
+  };
+
+  const stepOrder: LifecycleStage[] = ['unpaid','to-ship','shipping','delivered'];
+
+  const copyToClipboard = async (text: string, which: 'id' | 'barcode') => {
+    try { await navigator.clipboard.writeText(text); setCopied(which); setTimeout(()=> setCopied(null), 1200); } catch {}
+  };
+
+  const printSummary = (o: Order) => {
+    const w = window.open('', '_blank');
+    if (!w) return;
+    w.document.write(`<html><head><title>Order ${o.id}</title></head><body style="font-family:system-ui, -apple-system, Segoe UI, Roboto, sans-serif; padding:24px;">`);
+    w.document.write(`<h2 style="margin:0 0 12px;">Order #${o.id}</h2>`);
+    w.document.write(`<div>Date: ${o.timestamp}</div>`);
+    w.document.write(`<div>Status: ${o.status}</div>`);
+    w.document.write(`<div>Tracking No.: ${o.barcode}</div>`);
+    if (Array.isArray(o.items) && o.items.length) {
+      w.document.write('<h3 style="margin:16px 0 6px;">Items</h3>');
+      w.document.write('<table style="width:100%; border-collapse:collapse;">');
+      w.document.write('<thead><tr><th align="left" style="border-bottom:1px solid #e5e7eb; padding:6px 0;">Name</th><th align="right" style="border-bottom:1px solid #e5e7eb; padding:6px 0;">Qty</th><th align="right" style="border-bottom:1px solid #e5e7eb; padding:6px 0;">Price</th></tr></thead>');
+      w.document.write('<tbody>');
+      o.items.forEach(it => {
+        w.document.write(`<tr><td style="padding:6px 0; border-bottom:1px solid #f3f4f6;">${it.name}</td><td align="right" style="padding:6px 0; border-bottom:1px solid #f3f4f6;">${it.quantity}</td><td align="right" style="padding:6px 0; border-bottom:1px solid #f3f4f6;">${it.price ?? ''}</td></tr>`);
+      });
+      w.document.write('</tbody></table>');
+    } else if (o.itemsBrief) {
+      w.document.write(`<div>Items: ${o.itemsBrief}</div>`);
+    }
+    if (o.total != null) w.document.write(`<div style="margin-top:10px;">Total: ${o.currency || 'PHP'} ${o.total}</div>`);
+    w.document.write(`<div>Buyer: ${o.customer.name || ''}</div>`);
+    w.document.write(`<div>Contact: ${o.customer.contact || ''}</div>`);
+    w.document.write(`</body></html>`);
+    w.document.close();
+    w.print();
+  };
 
   return (
     <div className="space-y-6">
@@ -150,7 +219,7 @@ export const OrderTab: React.FC<OrderTabProps> = ({
       </div>
 
       {/* Orders View */}
-      <ActiveView orders={pagedOrders} onSelectOrder={onSelectOrder} />
+      <ActiveView orders={pagedOrders} onSelectOrder={handleSelectOrder} />
 
       {/* Pagination */}
       <div className="flex items-center justify-end gap-3 pt-2">
@@ -184,6 +253,136 @@ export const OrderTab: React.FC<OrderTabProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Details Dialog */}
+      {detailsOpen && selectedOrder && (() => {
+        const stg = mapOrderToStage(selectedOrder);
+        const isTerminal = ['failed-delivery','cancellation','return-refund'].includes(stg);
+        const activeIdx = stepOrder.indexOf(stg as any);
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center">
+            <div className="absolute inset-0 bg-black/40 backdrop-blur-[1px]" onClick={() => setDetailsOpen(false)} />
+            <div role="dialog" aria-modal="true" className="relative z-10 w-[95vw] max-w-3xl bg-white rounded-2xl shadow-xl border border-gray-200 overflow-hidden">
+              {/* Header */}
+              <div className="px-5 py-4 border-b border-gray-100 bg-gradient-to-r from-white to-gray-50/60">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-xs text-gray-500">Order</div>
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-lg font-semibold text-gray-900 truncate">#{selectedOrder.id}</h3>
+                      <span className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full border ${statusClasses(selectedOrder.status)}`}>
+                        {selectedOrder.status}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button className="text-xs px-3 py-1.5 rounded-md border border-gray-200 hover:bg-gray-50" onClick={() => copyToClipboard(selectedOrder.id,'id')}>{copied==='id' ? 'Copied' : 'Copy ID'}</button>
+                    <button className="text-xs px-3 py-1.5 rounded-md border border-gray-200 hover:bg-gray-50" onClick={() => copyToClipboard(selectedOrder.barcode,'barcode')}>{copied==='barcode' ? 'Copied' : 'Copy barcode'}</button>
+                    <button className="text-xs px-3 py-1.5 rounded-md border border-gray-200 hover:bg-gray-50" onClick={() => setDetailsOpen(false)}>Close</button>
+                  </div>
+                </div>
+                {/* Progress */}
+                <div className="mt-3">
+                  {isTerminal ? (
+                    <div className="text-xs text-gray-600">This order is in a terminal state: <span className="font-medium capitalize">{selectedOrder.status}</span>.</div>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      {stepOrder.map((s, i) => (
+                        <div key={s} className="flex items-center gap-2">
+                          <div className={`h-2 w-2 rounded-full ${i <= activeIdx ? 'bg-teal-600' : 'bg-gray-300'}`} />
+                          <div className={`text-[11px] ${i <= activeIdx ? 'text-teal-700' : 'text-gray-500'}`}>{s.replace('-', ' ')}</div>
+                          {i < stepOrder.length - 1 && <div className={`mx-2 h-px w-8 ${i < activeIdx ? 'bg-teal-200' : 'bg-gray-200'}`} />}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Body */}
+              <div className="p-5">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+                  {/* Left: Buyer & Timing */}
+                  <div className="space-y-3">
+                    <div>
+                      <div className="text-xs text-gray-500">Date</div>
+                      <div className="text-sm font-medium text-gray-900">{selectedOrder.timestamp}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-gray-500">Buyer</div>
+                      <div className="text-sm font-medium text-gray-900">{selectedOrder.customer.name || '—'}</div>
+                      <div className="text-xs text-gray-500">{selectedOrder.customer.contact || ''}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-gray-500">Tracking No.</div>
+                      <div className="text-sm text-gray-900 break-all">{selectedOrder.barcode}</div>
+                    </div>
+                  </div>
+
+                  {/* Middle: Items & Media */}
+                  <div className="space-y-3 md:col-span-2">
+                    <div>
+                      <div className="flex items-center justify-between">
+                        <div className="text-xs text-gray-500">Items</div>
+                        <div className="text-xs text-gray-500">{selectedOrder.currency || 'PHP'}</div>
+                      </div>
+                      {Array.isArray(selectedOrder.items) && selectedOrder.items.length > 0 ? (
+                        <div className="mt-1 -mx-1.5 overflow-hidden border border-gray-200 rounded-lg">
+                          <table className="w-full text-xs">
+                            <thead className="bg-gray-50">
+                              <tr>
+                                <th className="text-left px-2 py-1.5 text-gray-600 font-medium">Name</th>
+                                <th className="text-right px-2 py-1.5 text-gray-600 font-medium">Qty</th>
+                                <th className="text-right px-2 py-1.5 text-gray-600 font-medium">Price</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {selectedOrder.items.map((it, idx) => (
+                                <tr key={idx} className="border-t border-gray-100">
+                                  <td className="px-2 py-1.5 text-gray-900">{it.name}</td>
+                                  <td className="px-2 py-1.5 text-right text-gray-900">{it.quantity}</td>
+                                  <td className="px-2 py-1.5 text-right text-gray-900">{it.price ?? ''}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      ) : (
+                        <div className="text-sm font-medium text-gray-900">{selectedOrder.itemsBrief || `${selectedOrder.orderCount} item(s)`}</div>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-3">
+                      {selectedOrder.imageUrl ? (
+                        <img src={selectedOrder.imageUrl} alt="Product" className="w-20 h-20 rounded-lg object-cover border border-gray-200 shadow-sm" />
+                      ) : (
+                        <div className="w-20 h-20 rounded-lg bg-gray-100 border border-gray-200 flex items-center justify-center text-[10px] text-gray-400">No Image</div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Right: Amounts */}
+                  <div className="space-y-3">
+                    <div>
+                      <div className="text-xs text-gray-500">Total Amount</div>
+                      <div className="text-lg font-semibold text-gray-900">{selectedOrder.currency || 'PHP'} {selectedOrder.total != null ? selectedOrder.total : '—'}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-gray-500">Package</div>
+                      <div className="text-sm text-gray-900">{selectedOrder.package.size}</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Footer */}
+              <div className="px-5 pb-5 flex items-center justify-end gap-2 border-t border-gray-100 pt-4">
+                <button className="text-xs px-3 py-1.5 rounded-md border border-gray-200 hover:bg-gray-50" onClick={() => printSummary(selectedOrder)}>Print</button>
+                <button className="text-xs px-3 py-1.5 rounded-md border border-teal-600 text-teal-700 hover:bg-teal-50" onClick={() => setDetailsOpen(false)}>Close</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 };

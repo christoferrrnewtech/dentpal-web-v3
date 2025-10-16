@@ -4,6 +4,6 @@ import OrderRow from '../parts/OrderRow';
 
 interface ViewProps { orders: Order[]; onSelectOrder?: (o: Order) => void; }
 const UnpaidOrdersView: React.FC<ViewProps> = ({ orders, onSelectOrder }) => (
-  <div className="space-y-4">{orders.map(o => <OrderRow key={o.id} order={o} onClick={() => onSelectOrder?.(o)} />)}</div>
+  <div className="space-y-4">{orders.map(o => <OrderRow key={o.id} order={o} onDetails={() => onSelectOrder?.(o)} />)}</div>
 );
 export default UnpaidOrdersView;

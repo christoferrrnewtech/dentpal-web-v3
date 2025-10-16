@@ -9,7 +9,7 @@ interface ViewProps {
 const AllOrdersView: React.FC<ViewProps> = ({ orders, onSelectOrder }) => {
   return (
     <div className="space-y-4">
-      {orders.map(o => <OrderRow key={o.id} order={o} onClick={() => onSelectOrder?.(o)} />)}
+      {orders.map(o => <OrderRow key={o.id} order={o} onDetails={() => onSelectOrder?.(o)} />)}
     </div>
   );
 };
