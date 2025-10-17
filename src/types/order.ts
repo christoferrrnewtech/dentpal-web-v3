@@ -3,10 +3,20 @@ export interface Order {
   id: string;
   orderCount: number;
   barcode: string;
-  timestamp: string;
+  timestamp: string; // Accrual basis date (order created date, YYYY-MM-DD)
   customer: {
     name: string;
     contact: string;
+  };
+  // Optional identifiers for reporting
+  customerId?: string;
+  sellerIds?: string[];
+  // Region info derived from shipping address
+  region?: {
+    barangay?: string;
+    municipality?: string;
+    province?: string;
+    zip?: string;
   };
   // New: seller display name (may be "Multiple Sellers" in admin view)
   sellerName?: string;
@@ -15,6 +25,20 @@ export interface Order {
   // New: monetary total and currency
   total?: number;
   currency?: string;
+  // New: payment type/method for reporting
+  paymentType?: string;
+  // New: payment transaction id and cash-basis timestamps
+  paymentTxnId?: string;
+  paidAt?: string; // Cash basis date (YYYY-MM-DD)
+  refundedAt?: string; // Refund recognition date (YYYY-MM-DD)
+  // New: breakdown amounts for accounting
+  tax?: number;
+  discount?: number;
+  shipping?: number;
+  fees?: number;
+  // Costing
+  cogs?: number;
+  grossMargin?: number;
   // New: thumbnail of the first item purchased
   imageUrl?: string;
   package: {
@@ -33,6 +57,10 @@ export interface Order {
     productId?: string;
     sku?: string;
     imageUrl?: string;
+    category?: string; // optional category label
+    subcategory?: string; // optional subcategory label
+    categoryId?: string; // optional category id reference
+    cost?: number; // unit cost for COGS
   }>;
 }
 
