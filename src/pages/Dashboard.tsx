@@ -31,6 +31,16 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
   const { hasPermission, loading: authLoading } = useAuth();
   const { isAdmin } = useAuth();
   const { uid } = useAuth();
+  
+  // New: seller dashboard UI state
+  const [showTutorial, setShowTutorial] = useState(false);
+  const [sellerFilters, setSellerFilters] = useState({
+    dateRange: "last-30",
+    brand: "all",
+    subcategory: "all",
+    location: "all",
+    paymentType: "all",
+  });
 
   // Initialize active tab from query string (e.g., /?tab=inventory)
   useEffect(() => {
@@ -296,6 +306,202 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
     switch (activeItem) {
       case "dashboard":
         if (!isAllowed("dashboard")) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
+        // Seller-first dashboard (non-admin)
+        if (!isAdmin) {
+          const currency = new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP", maximumFractionDigits: 2 });
+          // Helpers
+          const isPaidStatus = (s: Order['status']) => ['to-ship','processing','completed'].includes(s);
+          const getAmount = (o: Order) => typeof o.total === 'number' ? o.total : (o.items?.reduce((s, it) => s + ((it.price || 0) * (it.quantity || 0)), 0) || 0);
+          const parseDate = (s?: string) => {
+            if (!s) return null;
+            const d = new Date(s);
+            return isNaN(d.getTime()) ? null : d;
+          };
+          const withinLastDays = (s?: string, key?: string) => {
+            if (!s) return false;
+            const d = parseDate(s);
+            if (!d) return false;
+            const now = new Date();
+            const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+            let days = 30;
+            switch (key) {
+              case 'last-7': days = 7; break;
+              case 'last-30': days = 30; break;
+              case 'last-90': days = 90; break;
+              case 'last-365': days = 365; break;
+              default: days = 30;
+            }
+            const from = new Date(today.getTime() - (days - 1) * 86400000);
+            return d >= from && d <= new Date(today.getTime() + 86399999);
+          };
+
+          // Build dynamic filter options from current orders
+          const productOptions = Array.from(new Set((confirmationOrders || []).flatMap(o => (o.items || []).map(it => it.name).filter(Boolean) as string[]))).sort((a,b)=>a.localeCompare(b));
+          const subcategoryOptions = Array.from(new Set((confirmationOrders || []).flatMap(o => (o.items || []).map(it => (it.subcategory || '').trim()).filter(Boolean)))).sort((a,b)=>a.localeCompare(b));
+          const paymentTypeOptions = Array.from(new Set((confirmationOrders || []).map(o => (o.paymentType || '').trim()).filter(Boolean))).sort((a,b)=>a.localeCompare(b));
+
+          // Apply filters on subscribed orders
+          const filtered = (confirmationOrders || []).filter(o => {
+            // Date filter uses accrual timestamp for now
+            if (!withinLastDays(o.timestamp, sellerFilters.dateRange)) return false;
+            // Payment type
+            if (sellerFilters.paymentType !== 'all' && (o.paymentType || 'unknown') !== sellerFilters.paymentType) return false;
+            // Product (brand) and Subcategory filters operate at item level
+            const items = o.items || [];
+            const matchProduct = sellerFilters.brand === 'all' || items.some(it => (it.name || '') === sellerFilters.brand);
+            const matchSubcat = sellerFilters.subcategory === 'all' || items.some(it => (it.subcategory || '') === sellerFilters.subcategory);
+            if (!matchProduct || !matchSubcat) return false;
+            // TODO: Location filter
+            return true;
+          });
+          const paid = filtered.filter(o => isPaidStatus(o.status));
+          const receipts = paid.length;
+          const totalRevenue = paid.reduce((s, o) => s + getAmount(o), 0);
+          const avgSalePerTxn = receipts ? (totalRevenue / receipts) : 0;
+          const logisticsDue = paid.reduce((s, o) => s + (o.shipping || 0) + (o.fees || 0), 0);
+          const metrics = { avgSalePerTxn, receipts, logisticsDue, totalRevenue, avgPackMins: 80, avgHandoverMins: 165 };
+          const fmtMins = (mins: number) => { const h = Math.floor(mins / 60); const m = mins % 60; return `${h}h ${m}m`; };
+          return (
+            <div className="space-y-6">
+              {/* Title + Tutorial */}
+              <div className="flex items-center justify-between">
+                <h3 className="text-lg font-semibold text-gray-900 tracking-tight">Dashboard</h3>
+                <button onClick={() => setShowTutorial(true)} className="px-3 py-2 text-xs font-medium rounded-lg border border-gray-200 bg-white hover:bg-gray-50 shadow-sm">Tutorial</button>
+              </div>
+
+              {/* KPI cards */}
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div className="bg-white border border-gray-100 rounded-2xl p-5 shadow-sm">
+                  <div className="text-sm font-medium text-gray-700">Average sale per transaction</div>
+                  <div className="mt-2 text-2xl font-bold text-gray-900">{currency.format(metrics.avgSalePerTxn)}</div>
+                  <div className="mt-1 text-xs text-gray-500">Last {sellerFilters.dateRange.replace('last-','')} days</div>
+                </div>
+                <div className="bg-white border border-gray-100 rounded-2xl p-5 shadow-sm">
+                  <div className="text-sm font-medium text-gray-700">Number of receipts</div>
+                  <div className="mt-2 text-2xl font-bold text-gray-900">{metrics.receipts.toLocaleString()}</div>
+                  <div className="mt-1 text-xs text-gray-500">Paid orders</div>
+                </div>
+                <div className="bg-white border border-gray-100 rounded-2xl p-5 shadow-sm">
+                  <div className="text-sm font-medium text-gray-700">Logistics fee to pay</div>
+                  <div className="mt-2 text-2xl font-bold text-gray-900">{currency.format(metrics.logisticsDue)}</div>
+                  <div className="mt-1 text-xs text-gray-500">Shipping + fees</div>
+                </div>
+                {/* New KPI: Average completion time */}
+                <div className="bg-white border border-gray-100 rounded-2xl p-5 shadow-sm">
+                  <div className="text-sm font-medium text-gray-700">Average completion time</div>
+                  <div className="mt-2 text-2xl font-bold text-gray-900">{`${fmtMins(metrics.avgPackMins)} / ${fmtMins(metrics.avgHandoverMins)}`}</div>
+                  <div className="mt-1 text-xs text-gray-500">To pack / To handover</div>
+                </div>
+              </div>
+
+              {/* Horizontal Filters (below KPIs, above Revenue) */}
+              <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100">
+                <div className="text-sm font-semibold text-gray-900 mb-3">Filters</div>
+                <div className="flex flex-col lg:flex-row lg:items-end lg:space-x-4 gap-4">
+                  <div className="flex-1 min-w-[160px]">
+                    <label className="block text-xs font-medium text-gray-700 mb-1">Select date</label>
+                    <select className="w-full p-2 border border-gray-200 rounded-lg text-xs focus:ring-2 focus:ring-teal-500 focus:border-transparent" value={sellerFilters.dateRange} onChange={(e)=> setSellerFilters(f=>({ ...f, dateRange: e.target.value }))}>
+                      <option value="last-7">Last 7 days</option>
+                      <option value="last-30">Last 30 days</option>
+                      <option value="last-90">Last 90 days</option>
+                      <option value="last-365">Last year</option>
+                    </select>
+                  </div>
+                  <div className="flex-1 min-w-[160px]">
+                    <label className="block text-xs font-medium text-gray-700 mb-1">Select product</label>
+                    <select className="w-full p-2 border border-gray-200 rounded-lg text-xs focus:ring-2 focus:ring-teal-500 focus:border-transparent" value={sellerFilters.brand} onChange={(e)=> setSellerFilters(f=>({ ...f, brand: e.target.value }))}>
+                      <option value="all">All products</option>
+                      {productOptions.map(name => (
+                        <option key={name} value={name}>{name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="flex-1 min-w-[160px]">
+                    <label className="block text-xs font-medium text-gray-700 mb-1">Select subcategory</label>
+                    <select className="w-full p-2 border border-gray-200 rounded-lg text-xs focus:ring-2 focus:ring-teal-500 focus:border-transparent" value={sellerFilters.subcategory} onChange={(e)=> setSellerFilters(f=>({ ...f, subcategory: e.target.value }))}>
+                      <option value="all">All subcategories</option>
+                      {subcategoryOptions.map(sc => (
+                        <option key={sc} value={sc}>{sc}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="flex-1 min-w-[160px]">
+                    <label className="block text-xs font-medium text-gray-700 mb-1">Select location</label>
+                    <select className="w-full p-2 border border-gray-200 rounded-lg text-xs focus:ring-2 focus:ring-teal-500 focus:border-transparent" value={sellerFilters.location} onChange={(e)=> setSellerFilters(f=>({ ...f, location: e.target.value }))}>
+                      <option value="all">All locations</option>
+                      <option value="ncr">NCR</option>
+                      <option value="luzon">Luzon</option>
+                      <option value="visayas">Visayas</option>
+                      <option value="mindanao">Mindanao</option>
+                    </select>
+                  </div>
+                  <div className="flex-1 min-w-[160px]">
+                    <label className="block text-xs font-medium text-gray-700 mb-1">Select payment type</label>
+                    <select className="w-full p-2 border border-gray-200 rounded-lg text-xs focus:ring-2 focus:ring-teal-500 focus:border-transparent" value={sellerFilters.paymentType} onChange={(e)=> setSellerFilters(f=>({ ...f, paymentType: e.target.value }))}>
+                      <option value="all">All payment types</option>
+                      {paymentTypeOptions.map(pt => (
+                        <option key={pt} value={pt}>{pt}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="flex items-end gap-2 pt-2">
+                    <button className="px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white text-xs font-medium rounded-lg shadow-sm transition">Apply</button>
+                    <button onClick={()=> setSellerFilters({ dateRange: "last-30", brand: "all", subcategory: "all", location: "all", paymentType: "all" })} className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-medium rounded-lg transition">Reset</button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Revenue */}
+              <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
+                <div className="flex items-center justify-between mb-4">
+                  <div>
+                    <h4 className="text-sm font-medium text-gray-700">Revenue</h4>
+                    <div className="mt-1 text-2xl font-bold text-gray-900">{currency.format(metrics.totalRevenue)}</div>
+                    <div className="text-xs text-gray-500">Sales</div>
+                  </div>
+                  <div className="hidden md:block text-xs text-gray-500">Date: {sellerFilters.dateRange.replace("last-", "Last ")} days</div>
+                </div>
+                {(() => {
+                  // Build simple time series from filtered paid orders (by accrual date)
+                  const byDate = new Map<string, { amount: number; count: number }>();
+                  paid.forEach(o => {
+                    const key = o.timestamp.slice(0,10); // YYYY-MM-DD
+                    const prev = byDate.get(key) || { amount: 0, count: 0 };
+                    byDate.set(key, { amount: prev.amount + getAmount(o), count: prev.count + 1 });
+                  });
+                  const series = Array.from(byDate.entries())
+                    .sort(([a],[b]) => a.localeCompare(b))
+                    .map(([date, v]) => {
+                      const d = new Date(date);
+                      const label = `${(d.getMonth()+1).toString().padStart(2,'0')}/${d.getDate().toString().padStart(2,'0')}`;
+                      return { name: label, revenue: v.amount, count: v.count };
+                    });
+                  return <RevenueChart data={series} />;
+                })()}
+                <div className="mt-2 text-[11px] text-gray-500">(date)</div>
+              </div>
+
+              {/* Tutorial modal */}
+              {showTutorial && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center">
+                  <div className="absolute inset-0 bg-black/40" onClick={() => setShowTutorial(false)} />
+                  <div className="relative z-10 w-[92vw] max-w-xl bg-white rounded-2xl shadow-xl border border-gray-200 overflow-hidden">
+                    <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
+                      <div className="text-sm font-medium text-gray-900">Dashboard tutorial</div>
+                      <button className="text-xs px-3 py-1.5 rounded-md border border-gray-200 hover:bg-gray-50" onClick={() => setShowTutorial(false)}>Close</button>
+                    </div>
+                    <div className="p-4 space-y-2 text-sm text-gray-700">
+                      <p>Use the filters below the KPIs to refine metrics by date, brand, category, location, and payment type.</p>
+                      <p>KPIs summarize performance. The line chart shows revenue over time. Hover points for details.</p>
+                      <p>Fulfillment times help you optimize operations from packing to handover.</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        }
+        // Admin layout (existing)
         return (
           <div className="space-y-8">
             {/* Top Section - Metrics Cards (3) */}
@@ -313,7 +519,6 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
                   </div>
                 </div>
               </div>
-
               {/* Total Transactions Card */}
               <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
                 <div className="flex items-center justify-between">
@@ -327,7 +532,6 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
                   </div>
                 </div>
               </div>
-
               {/* Active Users Card */}
               <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
                 <div className="flex items-center justify-between">
@@ -342,7 +546,6 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
                 </div>
               </div>
             </div>
-
             {/* Horizontal Filters Bar */}
             <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100">
               <div className="flex flex-col lg:flex-row lg:items-end lg:space-x-4 gap-4">
@@ -404,7 +607,6 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
                 </div>
               </div>
             </div>
-
             {/* Revenue Chart Section */}
             <div className="bg-white rounded-2xl p-8 shadow-sm border border-gray-100">
               <div className="flex items-center justify-between mb-8">
