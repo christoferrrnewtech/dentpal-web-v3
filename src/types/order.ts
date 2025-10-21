@@ -4,6 +4,8 @@ export interface Order {
   orderCount: number;
   barcode: string;
   timestamp: string; // Accrual basis date (order created date, YYYY-MM-DD)
+  // New: full createdAt ISO timestamp to compute durations more precisely
+  createdAt?: string; // ISO string e.g. 2024-09-09T08:30:00.000Z
   customer: {
     name: string;
     contact: string;
@@ -29,8 +31,8 @@ export interface Order {
   paymentType?: string;
   // New: payment transaction id and cash-basis timestamps
   paymentTxnId?: string;
-  paidAt?: string; // Cash basis date (YYYY-MM-DD)
-  refundedAt?: string; // Refund recognition date (YYYY-MM-DD)
+  paidAt?: string; // Cash basis date (YYYY-MM-DD) or ISO if available
+  refundedAt?: string; // Refund recognition date (YYYY-MM-DD) or ISO if available
   // New: breakdown amounts for accounting
   tax?: number;
   discount?: number;
@@ -41,6 +43,10 @@ export interface Order {
   grossMargin?: number;
   // New: thumbnail of the first item purchased
   imageUrl?: string;
+  // New: fulfillment lifecycle timestamps (ISO strings if present in Firestore)
+  packedAt?: string; // when the order was packed / moved to to-ship
+  handoverAt?: string; // when the parcel was handed over to courier
+  deliveredAt?: string; // when the parcel was delivered/completed
   package: {
     size: 'small' | 'medium' | 'large';
     dimensions: string;

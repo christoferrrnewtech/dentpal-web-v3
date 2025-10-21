@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import Sidebar from "@/components/dashboard/Sidebar";
 import DashboardHeader from "@/components/dashboard/DashboardHeader";
 import StatsCard from "@/components/dashboard/StatsCard";
@@ -42,6 +42,133 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
     paymentType: "all",
   });
 
+  // State moved up so memoized selectors can depend on it safely
+  const [confirmationOrders, setConfirmationOrders] = useState<Order[]>([
+    {
+      id: "DP-2024-005",
+      orderCount: 3,
+      barcode: "2345678901",
+      timestamp: "2024-09-09T08:30:00Z",
+      customer: { name: "Perfect Smile Dental", contact: "+63 917 123 4567" },
+      package: { size: "medium" as const, dimensions: "15cm × 10cm × 8cm", weight: "0.7kg" },
+      priority: "urgent" as const,
+      status: "processing" as const
+    },
+    {
+      id: "DP-2024-006",
+      orderCount: 1,
+      barcode: "3456789012",
+      timestamp: "2024-09-09T09:15:00Z",
+      customer: { name: "Bright Teeth Clinic", contact: "+63 917 234 5678" },
+      package: { size: "small" as const, dimensions: "10cm × 8cm × 5cm", weight: "0.3kg" },
+      priority: "priority" as const,
+      status: "processing" as const
+    }
+  ]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Derived: normalize and compute options/filtered/metrics so UI updates consistently
+  const productOptions = useMemo(() => {
+    return Array.from(
+      new Set(
+        (confirmationOrders || [])
+          .flatMap(o => (o.items || []).map(it => (it.name || '').trim()).filter(Boolean))
+      )
+    ).sort((a, b) => a.localeCompare(b));
+  }, [confirmationOrders]);
+
+  const subcategoryOptions = useMemo(() => {
+    return Array.from(
+      new Set(
+        (confirmationOrders || [])
+          .flatMap(o => (o.items || []).map(it => (it.subcategory || '').trim()).filter(Boolean))
+      )
+    ).sort((a, b) => a.localeCompare(b));
+  }, [confirmationOrders]);
+
+  const paymentTypeOptions = useMemo(() => {
+    return Array.from(
+      new Set(
+        (confirmationOrders || [])
+          .map(o => (o.paymentType || '').trim())
+          .filter(Boolean)
+      )
+    ).sort((a, b) => a.localeCompare(b));
+  }, [confirmationOrders]);
+
+  const isPaidStatus = (s: Order['status']) => ['to-ship','processing','completed'].includes(s);
+  const getAmount = (o: Order) => typeof o.total === 'number' ? o.total : ((o.items || []).reduce((s, it) => s + ((it.price || 0) * (it.quantity || 0)), 0) || 0);
+
+  const filteredOrders = useMemo(() => {
+    // Helpers inside memo to avoid re-creation elsewhere
+    const parseDate = (s?: string) => {
+      if (!s) return null;
+      const d = new Date(s);
+      return isNaN(d.getTime()) ? null : d;
+    };
+    const withinLastDays = (s?: string, key?: string) => {
+      if (!s) return false;
+      const d = parseDate(s);
+      if (!d) return false;
+      const now = new Date();
+      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      let days = 30;
+      switch (key) {
+        case 'last-7': days = 7; break;
+        case 'last-30': days = 30; break;
+        case 'last-90': days = 90; break;
+        case 'last-365': days = 365; break;
+        default: days = 30;
+      }
+      const from = new Date(today.getTime() - (days - 1) * 86400000);
+      return d >= from && d <= new Date(today.getTime() + 86399999);
+    };
+
+    const { dateRange, brand, subcategory, paymentType } = sellerFilters;
+
+    return (confirmationOrders || []).filter(o => {
+      if (!withinLastDays(o.timestamp, dateRange)) return false;
+      if (paymentType !== 'all' && (String(o.paymentType || '').trim()) !== paymentType) return false;
+      const items = o.items || [];
+      const matchProduct = brand === 'all' || items.some(it => String(it.name || '') === brand);
+      const matchSubcat = subcategory === 'all' || items.some(it => String(it.subcategory || '') === subcategory);
+      if (!matchProduct || !matchSubcat) return false;
+      // TODO: implement location filter when region data is standardized
+      return true;
+    });
+  }, [confirmationOrders, sellerFilters]);
+
+  const paidOrders = useMemo(() => filteredOrders.filter(o => isPaidStatus(o.status)), [filteredOrders]);
+
+  const kpiMetrics = useMemo(() => {
+    const receipts = paidOrders.length;
+    const totalRevenue = paidOrders.reduce((s, o) => s + getAmount(o), 0);
+    const avgSalePerTxn = receipts ? (totalRevenue / receipts) : 0;
+    const logisticsDue = paidOrders.reduce((s, o) => s + (Number(o.shipping || 0) + Number(o.fees || 0)), 0);
+
+    // Average timings from lifecycle timestamps
+    const toMs = (s?: string) => {
+      if (!s) return undefined;
+      const t = Date.parse(s);
+      return Number.isFinite(t) ? t : undefined;
+    };
+    const packDurations: number[] = [];
+    const handoverDurations: number[] = [];
+    paidOrders.forEach(o => {
+      const created = toMs(o.createdAt || o.timestamp);
+      const packed = toMs(o.packedAt);
+      const handover = toMs(o.handoverAt);
+      if (created != null && packed != null && packed >= created) packDurations.push((packed - created) / 60000);
+      if (created != null && handover != null && handover >= created) handoverDurations.push((handover - created) / 60000);
+    });
+    const avg = (arr: number[]) => arr.length ? (arr.reduce((a, b) => a + b, 0) / arr.length) : undefined;
+    const avgPackMins = avg(packDurations) ?? 80;
+    const avgHandoverMins = avg(handoverDurations) ?? 165;
+
+    return { receipts, totalRevenue, avgSalePerTxn, logisticsDue, avgPackMins, avgHandoverMins };
+  }, [paidOrders]);
+
   // Initialize active tab from query string (e.g., /?tab=inventory)
   useEffect(() => {
     try {
@@ -77,32 +204,6 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
       if (firstAllowed) setActiveItem(firstAllowed);
     }
   }, [authLoading, activeItem]);
-
-  // Mock data for confirmation page
-  const [confirmationOrders, setConfirmationOrders] = useState<Order[]>([
-    {
-      id: "DP-2024-005",
-      orderCount: 3,
-      barcode: "2345678901",
-      timestamp: "2024-09-09T08:30:00Z",
-      customer: { name: "Perfect Smile Dental", contact: "+63 917 123 4567" },
-      package: { size: "medium" as const, dimensions: "15cm × 10cm × 8cm", weight: "0.7kg" },
-      priority: "urgent" as const,
-      status: "processing" as const
-    },
-    {
-      id: "DP-2024-006",
-      orderCount: 1,
-      barcode: "3456789012",
-      timestamp: "2024-09-09T09:15:00Z",
-      customer: { name: "Bright Teeth Clinic", contact: "+63 917 234 5678" },
-      package: { size: "small" as const, dimensions: "10cm × 8cm × 5cm", weight: "0.3kg" },
-      priority: "priority" as const,
-      status: "processing" as const
-    }
-  ]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   // Handlers for confirmation actions
   const handleConfirmOrder = async (orderId: string) => {
@@ -309,57 +410,6 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
         // Seller-first dashboard (non-admin)
         if (!isAdmin) {
           const currency = new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP", maximumFractionDigits: 2 });
-          // Helpers
-          const isPaidStatus = (s: Order['status']) => ['to-ship','processing','completed'].includes(s);
-          const getAmount = (o: Order) => typeof o.total === 'number' ? o.total : (o.items?.reduce((s, it) => s + ((it.price || 0) * (it.quantity || 0)), 0) || 0);
-          const parseDate = (s?: string) => {
-            if (!s) return null;
-            const d = new Date(s);
-            return isNaN(d.getTime()) ? null : d;
-          };
-          const withinLastDays = (s?: string, key?: string) => {
-            if (!s) return false;
-            const d = parseDate(s);
-            if (!d) return false;
-            const now = new Date();
-            const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-            let days = 30;
-            switch (key) {
-              case 'last-7': days = 7; break;
-              case 'last-30': days = 30; break;
-              case 'last-90': days = 90; break;
-              case 'last-365': days = 365; break;
-              default: days = 30;
-            }
-            const from = new Date(today.getTime() - (days - 1) * 86400000);
-            return d >= from && d <= new Date(today.getTime() + 86399999);
-          };
-
-          // Build dynamic filter options from current orders
-          const productOptions = Array.from(new Set((confirmationOrders || []).flatMap(o => (o.items || []).map(it => it.name).filter(Boolean) as string[]))).sort((a,b)=>a.localeCompare(b));
-          const subcategoryOptions = Array.from(new Set((confirmationOrders || []).flatMap(o => (o.items || []).map(it => (it.subcategory || '').trim()).filter(Boolean)))).sort((a,b)=>a.localeCompare(b));
-          const paymentTypeOptions = Array.from(new Set((confirmationOrders || []).map(o => (o.paymentType || '').trim()).filter(Boolean))).sort((a,b)=>a.localeCompare(b));
-
-          // Apply filters on subscribed orders
-          const filtered = (confirmationOrders || []).filter(o => {
-            // Date filter uses accrual timestamp for now
-            if (!withinLastDays(o.timestamp, sellerFilters.dateRange)) return false;
-            // Payment type
-            if (sellerFilters.paymentType !== 'all' && (o.paymentType || 'unknown') !== sellerFilters.paymentType) return false;
-            // Product (brand) and Subcategory filters operate at item level
-            const items = o.items || [];
-            const matchProduct = sellerFilters.brand === 'all' || items.some(it => (it.name || '') === sellerFilters.brand);
-            const matchSubcat = sellerFilters.subcategory === 'all' || items.some(it => (it.subcategory || '') === sellerFilters.subcategory);
-            if (!matchProduct || !matchSubcat) return false;
-            // TODO: Location filter
-            return true;
-          });
-          const paid = filtered.filter(o => isPaidStatus(o.status));
-          const receipts = paid.length;
-          const totalRevenue = paid.reduce((s, o) => s + getAmount(o), 0);
-          const avgSalePerTxn = receipts ? (totalRevenue / receipts) : 0;
-          const logisticsDue = paid.reduce((s, o) => s + (o.shipping || 0) + (o.fees || 0), 0);
-          const metrics = { avgSalePerTxn, receipts, logisticsDue, totalRevenue, avgPackMins: 80, avgHandoverMins: 165 };
           const fmtMins = (mins: number) => { const h = Math.floor(mins / 60); const m = mins % 60; return `${h}h ${m}m`; };
           return (
             <div className="space-y-6">
@@ -373,23 +423,23 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                 <div className="bg-white border border-gray-100 rounded-2xl p-5 shadow-sm">
                   <div className="text-sm font-medium text-gray-700">Average sale per transaction</div>
-                  <div className="mt-2 text-2xl font-bold text-gray-900">{currency.format(metrics.avgSalePerTxn)}</div>
+                  <div className="mt-2 text-2xl font-bold text-gray-900">{currency.format(kpiMetrics.avgSalePerTxn)}</div>
                   <div className="mt-1 text-xs text-gray-500">Last {sellerFilters.dateRange.replace('last-','')} days</div>
                 </div>
                 <div className="bg-white border border-gray-100 rounded-2xl p-5 shadow-sm">
                   <div className="text-sm font-medium text-gray-700">Number of receipts</div>
-                  <div className="mt-2 text-2xl font-bold text-gray-900">{metrics.receipts.toLocaleString()}</div>
+                  <div className="mt-2 text-2xl font-bold text-gray-900">{kpiMetrics.receipts.toLocaleString()}</div>
                   <div className="mt-1 text-xs text-gray-500">Paid orders</div>
                 </div>
                 <div className="bg-white border border-gray-100 rounded-2xl p-5 shadow-sm">
                   <div className="text-sm font-medium text-gray-700">Logistics fee to pay</div>
-                  <div className="mt-2 text-2xl font-bold text-gray-900">{currency.format(metrics.logisticsDue)}</div>
+                  <div className="mt-2 text-2xl font-bold text-gray-900">{currency.format(kpiMetrics.logisticsDue)}</div>
                   <div className="mt-1 text-xs text-gray-500">Shipping + fees</div>
                 </div>
                 {/* New KPI: Average completion time */}
                 <div className="bg-white border border-gray-100 rounded-2xl p-5 shadow-sm">
                   <div className="text-sm font-medium text-gray-700">Average completion time</div>
-                  <div className="mt-2 text-2xl font-bold text-gray-900">{`${fmtMins(metrics.avgPackMins)} / ${fmtMins(metrics.avgHandoverMins)}`}</div>
+                  <div className="mt-2 text-2xl font-bold text-gray-900">{`${fmtMins(kpiMetrics.avgPackMins)} / ${fmtMins(kpiMetrics.avgHandoverMins)}`}</div>
                   <div className="mt-1 text-xs text-gray-500">To pack / To handover</div>
                 </div>
               </div>
@@ -456,7 +506,7 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
                 <div className="flex items-center justify-between mb-4">
                   <div>
                     <h4 className="text-sm font-medium text-gray-700">Revenue</h4>
-                    <div className="mt-1 text-2xl font-bold text-gray-900">{currency.format(metrics.totalRevenue)}</div>
+                    <div className="mt-1 text-2xl font-bold text-gray-900">{currency.format(kpiMetrics.totalRevenue)}</div>
                     <div className="text-xs text-gray-500">Sales</div>
                   </div>
                   <div className="hidden md:block text-xs text-gray-500">Date: {sellerFilters.dateRange.replace("last-", "Last ")} days</div>
@@ -464,7 +514,7 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
                 {(() => {
                   // Build simple time series from filtered paid orders (by accrual date)
                   const byDate = new Map<string, { amount: number; count: number }>();
-                  paid.forEach(o => {
+                  paidOrders.forEach(o => {
                     const key = o.timestamp.slice(0,10); // YYYY-MM-DD
                     const prev = byDate.get(key) || { amount: 0, count: 0 };
                     byDate.set(key, { amount: prev.amount + getAmount(o), count: prev.count + 1 });

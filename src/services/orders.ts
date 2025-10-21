@@ -42,12 +42,82 @@ const firstItemImage = (items: any[] = []): string | undefined => {
   return first.imageURL || first.imageUrl || first.thumbnail || first.photoUrl || undefined;
 };
 
+// Timestamp helpers
+const toMs = (v: any): number | undefined => {
+  if (!v && v !== 0) return undefined;
+  try {
+    if (typeof v?.toMillis === 'function') return Number(v.toMillis());
+    if (typeof v === 'number') return v < 1e12 ? v * 1000 : v; // seconds or ms
+    if (typeof v === 'string') {
+      const t = Date.parse(v);
+      return Number.isFinite(t) ? t : undefined;
+    }
+  } catch {}
+  return undefined;
+};
+
+const pickFirstMs = (...vals: any[]): number | undefined => {
+  for (const v of vals) {
+    const ms = toMs(v);
+    if (ms) return ms;
+  }
+  return undefined;
+};
+
+const extractFromHistory = (data: any, statuses: string[]): number | undefined => {
+  // 1) Array form: statusHistory: [{ status: 'packed', at|timestamp|date: ... }, ...]
+  const hist = Array.isArray(data?.statusHistory) ? data.statusHistory : Array.isArray(data?.history) ? data.history : undefined;
+  if (Array.isArray(hist)) {
+    const lower = statuses.map(s => s.toLowerCase());
+    let best: number | undefined;
+    hist.forEach((e: any) => {
+      const st = String(e?.status || e?.state || e?.label || '').toLowerCase();
+      if (!lower.includes(st)) return;
+      const ms = pickFirstMs(e?.at, e?.timestamp, e?.date, e?.time, e?.ts);
+      if (ms != null) best = best == null ? ms : Math.min(best, ms);
+    });
+    if (best != null) return best;
+  }
+  // 2) Object form: statusTimestamps: { packed: ..., to_ship: ..., dispatched: ... }
+  const obj = data?.statusTimestamps || data?.shippingStatusTimestamps || data?.shippingInfo?.statusTimestamps;
+  if (obj && typeof obj === 'object') {
+    const lower = statuses.map(s => s.toLowerCase());
+    let best: number | undefined;
+    Object.entries(obj).forEach(([k, v]) => {
+      if (!lower.includes(String(k).toLowerCase())) return;
+      const ms = toMs(v);
+      if (ms != null) best = best == null ? ms : Math.min(best, ms);
+    });
+    if (best != null) return best;
+  }
+  return undefined;
+};
+
 const mapDocToOrder = (id: string, data: any): Order => {
   const itemsRaw = Array.isArray(data.items) ? data.items : [];
 
   // Make date string only (no time)
-  const createdAtMs = data.createdAt?.toMillis?.() ? Number(data.createdAt.toMillis()) : (typeof data.createdAt === 'number' ? data.createdAt : Date.now());
+  const createdAtMs = data.createdAt?.toMillis?.() ? Number(data.createdAt.toMillis()) : (typeof data.createdAt === 'number' ? (data.createdAt < 1e12 ? data.createdAt * 1000 : data.createdAt) : Date.now());
   const dateOnly = new Date(createdAtMs).toISOString().split('T')[0];
+
+  // Fulfillment lifecycle timestamps
+  const packedMs = pickFirstMs(
+    data.shippingInfo?.packedAt,
+    data.packedAt,
+    extractFromHistory(data, ['packed', 'to_ship', 'to-ship', 'confirmed', 'ready_to_ship'])
+  );
+  const handoverMs = pickFirstMs(
+    data.shippingInfo?.handoverAt,
+    data.handoverAt,
+    data.shippingInfo?.dispatchedAt,
+    data.dispatchedAt,
+    extractFromHistory(data, ['dispatched', 'shipped', 'in_transit', 'in-transit', 'out_for_delivery', 'out-for-delivery'])
+  );
+  const deliveredMs = pickFirstMs(
+    data.shippingInfo?.deliveredAt,
+    data.deliveredAt,
+    extractFromHistory(data, ['delivered', 'completed', 'success', 'succeeded'])
+  );
 
   // Prefer tracking number for barcode field, with sensible fallbacks
   const tracking = String(
@@ -84,8 +154,8 @@ const mapDocToOrder = (id: string, data: any): Order => {
     data.payment_reference ||
     ''
   ) || undefined;
-  const paidAtMs = data.paymentInfo?.paidAt?.toMillis?.() ? Number(data.paymentInfo.paidAt.toMillis()) : (typeof data.paymentInfo?.paidAt === 'number' ? data.paymentInfo.paidAt : undefined);
-  const refundedAtMs = data.paymentInfo?.refundedAt?.toMillis?.() ? Number(data.paymentInfo.refundedAt.toMillis()) : (typeof data.paymentInfo?.refundedAt === 'number' ? data.paymentInfo.refundedAt : undefined);
+  const paidAtMs = data.paymentInfo?.paidAt?.toMillis?.() ? Number(data.paymentInfo.paidAt.toMillis()) : (typeof data.paymentInfo?.paidAt === 'number' ? (data.paymentInfo.paidAt < 1e12 ? data.paymentInfo.paidAt * 1000 : data.paymentInfo.paidAt) : undefined);
+  const refundedAtMs = data.paymentInfo?.refundedAt?.toMillis?.() ? Number(data.paymentInfo.refundedAt.toMillis()) : (typeof data.paymentInfo?.refundedAt === 'number' ? (data.paymentInfo.refundedAt < 1e12 ? data.paymentInfo.refundedAt * 1000 : data.paymentInfo.refundedAt) : undefined);
   const paidAt = paidAtMs ? new Date(paidAtMs).toISOString().split('T')[0] : undefined;
   const refundedAt = refundedAtMs ? new Date(refundedAtMs).toISOString().split('T')[0] : undefined;
 
@@ -113,6 +183,7 @@ const mapDocToOrder = (id: string, data: any): Order => {
     orderCount: Number(data.summary?.totalItems || itemsRaw.length || 0),
     barcode: tracking,
     timestamp: dateOnly,
+    createdAt: new Date(createdAtMs).toISOString(),
     customer: {
       name: String((data.shippingInfo?.fullName) || data.customerName || 'Unknown Customer'),
       contact: String((data.shippingInfo?.phoneNumber) || data.customerPhone || ''),
@@ -136,6 +207,10 @@ const mapDocToOrder = (id: string, data: any): Order => {
     cogs,
     grossMargin,
     imageUrl: firstItemImage(itemsRaw),
+    // Fulfillment lifecycle as ISO strings if available
+    packedAt: packedMs ? new Date(packedMs).toISOString() : undefined,
+    handoverAt: handoverMs ? new Date(handoverMs).toISOString() : undefined,
+    deliveredAt: deliveredMs ? new Date(deliveredMs).toISOString() : undefined,
     package: { size: 'medium', dimensions: `${data.shippingInfo?.addressLine1 ? '' : ''}`.trim(), weight: '' },
     priority: 'normal',
     status: (() => {
