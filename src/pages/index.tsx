@@ -12,7 +12,6 @@ const Index = () => {
     }
   };
 
-  // Show loading spinner while checking authentication
   if (loading) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-teal-400 to-cyan-600 flex items-center justify-center">
@@ -32,12 +31,10 @@ const Index = () => {
     profileRole: profile?.role 
   });
 
-  // Show authentication if not logged in
   if (!isAuthenticated) {
     return <Auth />;
   }
 
-  // Show dashboard if authenticated
   const dashboardUser = {
     name: profile?.name || user?.displayName || 'User',
     email: user?.email || profile?.email || 'unknown@example.com'
