@@ -3,6 +3,8 @@ import { collection, onSnapshot, query, where, DocumentData, QuerySnapshot, doc,
 import type { Order } from '@/types/order';
 
 const ORDER_COLLECTION = 'Order';
+// Also support lowercase/plural collection naming used elsewhere in the app
+const ORDER_COLLECTIONS = ['Order', 'orders'] as const;
 
 // Known Category ID -> Name (keep in sync with Inventory)
 const CATEGORY_ID_TO_NAME: Record<string, string> = {
@@ -97,7 +99,13 @@ const mapDocToOrder = (id: string, data: any): Order => {
   const itemsRaw = Array.isArray(data.items) ? data.items : [];
 
   // Make date string only (no time)
-  const createdAtMs = data.createdAt?.toMillis?.() ? Number(data.createdAt.toMillis()) : (typeof data.createdAt === 'number' ? (data.createdAt < 1e12 ? data.createdAt * 1000 : data.createdAt) : Date.now());
+  const createdAtMs = pickFirstMs(
+    data.createdAt,
+    data.orderDate,
+    data.dateCreated,
+    data.timestamp,
+    data.created
+  ) ?? Date.now();
   const dateOnly = new Date(createdAtMs).toISOString().split('T')[0];
 
   // Fulfillment lifecycle timestamps
@@ -167,7 +175,13 @@ const mapDocToOrder = (id: string, data: any): Order => {
   const cogs = data.summary?.cogs != null ? Number(data.summary.cogs) : (data.cogs != null ? Number(data.cogs) : undefined);
 
   // Derived gross margin if possible
-  const total = Number(data.summary?.total ?? data.paymentInfo?.amount ?? 0) || undefined;
+  const total = Number(
+    data.summary?.total ??
+    data.paymentInfo?.amount ??
+    data.totalAmount ??
+    data.total ??
+    0
+  ) || undefined;
   const grossMargin = total != null && cogs != null ? total - cogs : undefined;
 
   // Region info from shipping address
@@ -284,37 +298,61 @@ const hydrateItemCategories = async (order: Order, productCache: Map<string, any
 
 export const OrdersService = {
   listenBySeller(sellerId: string, cb: (orders: Order[]) => void) {
-    const qRef = query(collection(db, ORDER_COLLECTION), where('sellerIds', 'array-contains', sellerId));
-    const unsub = onSnapshot(qRef, async (snap: QuerySnapshot<DocumentData>) => {
-      const productCache = new Map<string, any>();
-      const orders = await Promise.all(snap.docs.map(async (d) => {
-        const data = d.data();
-        let o = mapDocToOrder(d.id, data);
-        o = await hydrateImageUrl(o, data);
-        o = await hydrateItemCategories(o, productCache);
-        return o;
-      }));
-      orders.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
-      cb(orders);
+    const latest: Record<string, Order[]> = {};
+    const unsubs: Array<() => void> = [];
+    const emit = () => {
+      const merged = Object.values(latest).flat();
+      merged.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+      cb(merged);
+    };
+    ORDER_COLLECTIONS.forEach((name) => {
+      // Two shapes: sellerIds (array) and sellerId (string)
+      const q1 = query(collection(db, name), where('sellerIds', 'array-contains', sellerId));
+      const q2 = query(collection(db, name), where('sellerId', '==', sellerId));
+      const handleSnap = async (snap: QuerySnapshot<DocumentData>, key: string) => {
+        const productCache = new Map<string, any>();
+        const orders = await Promise.all(snap.docs.map(async (d) => {
+          const data = d.data();
+          let o = mapDocToOrder(d.id, data);
+          o = await hydrateImageUrl(o, data);
+          o = await hydrateItemCategories(o, productCache);
+          return o;
+        }));
+        latest[key] = orders;
+        emit();
+      };
+      const u1 = onSnapshot(q1, (snap) => handleSnap(snap, `${name}#sellerIds`));
+      const u2 = onSnapshot(q2, (snap) => handleSnap(snap, `${name}#sellerId`));
+      unsubs.push(u1, u2);
     });
-    return unsub;
+    return () => { unsubs.forEach(u => { try { u(); } catch {} }); };
   },
-  // Admin: listen to all orders
+  // Admin: listen to all orders across both collections
   listenAll(cb: (orders: Order[]) => void) {
-    const qRef = query(collection(db, ORDER_COLLECTION));
-    const unsub = onSnapshot(qRef, async (snap: QuerySnapshot<DocumentData>) => {
-      const productCache = new Map<string, any>();
-      const orders = await Promise.all(snap.docs.map(async (d) => {
-        const data = d.data();
-        let o = mapDocToOrder(d.id, data);
-        o = await hydrateImageUrl(o, data);
-        o = await hydrateItemCategories(o, productCache);
-        return o;
-      }));
-      orders.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
-      cb(orders);
+    const latest: Record<string, Order[]> = {};
+    const unsubs: Array<() => void> = [];
+    const emit = () => {
+      const merged = Object.values(latest).flat();
+      merged.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+      cb(merged);
+    };
+    ORDER_COLLECTIONS.forEach((name) => {
+      const qRef = query(collection(db, name));
+      const unsub = onSnapshot(qRef, async (snap: QuerySnapshot<DocumentData>) => {
+        const productCache = new Map<string, any>();
+        const orders = await Promise.all(snap.docs.map(async (d) => {
+          const data = d.data();
+          let o = mapDocToOrder(d.id, data);
+          o = await hydrateImageUrl(o, data);
+          o = await hydrateItemCategories(o, productCache);
+          return o;
+        }));
+        latest[name] = orders;
+        emit();
+      });
+      unsubs.push(unsub);
     });
-    return unsub;
+    return () => { unsubs.forEach(u => { try { u(); } catch {} }); };
   }
 };
 

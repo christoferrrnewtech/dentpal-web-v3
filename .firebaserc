@@ -1,5 +1,16 @@
 {
   "projects": {
-    "default": "dentpal-site"
-  }
+    "default": "dentpal-161e5",
+    "dentpal": "dentpal-161e5"
+  },
+  "targets": {
+    "dentpal-161e5": {
+      "hosting": {
+        "dentpal-site": [
+          "dentpal-site"
+        ]
+      }
+    }
+  },
+  "etags": {}
 }

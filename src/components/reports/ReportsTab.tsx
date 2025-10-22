@@ -5,6 +5,11 @@ import { OrdersService } from '@/services/orders';
 import type { Order } from '@/types/order';
 import { db } from '@/lib/firebase';
 import { doc, getDoc, collection, query as fsQuery, where, getDocs } from 'firebase/firestore';
+// New: exports for XLSX/PDF
+import ExcelJS from 'exceljs';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
+import { saveAs } from 'file-saver';
 
 // Known Category ID -> Name (from Inventory/AddProduct)
 const CATEGORY_ID_TO_NAME: Record<string, string> = {
@@ -16,7 +21,7 @@ const CATEGORY_ID_TO_NAME: Record<string, string> = {
 
 // Aggregated row shape for the grid
 interface ReportRow {
-  key: string; // group key (Item name or Payment Type)
+  key: string; // group key (Item/Category/Brand/Payment Type)
   itemsSold: number;
   grossSales: number;
   itemsRefunded: number;
@@ -32,7 +37,7 @@ interface AmountRow { key: string; amount: number; count?: number }
 // New: tax, discount, shipFees, refundsDetail, settlements, byCustomer, bySeller, byRegion, timeSeries
 // timeSeries will produce rows keyed by date bucket
 
-type SubTab = 'item' | 'payment' | 'category' | 'paymentType' | 'tax' | 'discounts' | 'shipFees' | 'refundsDetail' | 'settlements' | 'byCustomer' | 'bySeller' | 'byRegion' | 'timeSeries';
+type SubTab = 'item' | 'category' | 'brand' | 'paymentType';
 
 type Basis = 'accrual' | 'cash';
 
@@ -91,6 +96,9 @@ const ReportsTab: React.FC = () => {
   // Product category cache for Sales by Category
   const [categoryByPid, setCategoryByPid] = useState<Record<string, string>>({});
   const [categoryByName, setCategoryByName] = useState<Record<string, string>>({});
+  // New: Product brand cache for Sales by Brand
+  const [brandByPid, setBrandByPid] = useState<Record<string, string>>({});
+  const [brandByName, setBrandByName] = useState<Record<string, string>>({});
 
   // Subscribe to orders based on role
   useEffect(() => {
@@ -188,6 +196,65 @@ const ReportsTab: React.FC = () => {
     return () => { cancelled = true; };
   }, [filteredOrders, categoryByName]);
 
+  // New: Fetch Product brands for items in view (by productId)
+  useEffect(() => {
+    const ids = new Set<string>();
+    filteredOrders.forEach(o => (o.items || []).forEach(it => { if (it.productId) ids.add(String(it.productId)); }));
+    const missing = Array.from(ids).filter(id => !(id in brandByPid));
+    if (missing.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      const updates: Record<string, string> = {};
+      await Promise.all(missing.map(async (id) => {
+        try {
+          const pSnap = await getDoc(doc(db, 'Product', id));
+          const p: any = pSnap.exists() ? pSnap.data() : undefined;
+          const label = String(p?.brand || p?.Brand || p?.brandName || p?.manufacturer || p?.Manufacturer || p?.vendorName || p?.sellerName || '').trim();
+          updates[id] = label || 'Unknown Brand';
+        } catch {
+          updates[id] = 'Unknown Brand';
+        }
+      }));
+      if (!cancelled && Object.keys(updates).length) {
+        setBrandByPid(prev => ({ ...prev, ...updates }));
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [filteredOrders, brandByPid]);
+
+  // New: resolve brand by Product name when productId is missing
+  useEffect(() => {
+    const names = new Set<string>();
+    filteredOrders.forEach(o => (o.items || []).forEach(it => {
+      const pid = it.productId ? String(it.productId) : '';
+      if (!pid && it.name) {
+        const n = String(it.name).trim();
+        if (n && !(n in brandByName)) names.add(n);
+      }
+    }));
+    const missing = Array.from(names);
+    if (missing.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      const updates: Record<string, string> = {};
+      await Promise.all(missing.map(async (n) => {
+        try {
+          const q = fsQuery(collection(db, 'Product'), where('name', '==', n));
+          const snap = await getDocs(q);
+          const first = snap.docs[0]?.data() as any | undefined;
+          const label = String(first?.brand || first?.Brand || first?.brandName || first?.manufacturer || first?.Manufacturer || first?.vendorName || first?.sellerName || '').trim();
+          updates[n] = label || 'Unknown Brand';
+        } catch {
+          updates[n] = 'Unknown Brand';
+        }
+      }));
+      if (!cancelled && Object.keys(updates).length) {
+        setBrandByName(prev => ({ ...prev, ...updates }));
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [filteredOrders, brandByName]);
+
   // Helpers to compute numbers from orders/items
   const sumItemsSold = (os: Order[]) => os.reduce((acc, o) => acc + (o.items?.reduce((s, it) => s + (it.quantity || 0), 0) || 0), 0);
   const sumGrossSales = (os: Order[]) => os.reduce((acc, o) => {
@@ -243,22 +310,6 @@ const ReportsTab: React.FC = () => {
     return Array.from(byKey.values()).map(r => ({ ...r, netSales: Math.max(0, r.grossSales - r.refunds) }));
   }, [filteredOrders, categoryByPid, categoryByName]);
 
-  const paymentRows: ReportRow[] = useMemo(() => {
-    const byKey = new Map<string, ReportRow>();
-    filteredOrders.forEach(o => {
-      const key = getPaymentBucket(o);
-      const r = byKey.get(key) || { key, itemsSold: 0, grossSales: 0, itemsRefunded: 0, refunds: 0, netSales: 0 };
-      r.itemsSold += (o.items?.reduce((s, it) => s + (it.quantity || 0), 0) || 0);
-      r.grossSales += typeof o.total === 'number' ? o.total : (o.items?.reduce((s, it) => s + ((it.price || 0) * (it.quantity || 0)), 0) || 0);
-      if (refundStatuses.includes(o.status)) {
-        r.itemsRefunded += (o.items?.reduce((s, it) => s + (it.quantity || 0), 0) || 0);
-        r.refunds += typeof o.total === 'number' ? o.total : (o.items?.reduce((s, it) => s + ((it.price || 0) * (it.quantity || 0)), 0) || 0);
-      }
-      byKey.set(key, r);
-    });
-    return Array.from(byKey.values()).map(r => ({ ...r, netSales: Math.max(0, r.grossSales - r.refunds) }));
-  }, [filteredOrders]);
-
   // Payment Type aggregation
   const paymentTypeRows: ReportRow[] = useMemo(() => {
     const byKey = new Map<string, ReportRow>();
@@ -282,135 +333,45 @@ const ReportsTab: React.FC = () => {
     return Array.from(byKey.values()).map(r => ({ ...r, netSales: Math.max(0, r.grossSales - r.refunds) }));
   }, [filteredOrders]);
 
-  // New aggregations
-  const taxRows: AmountRow[] = useMemo(() => {
-    const amt = filteredOrders.reduce((s, o) => s + (o.tax || 0), 0);
-    return [{ key: 'Tax', amount: amt }];
-  }, [filteredOrders]);
-
-  const discountRows: AmountRow[] = useMemo(() => {
-    const amt = filteredOrders.reduce((s, o) => s + (o.discount || 0), 0);
-    return [{ key: 'Discounts', amount: amt }];
-  }, [filteredOrders]);
-
-  const shipFeeRows: AmountRow[] = useMemo(() => {
-    const ship = filteredOrders.reduce((s, o) => s + (o.shipping || 0), 0);
-    const fees = filteredOrders.reduce((s, o) => s + (o.fees || 0), 0);
-    return [
-      { key: 'Shipping', amount: ship },
-      { key: 'Fees', amount: fees },
-    ];
-  }, [filteredOrders]);
-
-  const refundsDetailRows = useMemo(() => {
-    // List each refunded order with amounts and dates
-    const rows = filteredOrders.filter(o => refundStatuses.includes(o.status)).map(o => ({
-      orderId: o.id,
-      customer: o.customer?.name || '',
-      amount: o.total || 0,
-      refundedAt: o.refundedAt || '',
-      paymentType: o.paymentType || '',
-    }));
-    return rows;
-  }, [filteredOrders]);
-
-  const settlementsRows = useMemo(() => {
-    // Cash-basis: sum paid orders by payment type within dateRange (using paidAt)
-    const byKey = new Map<string, { amount: number; count: number }>();
-    orders.filter(o => o.paidAt && withinRange(o.paidAt, dateRange)).forEach(o => {
-      const key = o.paymentType || 'Unknown';
-      const prev = byKey.get(key) || { amount: 0, count: 0 };
-      const amount = typeof o.total === 'number' ? o.total : (o.items?.reduce((s, it) => s + ((it.price || 0) * (it.quantity || 0)), 0) || 0);
-      byKey.set(key, { amount: prev.amount + amount, count: prev.count + 1 });
-    });
-    return Array.from(byKey.entries()).map(([key, v]) => ({ key, amount: v.amount, count: v.count }));
-  }, [orders, dateRange]);
-
-  const byCustomerRows: ReportRow[] = useMemo(() => {
+  // Sales by Brand aggregation
+  const brandRows: ReportRow[] = useMemo(() => {
     const byKey = new Map<string, ReportRow>();
     filteredOrders.forEach(o => {
-      const key = o.customer?.name || 'Unknown Customer';
-      const r = byKey.get(key) || { key, itemsSold: 0, grossSales: 0, itemsRefunded: 0, refunds: 0, netSales: 0 };
-      const qty = o.items?.reduce((s, it) => s + (it.quantity || 0), 0) || 0;
-      const amt = typeof o.total === 'number' ? o.total : (o.items?.reduce((s, it) => s + ((it.price || 0) * (it.quantity || 0)), 0) || 0);
-      r.itemsSold += qty; r.grossSales += amt;
-      if (refundStatuses.includes(o.status)) { r.itemsRefunded += qty; r.refunds += amt; }
-      byKey.set(key, r);
+      (o.items || []).forEach(it => {
+        const pid = it.productId ? String(it.productId) : '';
+        const byPid = pid ? (brandByPid[pid] || '') : '';
+        const byName = (!pid && it.name) ? (brandByName[String(it.name).trim()] || '') : '';
+        const label = String(byPid || byName || '').trim() || 'Unknown Brand';
+        const key = label;
+        const r = byKey.get(key) || { key, itemsSold: 0, grossSales: 0, itemsRefunded: 0, refunds: 0, netSales: 0 };
+        const qty = it.quantity || 0;
+        const amt = (it.price || 0) * qty;
+        r.itemsSold += qty;
+        r.grossSales += amt;
+        if (refundStatuses.includes(o.status)) {
+          r.itemsRefunded += qty;
+          r.refunds += amt;
+        }
+        byKey.set(key, r);
+      });
     });
     return Array.from(byKey.values()).map(r => ({ ...r, netSales: Math.max(0, r.grossSales - r.refunds) }));
-  }, [filteredOrders]);
+  }, [filteredOrders, brandByPid, brandByName]);
 
-  const bySellerRows: ReportRow[] = useMemo(() => {
-    const byKey = new Map<string, ReportRow>();
-    filteredOrders.forEach(o => {
-      const key = o.sellerName || (o.sellerIds && o.sellerIds[0]) || 'Unknown Seller';
-      const r = byKey.get(key) || { key, itemsSold: 0, grossSales: 0, itemsRefunded: 0, refunds: 0, netSales: 0 };
-      const qty = o.items?.reduce((s, it) => s + (it.quantity || 0), 0) || 0;
-      const amt = typeof o.total === 'number' ? o.total : (o.items?.reduce((s, it) => s + ((it.price || 0) * (it.quantity || 0)), 0) || 0);
-      r.itemsSold += qty; r.grossSales += amt;
-      if (refundStatuses.includes(o.status)) { r.itemsRefunded += qty; r.refunds += amt; }
-      byKey.set(key, r);
-    });
-    return Array.from(byKey.values()).map(r => ({ ...r, netSales: Math.max(0, r.grossSales - r.refunds) }));
-  }, [filteredOrders]);
-
-  const byRegionRows: ReportRow[] = useMemo(() => {
-    const byKey = new Map<string, ReportRow>();
-    filteredOrders.forEach(o => {
-      const rgn = o.region;
-      const key = rgn?.province ? `${rgn.province}${rgn.municipality ? ' - ' + rgn.municipality : ''}` : (rgn?.municipality || 'Unknown Region');
-      const r = byKey.get(key) || { key, itemsSold: 0, grossSales: 0, itemsRefunded: 0, refunds: 0, netSales: 0 };
-      const qty = o.items?.reduce((s, it) => s + (it.quantity || 0), 0) || 0;
-      const amt = typeof o.total === 'number' ? o.total : (o.items?.reduce((s, it) => s + ((it.price || 0) * (it.quantity || 0)), 0) || 0);
-      r.itemsSold += qty; r.grossSales += amt;
-      if (refundStatuses.includes(o.status)) { r.itemsRefunded += qty; r.refunds += amt; }
-      byKey.set(key, r);
-    });
-    return Array.from(byKey.values()).map(r => ({ ...r, netSales: Math.max(0, r.grossSales - r.refunds) }));
-  }, [filteredOrders]);
-
-  const timeSeriesRows = useMemo(() => {
-    // Bucket by date (based on basis)
-    const byKey = new Map<string, { sales: number; refunds: number }>();
-    filteredOrders.forEach(o => {
-      const date = getOrderDate(o, basis);
-      const prev = byKey.get(date) || { sales: 0, refunds: 0 };
-      const amt = typeof o.total === 'number' ? o.total : (o.items?.reduce((s, it) => s + ((it.price || 0) * (it.quantity || 0)), 0) || 0);
-      if (refundStatuses.includes(o.status)) {
-        byKey.set(date, { sales: prev.sales, refunds: prev.refunds + amt });
-      } else {
-        byKey.set(date, { sales: prev.sales + amt, refunds: prev.refunds });
-      }
-    });
-    return Array.from(byKey.entries()).sort(([a], [b]) => a.localeCompare(b)).map(([key, v]) => ({ key, amount: v.sales - v.refunds }));
-  }, [filteredOrders, basis]);
-
+  // Data rows by active tab
   const data = useMemo(() => {
     const base = active === 'item' ? itemRows
-      : active === 'payment' ? paymentRows
       : active === 'category' ? categoryRows
-      : active === 'paymentType' ? paymentTypeRows
-      : active === 'tax' ? taxRows.map(r => ({ key: r.key, itemsSold: 0, grossSales: r.amount, itemsRefunded: 0, refunds: 0, netSales: r.amount }))
-      : active === 'discounts' ? discountRows.map(r => ({ key: r.key, itemsSold: 0, grossSales: r.amount, itemsRefunded: 0, refunds: 0, netSales: r.amount }))
-      : active === 'shipFees' ? shipFeeRows.map(r => ({ key: r.key, itemsSold: 0, grossSales: r.amount, itemsRefunded: 0, refunds: 0, netSales: r.amount }))
-      : active === 'byCustomer' ? byCustomerRows
-      : active === 'bySeller' ? bySellerRows
-      : active === 'byRegion' ? byRegionRows
-      : active === 'settlements' ? settlementsRows.map(r => ({ key: r.key, itemsSold: r.count || 0, grossSales: r.amount, itemsRefunded: 0, refunds: 0, netSales: r.amount }))
-      : timeSeriesRows.map(r => ({ key: r.key, itemsSold: 0, grossSales: r.amount, itemsRefunded: 0, refunds: 0, netSales: r.amount }));
+      : active === 'brand' ? brandRows
+      : paymentTypeRows;
     const rows = base.filter(r => !query || r.key.toLowerCase().includes(query.toLowerCase()));
     return rows;
-  }, [active, itemRows, paymentRows, categoryRows, paymentTypeRows, taxRows, discountRows, shipFeeRows, byCustomerRows, bySellerRows, byRegionRows, settlementsRows, timeSeriesRows, query]);
+  }, [active, itemRows, categoryRows, brandRows, paymentTypeRows, query]);
 
   const firstColHeader = active === 'item' ? 'Item'
     : active === 'category' ? 'Category'
-    : active === 'payment' ? 'Payment Type'
-    : active === 'paymentType' ? 'Payment Type'
-    : active === 'byCustomer' ? 'Customer'
-    : active === 'bySeller' ? 'Seller'
-    : active === 'byRegion' ? 'Region'
-    : active === 'timeSeries' ? 'Date'
-    : 'Metric';
+    : active === 'brand' ? 'Brand'
+    : 'Payment Type';
 
   // Totals for footer
   const totals = useMemo(() => {
@@ -448,6 +409,18 @@ const ReportsTab: React.FC = () => {
       URL.revokeObjectURL(url);
       return;
     }
+    if (active === 'brand') {
+      const cols = ['Brand', 'Gross Sales', 'Refunds', 'Net Sales'];
+      const header = cols.join(',');
+      const body = data.map(r => [r.key, r.grossSales, r.refunds, r.netSales].join(',')).join('\n');
+      const csv = header + '\n' + body;
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = `sales-by-brand-${dateRange}-${basis}.csv`; a.click();
+      URL.revokeObjectURL(url);
+      return;
+    }
     const cols = [firstColHeader, 'Items Sold', 'Gross Sales', 'Items Refunded', 'Refunds', 'Net Sales'];
     const header = cols.join(',');
     const body = data.map(r => [r.key, r.itemsSold, r.grossSales, r.itemsRefunded, r.refunds, r.netSales].join(',')).join('\n');
@@ -459,33 +432,27 @@ const ReportsTab: React.FC = () => {
     URL.revokeObjectURL(url);
   };
 
-  const exportDetailedCsv = () => {
-    // Line-level export
-    const cols = ['orderId','date','basis','customerId','customerName','sellerId','paymentType','paymentTxnId','paidAt','refundedAt','itemName','sku','productId','category','categoryId','quantity','price','lineTotal','tax','discount','shipping','fees','COGS','grossMargin'];
-    const header = cols.join(',');
-    const lines: string[] = [];
-    filteredOrders.forEach(o => {
-      const date = getOrderDate(o, basis);
-      const sellerId = o.sellerIds?.[0] || '';
-      const common = [o.id, date, basis, o.customerId || '', o.customer?.name || '', sellerId, o.paymentType || '', o.paymentTxnId || '', o.paidAt || '', o.refundedAt || ''];
-      (o.items || []).forEach(it => {
-        const qty = it.quantity || 0;
-        const price = it.price || 0;
-        const lineTotal = qty * price;
-        const row = [...common, it.name || '', it.sku || '', it.productId || '', it.category || '', it.categoryId || '', qty, price, lineTotal, o.tax || 0, o.discount || 0, o.shipping || 0, o.fees || 0, o.cogs || 0, o.grossMargin || (o.total != null && o.cogs != null ? o.total - o.cogs : 0)];
-        lines.push(row.join(','));
-      });
-      if (!o.items || o.items.length === 0) {
-        const row = [...common, '', '', '', '', '', 0, 0, 0, o.tax || 0, o.discount || 0, o.shipping || 0, o.fees || 0, o.cogs || 0, o.grossMargin || (o.total != null && o.cogs != null ? o.total - o.cogs : 0)];
-        lines.push(row.join(','));
-      }
+  const exportXlsxBrand = async () => {
+    const rows = data; // filtered by query already
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Sales by Brand');
+    ws.addRow(['Brand', 'Gross Sales', 'Refunds', 'Net Sales']);
+    rows.forEach(r => ws.addRow([r.key, r.grossSales, r.refunds, r.netSales]));
+    const buf = await wb.xlsx.writeBuffer();
+    saveAs(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), `sales-by-brand-${dateRange}-${basis}.xlsx`);
+  };
+
+  const exportPdfBrand = () => {
+    const rows = data; // filtered by query already
+    const doc = new jsPDF();
+    autoTable(doc, {
+      head: [['Brand', 'Gross Sales', 'Refunds', 'Net Sales']],
+      body: rows.map(r => [r.key, formatCurrency(r.grossSales), formatCurrency(r.refunds), formatCurrency(r.netSales)]),
+      styles: { fontSize: 9 },
+      headStyles: { fillColor: [13, 148, 136] },
+      startY: 14,
     });
-    const csv = header + '\n' + lines.join('\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = `reports-detailed-${basis}.csv`; a.click();
-    URL.revokeObjectURL(url);
+    doc.save(`sales-by-brand-${dateRange}-${basis}.pdf`);
   };
 
   return (
@@ -495,17 +462,8 @@ const ReportsTab: React.FC = () => {
         {[
           { id: 'item', label: 'Sales by Item' },
           { id: 'category', label: 'Sales by Category' },
-          { id: 'payment', label: 'Sales by Payment' },
+          { id: 'brand', label: 'Sales by Brand' },
           { id: 'paymentType', label: 'Sales by Payment Type' },
-          { id: 'tax', label: 'Tax Summary' },
-          { id: 'discounts', label: 'Discounts' },
-          { id: 'shipFees', label: 'Shipping & Fees' },
-          { id: 'refundsDetail', label: 'Refunds Detail' },
-          { id: 'settlements', label: 'Settlements (Cash)' },
-          { id: 'byCustomer', label: 'Sales by Customer' },
-          { id: 'bySeller', label: 'Sales by Seller' },
-          { id: 'byRegion', label: 'Sales by Region' },
-          { id: 'timeSeries', label: 'Time Series' },
         ].map(t => (
           <button
             key={t.id}
@@ -558,9 +516,16 @@ const ReportsTab: React.FC = () => {
           <button className="inline-flex items-center gap-1 px-3 py-1.5 text-sm rounded-lg border border-gray-300 hover:bg-gray-50" onClick={() => exportCsv()} title="Export the current summary table as CSV.">
             <Download className="w-4 h-4" /> Export CSV
           </button>
-          <button className="inline-flex items-center gap-1 px-3 py-1.5 text-sm rounded-lg border border-gray-300 hover:bg-gray-50" onClick={() => exportDetailedCsv()} title="Export detailed line-level CSV including IDs and accounting fields.">
-            <Download className="w-4 h-4" /> Export Detailed CSV
-          </button>
+          {active === 'brand' && (
+            <>
+              <button className="inline-flex items-center gap-1 px-3 py-1.5 text-sm rounded-lg border border-gray-300 hover:bg-gray-50" onClick={() => exportXlsxBrand()} title="Export Sales by Brand as XLSX.">
+                <Download className="w-4 h-4" /> Export XLSX
+              </button>
+              <button className="inline-flex items-center gap-1 px-3 py-1.5 text-sm rounded-lg border border-gray-300 hover:bg-gray-50" onClick={() => exportPdfBrand()} title="Export Sales by Brand as PDF.">
+                <Download className="w-4 h-4" /> Export PDF
+              </button>
+            </>
+          )}
           <button className="inline-flex items-center gap-1 px-3 py-1.5 text-sm rounded-lg border border-gray-300 hover:bg-gray-50" onClick={() => {/* no-op, data is live */}} title="Data is live; click to re-evaluate filters.">
             <RefreshCcw className="w-4 h-4" /> Refresh
           </button>
@@ -571,22 +536,21 @@ const ReportsTab: React.FC = () => {
       <div className="overflow-auto border border-gray-200 rounded-lg">
         <table className="min-w-full text-sm">
           <thead className="bg-gray-50">
-            {active === 'refundsDetail' ? (
-              <tr className="text-left text-xs font-semibold text-gray-600">
-                <th className="px-3 py-2" title="Order ID that was refunded">Order ID</th>
-                <th className="px-3 py-2" title="Customer name for the refunded order">Customer</th>
-                <th className="px-3 py-2" title="Refunded amount">Refund Amount</th>
-                <th className="px-3 py-2" title="Date the refund was recognized">Refunded At</th>
-                <th className="px-3 py-2" title="Payment method/channel">Payment Type</th>
-              </tr>
-            ) : active === 'paymentType' || active === 'settlements' ? (
+            {active === 'paymentType' ? (
               <tr className="text-left text-xs font-semibold text-gray-600">
                 <th className="px-3 py-2" title="Payment instrument or channel">Payment Type</th>
-                <th className="px-3 py-2" title={active === 'settlements' ? 'Number of settled transactions (paidAt within range)' : 'Number of successful payment transactions on paid statuses'}>{active === 'settlements' ? 'Settled Transactions' : 'Payment Transactions'}</th>
-                <th className="px-3 py-2" title={active === 'settlements' ? 'Sum of settled amounts (cash-basis)' : 'Sum of amounts for payment transactions'}>{active === 'settlements' ? 'Settled Amount' : 'Payment Amount'}</th>
+                <th className="px-3 py-2" title="Number of successful payment transactions on paid statuses">Payment Transactions</th>
+                <th className="px-3 py-2" title="Sum of amounts for payment transactions">Payment Amount</th>
                 <th className="px-3 py-2" title="Number of refund transactions (orders with refund status)">Refund Transactions</th>
                 <th className="px-3 py-2" title="Sum of refund amounts">Refund Amount</th>
                 <th className="px-3 py-2" title="Payment Amount minus Refund Amount">Net Sales</th>
+              </tr>
+            ) : active === 'brand' ? (
+              <tr className="text-left text-xs font-semibold text-gray-600">
+                <th className="px-3 py-2">Brand</th>
+                <th className="px-3 py-2" title="Sum of line totals">Gross Sales</th>
+                <th className="px-3 py-2" title="Sum of refunded amounts">Refunds</th>
+                <th className="px-3 py-2" title="Gross Sales minus Refunds">Net Sales</th>
               </tr>
             ) : (
               <tr className="text-left text-xs font-semibold text-gray-600">
@@ -600,18 +564,14 @@ const ReportsTab: React.FC = () => {
             )}
           </thead>
           <tbody>
-            {active === 'refundsDetail' ? (
-              // Specialized table for refunds detail
-              (refundsDetailRows.length ? refundsDetailRows.map((r: any, idx: number) => (
-                <tr key={r.orderId} className={idx % 2 ? 'bg-white' : 'bg-gray-50'}>
-                  <td className="px-3 py-2 font-medium text-gray-900">{r.orderId}</td>
-                  <td className="px-3 py-2">{r.customer}</td>
-                  <td className="px-3 py-2">{formatCurrency(r.amount)}</td>
-                  <td className="px-3 py-2">{r.refundedAt || '-'}</td>
-                  <td className="px-3 py-2">{r.paymentType || '-'}</td>
+            {active === 'brand' ? (
+              data.map((r, idx) => (
+                <tr key={r.key} className={idx % 2 ? 'bg-white' : 'bg-gray-50'}>
+                  <td className="px-3 py-2 font-medium text-gray-900">{r.key}</td>
+                  <td className="px-3 py-2">{formatCurrency(r.grossSales)}</td>
+                  <td className="px-3 py-2">{formatCurrency(r.refunds)}</td>
+                  <td className="px-3 py-2 font-semibold text-teal-700">{formatCurrency(r.netSales)}</td>
                 </tr>
-              )) : (
-                <tr><td colSpan={5} className="px-3 py-6 text-center text-sm text-gray-500">No refunds found.</td></tr>
               ))
             ) : (
               data.map((r, idx) => (
@@ -625,9 +585,9 @@ const ReportsTab: React.FC = () => {
                 </tr>
               ))
             )}
-            {data.length === 0 && active !== 'refundsDetail' && (
+            {data.length === 0 && (
               <tr>
-                <td colSpan={6} className="px-3 py-6 text-center text-sm text-gray-500">No data for the selected range.</td>
+                <td colSpan={active === 'brand' ? 4 : (active === 'paymentType') ? 6 : 6} className="px-3 py-6 text-center text-sm text-gray-500">No data for the selected range.</td>
               </tr>
             )}
           </tbody>
