@@ -1,24 +1,48 @@
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 
-const data = [
-  { name: "08.28", revenue: 500000 },
-  { name: "07.29", revenue: 800000 },
-  { name: "08.29", revenue: 1200000 },
-  { name: "09.29", revenue: 900000 },
-  { name: "10.29", revenue: 1500000 },
-  { name: "11.29", revenue: 1800000 },
-  { name: "12.29", revenue: 2200000 },
-  { name: "1.30", revenue: 2800000 },
-  { name: "2.30", revenue: 2600000 },
-  { name: "4.30", revenue: 3000000 },
-  { name: "5.30", revenue: 2900000 },
+interface RevenuePoint { name: string; revenue: number; count?: number }
+
+const demoData: RevenuePoint[] = [
+  { name: "08/28", revenue: 500000 },
+  { name: "07/29", revenue: 800000 },
+  { name: "08/29", revenue: 1200000 },
+  { name: "09/29", revenue: 900000 },
+  { name: "10/29", revenue: 1500000 },
+  { name: "11/29", revenue: 1800000 },
+  { name: "12/29", revenue: 2200000 },
 ];
 
-const RevenueChart = () => {
+const currencyAxis = new Intl.NumberFormat('en-PH', { style: 'currency', currency: 'PHP', maximumFractionDigits: 0 });
+const currencyTooltip = new Intl.NumberFormat('en-PH', { style: 'currency', currency: 'PHP', maximumFractionDigits: 2 });
+
+const toValidNumber = (v: unknown) => {
+  const n = Number((v as any));
+  return Number.isFinite(n) ? n : 0;
+};
+
+const RevenueChart = ({ data }: { data?: RevenuePoint[] }) => {
+  const rawData = (data && data.length ? data : demoData);
+  // Sanitize data to avoid NaN in scales
+  const chartData = rawData.map(d => ({ ...d, revenue: toValidNumber(d.revenue) }));
+
+  // Friendly empty state checks
+  const maxRevenue = Math.max(...chartData.map(d => d.revenue));
+
+  if (!chartData || chartData.length === 0) {
+    return (
+      <div className="h-80 flex items-center justify-center text-sm text-slate-500 border rounded-lg bg-white">
+        No data to display yet.
+      </div>
+    );
+  }
+
+  const xTickCount = Math.min(8, chartData.length);
+  const yMax = Math.max(1, Math.ceil((Number.isFinite(maxRevenue) ? maxRevenue : 0) * 1.1));
+
   return (
     <div className="h-80">
       <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={data} margin={{ top: 20, right: 30, left: 20, bottom: 20 }}>
+        <LineChart data={chartData} margin={{ top: 20, right: 24, left: 12, bottom: 16 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" vertical={false} />
           <XAxis 
             dataKey="name" 
@@ -26,7 +50,10 @@ const RevenueChart = () => {
             fontSize={12}
             axisLine={false}
             tickLine={false}
-            tick={{ fill: '#9ca3af' }}
+            tick={{ fill: '#64748b' }}
+            interval="preserveStartEnd"
+            tickCount={xTickCount}
+            tickMargin={8}
           />
           <YAxis 
             stroke="#9ca3af"
@@ -34,9 +61,9 @@ const RevenueChart = () => {
             axisLine={false}
             tickLine={false}
             tick={{ fill: '#9ca3af' }}
-            tickFormatter={(value) => `PHP ${(value / 1000000).toFixed(1)}M`}
-            domain={[0, 3500000]}
-            ticks={[0, 500000, 1000000, 1500000, 2000000, 2500000, 3000000]}
+            tickFormatter={(value) => currencyAxis.format(Number(value))}
+            domain={[0, yMax]}
+            allowDecimals={false}
           />
           <Tooltip
             contentStyle={{
@@ -46,7 +73,7 @@ const RevenueChart = () => {
               boxShadow: "0 10px 15px -3px rgba(0, 0, 0, 0.1)",
               fontSize: "14px",
             }}
-            formatter={(value) => [`PHP ${(value as number / 1000000).toFixed(1)}M`, "Revenue"]}
+            formatter={(value) => [currencyTooltip.format(toValidNumber(value)), 'Revenue']}
             labelStyle={{ color: '#374151' }}
           />
           <Line
@@ -54,7 +81,7 @@ const RevenueChart = () => {
             dataKey="revenue"
             stroke="#14b8a6"
             strokeWidth={3}
-            dot={{ fill: '#14b8a6', strokeWidth: 2, r: 4 }}
+            dot={{ r: 3, fill: '#14b8a6', strokeWidth: 2 }}
             activeDot={{ r: 6, fill: '#14b8a6', strokeWidth: 2, stroke: '#ffffff' }}
             connectNulls={false}
           />

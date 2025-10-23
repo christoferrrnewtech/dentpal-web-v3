@@ -10,9 +10,13 @@ import {
   Images,
   LogOut,
   Menu,
-  X
+  X,
+  IdCard,
+  BarChart3,
+  PlusSquare
 } from "lucide-react";
 import dentalLogo from "@/assets/dentpal_logo.png";
+import { useAuth } from "@/hooks/use-auth";
 
 interface SidebarProps {
   activeItem: string;
@@ -22,7 +26,13 @@ interface SidebarProps {
 
 const menuItems = [
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { id: "profile", label: "Profile", icon: IdCard },
+  { id: "reports", label: "Reports", icon: BarChart3 }, // New: Reports tab
   { id: "booking", label: "Booking", icon: Calendar },
+  { id: 'seller-orders', label: 'Seller Orders', icon: Calendar },
+  { id: "inventory", label: "Inventory", icon: LayoutDashboard },
+  { id: "add-product", label: "Add Product", icon: PlusSquare }, // New: direct add product entry
+  { id: "product-qc", label: "QC Product", icon: CheckCircle },
   { id: "confirmation", label: "Confirmation", icon: CheckCircle },
   { id: "withdrawal", label: "Withdrawal", icon: CreditCard },
   { id: "access", label: "Access", icon: Key },
@@ -32,6 +42,53 @@ const menuItems = [
 
 const Sidebar = ({ activeItem, onItemClick, onLogout }: SidebarProps) => {
   const [isCollapsed, setIsCollapsed] = useState(false);
+  const { hasPermission, loading, isAdmin, isSeller, role } = useAuth();
+
+  const panelLabel = isAdmin
+    ? 'Admin Panel'
+    : isSeller
+    ? 'Seller Panel'
+    : role
+    ? `${role.charAt(0).toUpperCase()}${role.slice(1)} Panel`
+    : 'Panel';
+
+  const permissionByMenuId: Record<string, string> = {
+    dashboard: "dashboard",
+    profile: "dashboard",
+    reports: "dashboard", // New: allow reports for sellers by default
+    booking: "bookings",
+    'seller-orders': 'seller-orders',
+    inventory: 'inventory',
+    'add-product': 'add-product', // New mapping
+    'product-qc': 'dashboard',
+    confirmation: "confirmation",
+    withdrawal: "withdrawal",
+    access: "access",
+    images: "images",
+    users: "users",
+  };
+
+  // Compute visible menu items with role-based ordering for sellers
+  const visibleMenuItems = loading
+    ? []
+    : (() => {
+        // First, apply permission and admin-only filters
+        const permitted = menuItems.filter((item) => {
+          if (item.id === 'product-qc' && !isAdmin) return false;
+          const key = permissionByMenuId[item.id] || 'dashboard';
+          return hasPermission(key as any);
+        });
+
+        // For sellers (non-admin), enforce requested order and subset
+        if (isSeller && !isAdmin) {
+          const sellerOrder = ['dashboard', 'seller-orders', 'reports', 'inventory', 'add-product', 'profile'];
+          const map = new Map(permitted.map((i) => [i.id, i] as const));
+          return sellerOrder.map((id) => map.get(id)).filter(Boolean) as typeof permitted;
+        }
+
+        // Admins keep full permitted list and original order
+        return permitted;
+      })();
 
   return (
     <div className={`bg-card border-r border-border flex flex-col transition-all duration-300 ${
@@ -64,7 +121,7 @@ const Sidebar = ({ activeItem, onItemClick, onLogout }: SidebarProps) => {
               </div>
               <div>
                 <h2 className="font-bold text-lg text-foreground">DentPal</h2>
-                <p className="text-xs text-muted-foreground">Admin Panel</p>
+                <p className="text-xs text-muted-foreground">{panelLabel}</p>
               </div>
             </div>
           )}
@@ -82,9 +139,13 @@ const Sidebar = ({ activeItem, onItemClick, onLogout }: SidebarProps) => {
       {/* Navigation */}
       <div className="flex-1 p-4">
         <nav className="space-y-2">
-          {menuItems.map((item) => {
+          {visibleMenuItems.map((item) => {
             const Icon = item.icon;
             const isActive = activeItem === item.id;
+            // Seller-specific label adjustments
+            const displayLabel = (isSeller && !isAdmin)
+              ? (item.id === 'seller-orders' ? 'Orders' : item.id === 'reports' ? 'Report' : item.label)
+              : item.label;
             
             return (
               <button
@@ -97,7 +158,7 @@ const Sidebar = ({ activeItem, onItemClick, onLogout }: SidebarProps) => {
                 }`}
               >
                 <Icon className="w-5 h-5 flex-shrink-0" />
-                {!isCollapsed && <span className="font-medium">{item.label}</span>}
+                {!isCollapsed && <span className="font-medium">{displayLabel}</span>}
               </button>
             );
           })}
