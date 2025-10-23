@@ -75,7 +75,8 @@ function normalizeTimestamp(value: any): number | null {
     images: role === 'admin',
     users: role === 'admin',
     inventory: role === 'admin',
-    'seller-orders': true
+    'seller-orders': true,
+    'add-product': true,
   });
 
   // Normalize any loaded permissions to include all keys for the role
@@ -100,6 +101,7 @@ interface User {
     users: boolean;
     inventory: boolean;
     'seller-orders': boolean;
+    'add-product': boolean;
   };
   lastLogin?: string;
   createdAt: string;
@@ -131,7 +133,8 @@ const AccessTab = ({ loading = false, error, setError, onTabChange, onEditUser }
         images: true,
         users: true,
         inventory: true,
-        'seller-orders': true
+        'seller-orders': true,
+        'add-product': true,
       },
       lastLogin: "2024-09-09T10:30:00Z",
       createdAt: "2024-01-15T00:00:00Z"
@@ -151,7 +154,8 @@ const AccessTab = ({ loading = false, error, setError, onTabChange, onEditUser }
         images: true,
         users: false,
         inventory: false,
-        'seller-orders': true
+        'seller-orders': true,
+        'add-product': true,
       },
       lastLogin: "2024-09-09T09:15:00Z",
       createdAt: "2024-02-20T00:00:00Z"
@@ -171,7 +175,8 @@ const AccessTab = ({ loading = false, error, setError, onTabChange, onEditUser }
         images: false,
         users: false,
         inventory: false,
-        'seller-orders': true
+        'seller-orders': true,
+        'add-product': true,
       },
       createdAt: "2024-09-08T00:00:00Z"
     }
@@ -733,7 +738,7 @@ const AccessTab = ({ loading = false, error, setError, onTabChange, onEditUser }
               {Object.entries(currentUser.permissions || {}).map(([permission, enabled]) => (
                 <div key={permission} className="flex items-center justify-between">
                   <label className="text-sm font-medium text-gray-700 capitalize">
-                    {permission}
+                    {permission === 'seller-orders' ? 'orders' : permission.replace('-', ' ')}
                   </label>
                   <div className="flex items-center space-x-2">
                     <input

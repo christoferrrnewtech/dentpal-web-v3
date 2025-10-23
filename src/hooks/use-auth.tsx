@@ -19,6 +19,7 @@ export const PERMISSIONS_BY_ROLE: Record<WebUserRole, WebUserPermissions> = {
     users: true,
     inventory: true,
     'seller-orders': true,
+    'add-product': true,
   },
   seller: {
     dashboard: true,
@@ -30,6 +31,7 @@ export const PERMISSIONS_BY_ROLE: Record<WebUserRole, WebUserPermissions> = {
     users: false,
     inventory: false,
     'seller-orders': true,
+    'add-product': true,
   }
 };
 

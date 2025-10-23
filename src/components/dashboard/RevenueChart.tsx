@@ -28,24 +28,16 @@ const RevenueChart = ({ data }: { data?: RevenuePoint[] }) => {
   // Friendly empty state checks
   const maxRevenue = Math.max(...chartData.map(d => d.revenue));
 
-  if (!chartData || chartData.length < 2) {
+  if (!chartData || chartData.length === 0) {
     return (
       <div className="h-80 flex items-center justify-center text-sm text-slate-500 border rounded-lg bg-white">
-        Not enough data to display the trend yet.
-      </div>
-    );
-  }
-
-  if (!Number.isFinite(maxRevenue) || maxRevenue <= 0) {
-    return (
-      <div className="h-80 flex items-center justify-center text-sm text-slate-500 border rounded-lg bg-white">
-        No revenue for the selected filters.
+        No data to display yet.
       </div>
     );
   }
 
   const xTickCount = Math.min(8, chartData.length);
-  const yMax = Math.max(1, Math.ceil(maxRevenue * 1.1));
+  const yMax = Math.max(1, Math.ceil((Number.isFinite(maxRevenue) ? maxRevenue : 0) * 1.1));
 
   return (
     <div className="h-80">

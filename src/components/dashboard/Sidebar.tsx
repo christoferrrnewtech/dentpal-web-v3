@@ -12,7 +12,8 @@ import {
   Menu,
   X,
   IdCard,
-  BarChart3
+  BarChart3,
+  PlusSquare
 } from "lucide-react";
 import dentalLogo from "@/assets/dentpal_logo.png";
 import { useAuth } from "@/hooks/use-auth";
@@ -30,6 +31,7 @@ const menuItems = [
   { id: "booking", label: "Booking", icon: Calendar },
   { id: 'seller-orders', label: 'Seller Orders', icon: Calendar },
   { id: "inventory", label: "Inventory", icon: LayoutDashboard },
+  { id: "add-product", label: "Add Product", icon: PlusSquare }, // New: direct add product entry
   { id: "product-qc", label: "QC Product", icon: CheckCircle },
   { id: "confirmation", label: "Confirmation", icon: CheckCircle },
   { id: "withdrawal", label: "Withdrawal", icon: CreditCard },
@@ -57,6 +59,7 @@ const Sidebar = ({ activeItem, onItemClick, onLogout }: SidebarProps) => {
     booking: "bookings",
     'seller-orders': 'seller-orders',
     inventory: 'inventory',
+    'add-product': 'add-product', // New mapping
     'product-qc': 'dashboard',
     confirmation: "confirmation",
     withdrawal: "withdrawal",
@@ -78,7 +81,7 @@ const Sidebar = ({ activeItem, onItemClick, onLogout }: SidebarProps) => {
 
         // For sellers (non-admin), enforce requested order and subset
         if (isSeller && !isAdmin) {
-          const sellerOrder = ['dashboard', 'seller-orders', 'reports', 'inventory', 'profile'];
+          const sellerOrder = ['dashboard', 'seller-orders', 'reports', 'inventory', 'add-product', 'profile'];
           const map = new Map(permitted.map((i) => [i.id, i] as const));
           return sellerOrder.map((id) => map.get(id)).filter(Boolean) as typeof permitted;
         }

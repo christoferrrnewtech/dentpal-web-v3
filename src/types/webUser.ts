@@ -10,6 +10,7 @@ export type WebUserPermissions = {
   users: boolean;
   inventory: boolean;
   'seller-orders': boolean;
+  'add-product': boolean; // New: Allow access to Add Product/Manage Product
 };
 
 export interface WebUserProfile {
