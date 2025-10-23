@@ -21,6 +21,8 @@ import SellerProfileTab from '@/components/profile/SellerProfileTab';
 import ReportsTab from '@/components/reports/ReportsTab';
 import OrdersService from '@/services/orders';
 import AddProduct from '@/pages/AddProduct'; // New
+import NotificationsTab from '@/components/notifications/NotificationsTab';
+import { useLocation, useNavigate } from 'react-router-dom';
 
 interface DashboardProps {
   user: { name?: string; email: string };
@@ -32,6 +34,8 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
   const { hasPermission, loading: authLoading } = useAuth();
   const { isAdmin } = useAuth();
   const { uid } = useAuth();
+  const location = useLocation();
+  const navigate = useNavigate();
   
   // New: seller dashboard UI state
   const [showTutorial, setShowTutorial] = useState(false);
@@ -179,11 +183,45 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
     } catch {}
   }, []);
 
+  // Sync active tab from query string whenever location changes
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(location.search);
+      const tab = params.get('tab');
+      if (tab && tab !== activeItem) setActiveItem(tab);
+    } catch {}
+  }, [location.search]);
+
+  // NEW: Keep URL query (?tab=...) in sync when activeItem changes to ensure future navigations take effect
+  useEffect(() => {
+    try {
+      if (!activeItem) return;
+      const params = new URLSearchParams(location.search);
+      const current = params.get('tab');
+      if (current !== activeItem) {
+        params.set('tab', activeItem);
+        navigate({ pathname: location.pathname || '/', search: params.toString() }, { replace: true });
+      }
+    } catch {}
+  }, [activeItem]);
+
+  // Listen for custom navigation events from header actions (e.g., notifications)
+  useEffect(() => {
+    const onNavigate = (e: Event) => {
+      const detail = (e as CustomEvent).detail || {};
+      if (detail?.tab && typeof detail.tab === 'string') {
+        setActiveItem(detail.tab);
+      }
+    };
+    window.addEventListener('dentpal:navigate' as any, onNavigate as any);
+    return () => window.removeEventListener('dentpal:navigate' as any, onNavigate as any);
+  }, []);
+
   // Map page ids to permission keys stored in Firestore
   const permissionByMenuId: Record<string, keyof ReturnType<typeof useAuth>["permissions"] | 'dashboard'> = {
     dashboard: "dashboard",
     profile: "dashboard",
-    reports: "dashboard", // New: Reports allowed by default for sellers
+    reports: "dashboard",
     booking: "bookings",
     confirmation: "confirmation",
     withdrawal: "withdrawal",
@@ -192,7 +230,8 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
     users: "users",
     'seller-orders': 'seller-orders',
     inventory: 'inventory',
-    'add-product': 'add-product', // New
+    'add-product': 'add-product',
+    notifications: 'dashboard',
   } as any;
 
   const isAllowed = (itemId: string) => hasPermission((permissionByMenuId[itemId] || 'dashboard') as any);
@@ -747,6 +786,9 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
         return <AddProduct />;
       case 'product-qc':
         return <ProductQCTab />;
+      case 'notifications':
+        if (!isAllowed('notifications')) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
+        return <NotificationsTab />;
       default:
         return (
           <div className="space-y-8">
@@ -894,6 +936,8 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
           return "Inventory";
         case 'add-product':
           return 'Add Product';
+        case 'notifications':
+          return 'Notifications';
         default:
           return "Dashboard";
       }
@@ -927,6 +971,8 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
           return 'Create a new product for the inventory';
         case 'product-qc':
           return 'Review and approve seller-submitted products before publishing';
+        case 'notifications':
+          return 'Your latest alerts and actions';
         default:
           return "";
       }
@@ -959,6 +1005,7 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
           />
           
           <main className="flex-1 p-6 animate-fade-in">
+            {/* Notification will handle prompting; no inline prompt here */}
             {getPageContent()}
           </main>
         </div>

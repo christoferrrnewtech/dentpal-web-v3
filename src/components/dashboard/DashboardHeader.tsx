@@ -1,5 +1,6 @@
 import { Button } from "@/components/ui/button";
-import { Bell, Search, Settings } from "lucide-react";
+import { Search, Settings } from "lucide-react";
+import NotificationCenter from "@/components/notifications/NotificationCenter";
 
 interface DashboardHeaderProps {
   title: string;
@@ -22,9 +23,8 @@ const DashboardHeader = ({ title, subtitle }: DashboardHeaderProps) => {
             <Search className="h-4 w-4" />
           </Button>
           
-          <Button variant="ghost" size="icon">
-            <Bell className="h-4 w-4" />
-          </Button>
+          {/* New Notification Center */}
+          <NotificationCenter />
           
           <Button variant="ghost" size="icon">
             <Settings className="h-4 w-4" />

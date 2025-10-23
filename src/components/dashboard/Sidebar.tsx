@@ -13,7 +13,8 @@ import {
   X,
   IdCard,
   BarChart3,
-  PlusSquare
+  PlusSquare,
+  Bell
 } from "lucide-react";
 import dentalLogo from "@/assets/dentpal_logo.png";
 import { useAuth } from "@/hooks/use-auth";
@@ -31,6 +32,7 @@ const menuItems = [
   { id: "booking", label: "Booking", icon: Calendar },
   { id: 'seller-orders', label: 'Seller Orders', icon: Calendar },
   { id: "inventory", label: "Inventory", icon: LayoutDashboard },
+  { id: "notifications", label: "Notifications", icon: Bell },
   { id: "add-product", label: "Add Product", icon: PlusSquare }, // New: direct add product entry
   { id: "product-qc", label: "QC Product", icon: CheckCircle },
   { id: "confirmation", label: "Confirmation", icon: CheckCircle },
