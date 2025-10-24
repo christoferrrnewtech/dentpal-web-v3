@@ -7,6 +7,7 @@ import { getWebUsers } from '@/services/webUserService';
 import { storage, db } from '@/lib/firebase';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { collection, getDocs } from 'firebase/firestore';
+import ComplianceService, { COMPLIANCE_DEFAULTS, type Option } from '@/services/compliance';
 
 type ItemStatus = 'active' | 'inactive' | 'draft' | 'pending_qc' | 'violation' | 'deleted';
 
@@ -87,6 +88,18 @@ const AddProduct: React.FC = () => {
     return () => { cancelled = true; };
   }, [selectedCategoryId]);
 
+  // Compliance options state
+  const [complianceOpts, setComplianceOpts] = useState({
+    dangerousGoods: COMPLIANCE_DEFAULTS.dangerousGoods,
+    warrantyTypes: COMPLIANCE_DEFAULTS.warrantyTypes,
+    durations: COMPLIANCE_DEFAULTS.durations,
+  });
+
+  useEffect(() => {
+    const unsub = ComplianceService.listen((opts) => setComplianceOpts(opts));
+    return () => unsub();
+  }, []);
+
   // Form state
   const [submitting, setSubmitting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -114,6 +127,10 @@ const AddProduct: React.FC = () => {
     unit: string;
     inStock: number;
     simpleVariantName?: string;
+    // Updated: dangerous goods simplified to two states
+    dangerousGoods?: 'none' | 'dangerous';
+    warrantyType?: string;
+    warrantyDuration?: string;
   }>({
     name: '',
     description: '',
@@ -134,11 +151,16 @@ const AddProduct: React.FC = () => {
     unit: '',
     inStock: 0,
     simpleVariantName: '',
+    // Defaults for warranty/compliance
+    dangerousGoods: 'none',
+    warrantyType: 'No warranty',
+    warrantyDuration: '',
   });
 
   const resetNewItem = () => setNewItem({
     name: '', description: '', imageUrl: '', imageFile: null, imagePreview: null, category: '', subcategory: '', price: 0, specialPrice: 0, sku: '', weight: 0,
     dimensions: { length: 0, width: 0, height: 0 }, weightUnit: 'kg', dimensionUnit: 'cm', suggestedThreshold: 0, unit: '', inStock: 0, simpleVariantName: '',
+    dangerousGoods: 'none', warrantyType: 'No warranty', warrantyDuration: '',
   });
 
   const variantFileInputs = useRef<Record<string, HTMLInputElement | null>>({});
@@ -303,6 +325,10 @@ const AddProduct: React.FC = () => {
         lowestPrice,
         variationImageVersions,
         suggestedThreshold: newItem.suggestedThreshold > 0 ? newItem.suggestedThreshold : null,
+        // Updated warranty/compliance field
+        dangerousGoods: newItem.dangerousGoods || 'none',
+        warrantyType: (newItem.warrantyType || '').trim() || null,
+        warrantyDuration: (newItem.warrantyDuration || '').trim() || null,
       } as any);
 
       // Add variations (at least one)
@@ -596,6 +622,51 @@ const AddProduct: React.FC = () => {
                 </table>
               </div>
             )}
+          </div>
+
+          {/* Warranty & Compliance */}
+          <div className="mt-6 p-4 border border-gray-200 rounded-lg bg-gray-50">
+            <h4 className="text-sm font-semibold text-gray-900 mb-3">Warranty & Compliance</h4>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Dangerous Goods</label>
+                <select
+                  value={newItem.dangerousGoods || 'none'}
+                  onChange={(e)=> setNewItem(s=> ({...s, dangerousGoods: e.target.value as 'none' | 'dangerous'}))}
+                  className="w-full text-sm p-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+                >
+                  {complianceOpts.dangerousGoods.map(o => (
+                    <option key={o.value} value={o.value}>{o.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Warranty Type</label>
+                <select
+                  value={newItem.warrantyType || ''}
+                  onChange={(e)=> setNewItem(s=> ({...s, warrantyType: e.target.value}))}
+                  className="w-full text-sm p-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+                >
+                  <option value="">Select warranty type...</option>
+                  {complianceOpts.warrantyTypes.map(o => (
+                    <option key={o.value} value={o.label}>{o.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Warranty Duration</label>
+                <select
+                  value={newItem.warrantyDuration || ''}
+                  onChange={(e)=> setNewItem(s=> ({...s, warrantyDuration: e.target.value}))}
+                  className="w-full text-sm p-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+                >
+                  <option value="">Select duration...</option>
+                  {complianceOpts.durations.map(o => (
+                    <option key={o.value} value={o.label}>{o.label}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
           </div>
 
           {/* Actions */}

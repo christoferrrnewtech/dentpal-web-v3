@@ -17,6 +17,10 @@ export type CreateProductInput = {
   status?: 'active' | 'inactive' | 'draft' | 'pending_qc' | 'violation' | 'deleted';
   // New: suggested threshold for low-stock alerts
   suggestedThreshold?: number | null;
+  // Updated: warranty & compliance
+  dangerousGoods?: 'none' | 'dangerous';
+  warrantyType?: string | null;
+  warrantyDuration?: string | null;
 };
 
 const PRODUCT_COLLECTION = 'Product';
@@ -49,6 +53,10 @@ export const ProductService = {
       promoEnd: null,
       // New: low-stock threshold (optional)
       suggestedThreshold: input.suggestedThreshold ?? null,
+      // Updated: warranty & compliance
+      dangerousGoods: input.dangerousGoods ?? 'none',
+      warrantyType: input.warrantyType ?? null,
+      warrantyDuration: input.warrantyDuration ?? null,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     } as const;
@@ -302,6 +310,10 @@ export const ProductService = {
     lowestPrice: number | null;
     status: 'active' | 'inactive' | 'draft' | 'pending_qc' | 'violation' | 'deleted';
     suggestedThreshold: number | null;
+    // Updated: warranty & compliance
+    dangerousGoods: 'none' | 'dangerous';
+    warrantyType: string | null;
+    warrantyDuration: string | null;
   }>) {
     const pRef = doc(db, PRODUCT_COLLECTION, productId);
     const payload: any = {
@@ -314,6 +326,9 @@ export const ProductService = {
       ...(updates.lowestPrice !== undefined ? { lowestPrice: updates.lowestPrice } : {}),
       ...(updates.status !== undefined ? { status: updates.status } : {}),
       ...(updates.suggestedThreshold !== undefined ? { suggestedThreshold: updates.suggestedThreshold } : {}),
+      ...(updates.dangerousGoods !== undefined ? { dangerousGoods: updates.dangerousGoods } : {}),
+      ...(updates.warrantyType !== undefined ? { warrantyType: updates.warrantyType } : {}),
+      ...(updates.warrantyDuration !== undefined ? { warrantyDuration: updates.warrantyDuration } : {}),
       updatedAt: serverTimestamp(),
     };
     await updateDoc(pRef, payload);
