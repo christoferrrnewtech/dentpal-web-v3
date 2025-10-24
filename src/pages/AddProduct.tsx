@@ -4,53 +4,9 @@ import { useAuth } from '@/hooks/use-auth';
 import { useToast } from '@/hooks/use-toast';
 import ProductService from '@/services/product';
 import { getWebUsers } from '@/services/webUserService';
-import { storage } from '@/lib/firebase';
+import { storage, db } from '@/lib/firebase';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
-
-// Category and subcategory options (copied from Inventory form)
-const CATEGORY_OPTIONS = ['Consumables', 'Dental Equipment', 'Disposables', 'Equipment'] as const;
-const SUBCATEGORY_OPTIONS: Record<typeof CATEGORY_OPTIONS[number], string[]> = {
-  Consumables: [
-    'Bonding Agents',
-    'Cements',
-    'Cleaning Solutions',
-    'Endodontic materials',
-    'Fillings',
-    'Impression materials',
-    'Orthodontic Materials',
-    'Polishing Agents',
-    'Restorative materials',
-    'Sealants',
-    'Temporary materials',
-  ],
-  'Dental Equipment': ['Tools'],
-  Disposables: ['Clinical Waste', 'Instrument and Tools', 'Patient Care Items', 'Protective Wear'],
-  Equipment: [
-    'Curing light',
-    'Dental Chairs and Units',
-    'Diagnostic Equipment',
-    'Handpieces and Tools',
-    'Impression Equipment',
-    'Orthodontic Equipments',
-    'Prosthodentics Equipments',
-    'Sterilization Equipment',
-    'Ultrasonic Cleaners',
-  ],
-};
-
-// Map UI names to Firestore document IDs (same mapping used elsewhere)
-const CATEGORY_NAME_TO_ID: Record<string, string> = {
-  Disposables: 'EsDNnmc72LZNMHk3SmeV',
-  'Dental Equipment': 'PtqCTLGduo6vay2umpMY',
-  Consumables: 'iXMJ7vcFIcMjQBVfIHZp',
-  Equipment: 'z5BRrsDIy92XEK1PzdM4',
-  Equipments: 'z5BRrsDIy92XEK1PzdM4',
-};
-
-const SUBCATEGORY_NAME_TO_ID: Record<string, string> = {
-  // TODO: replace with real subcategory IDs when available
-  'Bonding Agents': 'OEtF1TsohK0Re8RT9rOf',
-};
+import { collection, getDocs } from 'firebase/firestore';
 
 type ItemStatus = 'active' | 'inactive' | 'draft' | 'pending_qc' | 'violation' | 'deleted';
 
@@ -82,6 +38,55 @@ const AddProduct: React.FC = () => {
     return () => { mounted = false; };
   }, [isAdmin]);
 
+  // Dynamic Categories/Subcategories from Firestore
+  const [categories, setCategories] = useState<Array<{ id: string; name: string }>>([]);
+  const [subcategories, setSubcategories] = useState<Array<{ id: string; name: string }>>([]);
+  const [selectedCategoryId, setSelectedCategoryId] = useState<string>('');
+  const [selectedSubcategoryId, setSelectedSubcategoryId] = useState<string>('');
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const snap = await getDocs(collection(db, 'Category'));
+        const rows = snap.docs.map(d => {
+          const data: any = d.data();
+          const name = String(
+            data?.categoryName || data?.CategoryName ||
+            data?.name || data?.category || data?.Category || data?.title || data?.displayName || data?.label || d.id
+          ).trim();
+          return { id: d.id, name };
+        }).sort((a, b) => a.name.localeCompare(b.name));
+        if (!cancelled) setCategories(rows);
+      } catch (e) {
+        if (!cancelled) setCategories([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!selectedCategoryId) { setSubcategories([]); return; }
+    (async () => {
+      try {
+        const snap = await getDocs(collection(db, 'Category', selectedCategoryId, 'subCategory'));
+        const rows = snap.docs.map(d => {
+          const data: any = d.data();
+          const name = String(
+            data?.subCategoryName || data?.subcategoryName ||
+            data?.name || data?.title || data?.displayName || data?.label || d.id
+          ).trim();
+          return { id: d.id, name };
+        }).filter(r => !!r.name).sort((a, b) => a.name.localeCompare(b.name));
+        if (!cancelled) setSubcategories(rows);
+      } catch (e) {
+        if (!cancelled) setSubcategories([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [selectedCategoryId]);
+
   // Form state
   const [submitting, setSubmitting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -95,8 +100,8 @@ const AddProduct: React.FC = () => {
     imageUrl: string;
     imageFile?: File | null;
     imagePreview?: string | null;
-    category: string;
-    subcategory: string;
+    category: string; // display name
+    subcategory: string; // display name
     price: number;
     specialPrice: number;
     sku: string;
@@ -196,8 +201,8 @@ const AddProduct: React.FC = () => {
     if (!newItem.sku?.trim() && (variants.length === 0)) errors.sku = 'SKU is required';
     if (!newItem.description?.trim()) errors.description = 'Description is required';
     if (!(newItem.imagePreview || newItem.imageUrl || newItem.imageFile)) errors.image = 'Product image is required';
-    if (!newItem.category) errors.category = 'Category is required';
-    if (!newItem.subcategory) errors.subcategory = 'Subcategory is required';
+    if (!selectedCategoryId) errors.category = 'Category is required';
+    if (!selectedSubcategoryId) errors.subcategory = 'Subcategory is required';
 
     // Numbers must be present and > 0 (or >=0 for stock)
     if (!(Number.isFinite(newItem.price) && newItem.price > 0) && variants.length === 0) errors.price = 'Price must be greater than 0';
@@ -212,7 +217,6 @@ const AddProduct: React.FC = () => {
 
     if (variants.length === 0) {
       if (!(Number.isFinite(newItem.inStock) && newItem.inStock >= 0)) errors.inStock = 'Initial stock is required';
-      // Optional: simpleVariantName can be required if you want
     } else {
       variants.forEach((v, i) => {
         if (!v.name?.trim()) errors[`variants.${i}.name`] = `Variant ${i + 1}: name is required`;
@@ -223,7 +227,7 @@ const AddProduct: React.FC = () => {
     }
 
     return { errors, isValid: Object.keys(errors).length === 0 };
-  }, [isAdmin, selectedSellerId, newItem, variants]);
+  }, [isAdmin, selectedSellerId, newItem, variants, selectedCategoryId, selectedSubcategoryId]);
 
   const handleCreateClick = () => {
     if (!validation.isValid) {
@@ -291,8 +295,8 @@ const AddProduct: React.FC = () => {
         description: newItem.description.trim(),
         imageURL: productImageUrl || '',
         imageVersion,
-        categoryID: CATEGORY_NAME_TO_ID[newItem.category] || null,
-        subCategoryID: SUBCATEGORY_NAME_TO_ID[newItem.subcategory] || null,
+        categoryID: selectedCategoryId || null,
+        subCategoryID: selectedSubcategoryId || null,
         isActive: createStatus === 'draft' ? false : true,
         status: createStatus === 'draft' ? 'draft' : undefined,
         clickCounter: 0,
@@ -336,6 +340,8 @@ const AddProduct: React.FC = () => {
 
       resetNewItem();
       setVariants([]);
+      setSelectedCategoryId('');
+      setSelectedSubcategoryId('');
       toast({ title: createStatus === 'draft' ? 'Draft saved' : 'Product created', description: `${newItem.name} ${createStatus === 'draft' ? 'has been saved as a draft.' : 'has been added to catalog.'}` });
       // Go back to Inventory tab
       navigate('/?tab=inventory');
@@ -345,7 +351,7 @@ const AddProduct: React.FC = () => {
     } finally {
       setSubmitting(false);
     }
-  }, [effectiveSellerId, newItem, variants]);
+  }, [effectiveSellerId, newItem, variants, selectedCategoryId, selectedSubcategoryId]);
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -402,18 +408,36 @@ const AddProduct: React.FC = () => {
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">Category</label>
-                <select value={newItem.category} onChange={(e)=> setNewItem(s=> ({...s, category: e.target.value, subcategory: ''}))} className="w-full text-sm p-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent">
+                <select
+                  value={selectedCategoryId}
+                  onChange={(e)=> {
+                    const id = e.target.value;
+                    setSelectedCategoryId(id);
+                    const cat = categories.find(c => c.id === id);
+                    setNewItem(s=> ({...s, category: cat?.name || '', subcategory: ''}));
+                    setSelectedSubcategoryId('');
+                  }}
+                  className="w-full text-sm p-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+                >
                   <option value="">Select category...</option>
-                  {CATEGORY_OPTIONS.map((c) => (<option key={c} value={c}>{c}</option>))}
+                  {categories.map(c => (<option key={c.id} value={c.id}>{c.name}</option>))}
                 </select>
               </div>
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">Subcategory</label>
-                <select value={newItem.subcategory} onChange={(e)=> setNewItem(s=> ({...s, subcategory: e.target.value}))} className="w-full text-sm p-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent" disabled={!newItem.category}>
+                <select
+                  value={selectedSubcategoryId}
+                  onChange={(e)=> {
+                    const id = e.target.value;
+                    setSelectedSubcategoryId(id);
+                    const sub = subcategories.find(sc => sc.id === id);
+                    setNewItem(s=> ({...s, subcategory: sub?.name || ''}));
+                  }}
+                  className="w-full text-sm p-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+                  disabled={!selectedCategoryId || subcategories.length === 0}
+                >
                   <option value="">Select subcategory...</option>
-                  {(newItem.category ? SUBCATEGORY_OPTIONS[newItem.category as typeof CATEGORY_OPTIONS[number]] : []).map((sc) => (
-                    <option key={sc} value={sc}>{sc}</option>
-                  ))}
+                  {subcategories.map(sc => (<option key={sc.id} value={sc.id}>{sc.name}</option>))}
                 </select>
               </div>
             </div>
