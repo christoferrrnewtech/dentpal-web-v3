@@ -23,6 +23,7 @@ import OrdersService from '@/services/orders';
 import AddProduct from '@/pages/AddProduct'; // New
 import NotificationsTab from '@/components/notifications/NotificationsTab';
 import { useLocation, useNavigate } from 'react-router-dom';
+import WarrantyManager from '@/pages/admin/WarrantyManager';
 
 interface DashboardProps {
   user: { name?: string; email: string };
@@ -789,6 +790,9 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
       case 'notifications':
         if (!isAllowed('notifications')) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
         return <NotificationsTab />;
+      case 'warranty':
+        if (!isAdmin) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
+        return <WarrantyManager />;
       default:
         return (
           <div className="space-y-8">
@@ -938,6 +942,8 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
           return 'Add Product';
         case 'notifications':
           return 'Notifications';
+        case 'warranty':
+          return 'Warranty';
         default:
           return "Dashboard";
       }
@@ -973,6 +979,8 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
           return 'Review and approve seller-submitted products before publishing';
         case 'notifications':
           return 'Your latest alerts and actions';
+        case 'warranty':
+          return 'Manage warranty claims and policies';
         default:
           return "";
       }

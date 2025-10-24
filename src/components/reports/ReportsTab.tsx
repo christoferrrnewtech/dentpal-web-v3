@@ -100,6 +100,21 @@ const ReportsTab: React.FC = () => {
   const [brandByPid, setBrandByPid] = useState<Record<string, string>>({});
   const [brandByName, setBrandByName] = useState<Record<string, string>>({});
 
+  // New: Categories (by name) and subcategories from subcollection 'subCategory'
+  const [categories, setCategories] = useState<Array<{ id: string; name: string }>>([]);
+  const [subsByCategory, setSubsByCategory] = useState<Record<string, string[]>>({});
+  const [subsIdToNameByCategory, setSubsIdToNameByCategory] = useState<Record<string, Record<string, string>>>({});
+  const [selectedCategoryName, setSelectedCategoryName] = useState<string>('ALL');
+  const [selectedSubcategory, setSelectedSubcategory] = useState<string>('ALL');
+
+  // Map Category ID -> display name (merged from docs and local constants)
+  const catIdToName = useMemo(() => {
+    const map: Record<string, string> = {};
+    categories.forEach(c => { map[c.id] = c.name; });
+    Object.entries(CATEGORY_ID_TO_NAME).forEach(([id, nm]) => { if (!map[id]) map[id] = nm; });
+    return map;
+  }, [categories]);
+
   // Subscribe to orders based on role
   useEffect(() => {
     let unsub = () => {};
@@ -107,6 +122,70 @@ const ReportsTab: React.FC = () => {
     else if (uid) unsub = OrdersService.listenBySeller(uid, setOrders);
     return () => unsub();
   }, [isAdmin, uid]);
+
+  // Load Categories and their Subcategories from Firestore (subcollection 'subCategory')
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const catSnap = await getDocs(collection(db, 'Category'));
+        const catRows = catSnap.docs.map(d => {
+          const data: any = d.data();
+          const name = String(
+            data?.categoryName || data?.CategoryName ||
+            data?.name || data?.category || data?.Category || data?.title || data?.displayName || data?.label ||
+            CATEGORY_ID_TO_NAME[d.id] || d.id
+          ).trim();
+          return { id: d.id, name };
+        }).sort((a, b) => a.name.localeCompare(b.name));
+
+        const subsEntriesNames: Array<[string, string[]]> = [];
+        const subsEntriesIdToName: Array<[string, Record<string, string>]> = [];
+        await Promise.all(catRows.map(async (c) => {
+          try {
+            const subSnap = await getDocs(collection(db, 'Category', c.id, 'subCategory'));
+            const idToName: Record<string, string> = {};
+            const names: string[] = subSnap.docs
+              .map(sd => {
+                const s: any = sd.data();
+                const nm = String(
+                  s?.subCategoryName || s?.subcategoryName ||
+                  s?.name || s?.title || s?.displayName || s?.label ||
+                  s?.subCategory || s?.Subcategory || s?.SubCategory || sd.id
+                ).trim();
+                idToName[sd.id] = nm;
+                return nm;
+              })
+              .filter(Boolean)
+              .sort((a, b) => a.localeCompare(b));
+            subsEntriesNames.push([c.name, names]);
+            subsEntriesIdToName.push([c.name, idToName]);
+          } catch {
+            subsEntriesNames.push([c.name, []]);
+            subsEntriesIdToName.push([c.name, {}]);
+          }
+        }));
+        if (!cancelled) {
+          setCategories(catRows);
+          setSubsByCategory(Object.fromEntries(subsEntriesNames));
+          setSubsIdToNameByCategory(Object.fromEntries(subsEntriesIdToName));
+        }
+      } catch {
+        if (!cancelled) {
+          setCategories([]);
+          setSubsByCategory({});
+          setSubsIdToNameByCategory({});
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Selected Category name (for label-based fallback match)
+  const selectedCategoryNameMemo = useMemo(() => {
+    const c = categories.find(x => x.name === selectedCategoryName);
+    return c?.name || '';
+  }, [categories, selectedCategoryName]);
 
   // Filter by date range and basis
   const filteredOrders = useMemo(() => {
@@ -290,11 +369,36 @@ const ReportsTab: React.FC = () => {
     filteredOrders.forEach(o => {
       (o.items || []).forEach(it => {
         const pid = it.productId ? String(it.productId) : '';
-        const labelDirect = it.category && String(it.category).trim();
+        const labelDirectRaw = it.category && String(it.category).trim();
         const labelByPid = pid ? (categoryByPid[pid] || '') : '';
-        const labelByName = (!pid && it.name) ? (categoryByName[String(it.name).trim()] || '') : '';
-        const label = String(labelDirect || labelByPid || labelByName || '').trim() || 'Uncategorized';
-        const key = label;
+        const labelByNameFallback = (!pid && it.name) ? (categoryByName[String(it.name).trim()] || '') : '';
+        const itCatId = it.categoryId ? String(it.categoryId) : '';
+        const itSubRaw = it.subcategory ? String(it.subcategory).trim() : '';
+
+        // Normalize category label to name
+        let resolvedLabel = 'Uncategorized';
+        if (itCatId) {
+          resolvedLabel = catIdToName[itCatId] || CATEGORY_ID_TO_NAME[itCatId] || labelDirectRaw || labelByPid || labelByNameFallback || 'Uncategorized';
+        } else if (labelDirectRaw && catIdToName[labelDirectRaw]) {
+          // label stored as ID
+          resolvedLabel = catIdToName[labelDirectRaw] || 'Uncategorized';
+        } else {
+          resolvedLabel = String(labelDirectRaw || labelByPid || labelByNameFallback || '').trim() || 'Uncategorized';
+        }
+
+        // Apply dropdown filters when active is category
+        if (selectedCategoryName !== 'ALL') {
+          if (resolvedLabel !== selectedCategoryName) return; // skip
+        }
+
+        // Normalize subcategory to name using the resolved category
+        const subMap = subsIdToNameByCategory[resolvedLabel] || {};
+        const itSubNorm = subMap[itSubRaw] || itSubRaw;
+        if (selectedSubcategory !== 'ALL') {
+          if (!itSubNorm || itSubNorm !== selectedSubcategory) return; // skip
+        }
+
+        const key = resolvedLabel;
         const r = byKey.get(key) || { key, itemsSold: 0, grossSales: 0, itemsRefunded: 0, refunds: 0, netSales: 0 };
         const qty = it.quantity || 0;
         const amt = (it.price || 0) * qty;
@@ -308,7 +412,7 @@ const ReportsTab: React.FC = () => {
       });
     });
     return Array.from(byKey.values()).map(r => ({ ...r, netSales: Math.max(0, r.grossSales - r.refunds) }));
-  }, [filteredOrders, categoryByPid, categoryByName]);
+  }, [filteredOrders, categoryByPid, categoryByName, selectedCategoryName, selectedSubcategory, catIdToName, subsIdToNameByCategory]);
 
   // Payment Type aggregation
   const paymentTypeRows: ReportRow[] = useMemo(() => {
@@ -364,7 +468,9 @@ const ReportsTab: React.FC = () => {
       : active === 'category' ? categoryRows
       : active === 'brand' ? brandRows
       : paymentTypeRows;
-    const rows = base.filter(r => !query || r.key.toLowerCase().includes(query.toLowerCase()));
+    const rows = active === 'category'
+      ? base // dropdown filters already applied in aggregation
+      : base.filter(r => !query || r.key.toLowerCase().includes(query.toLowerCase()));
     return rows;
   }, [active, itemRows, categoryRows, brandRows, paymentTypeRows, query]);
 
@@ -437,7 +543,7 @@ const ReportsTab: React.FC = () => {
     const wb = new ExcelJS.Workbook();
     const ws = wb.addWorksheet('Sales by Brand');
     ws.addRow(['Brand', 'Gross Sales', 'Refunds', 'Net Sales']);
-    rows.forEach(r => ws.addRow([r.key, r.grossSales, r.refunds, r.netSales]));
+    rows.forEach((r) => ws.addRow([r.key, r.grossSales, r.refunds, r.netSales]));
     const buf = await wb.xlsx.writeBuffer();
     saveAs(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), `sales-by-brand-${dateRange}-${basis}.xlsx`);
   };
@@ -503,15 +609,42 @@ const ReportsTab: React.FC = () => {
             <option value="ytd">Year to date</option>
           </select>
         </div>
-        <div className="flex items-center gap-2" title="Filter rows by the first column value.">
-          <Search className="w-4 h-4 text-gray-500" />
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder={`Search ${firstColHeader.toLowerCase()}`}
-            className="text-sm p-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
-          />
-        </div>
+        {active === 'category' ? (
+          <div className="flex items-center gap-2" title="Filter by Category and Subcategory">
+            <Search className="w-4 h-4 text-gray-500" />
+            <select
+              value={selectedCategoryName}
+              onChange={(e) => { setSelectedCategoryName(e.target.value); setSelectedSubcategory('ALL'); }}
+              className="text-sm p-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+            >
+              <option value="ALL">All categories</option>
+              {categories.map(c => (
+                <option key={c.id} value={c.name}>{c.name}</option>
+              ))}
+            </select>
+            <select
+              value={selectedSubcategory}
+              onChange={(e) => setSelectedSubcategory(e.target.value)}
+              disabled={selectedCategoryName === 'ALL' || (subsByCategory[selectedCategoryName]?.length || 0) === 0}
+              className="text-sm p-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent disabled:opacity-50"
+            >
+              <option value="ALL">All subcategories</option>
+              {selectedCategoryName !== 'ALL' && (subsByCategory[selectedCategoryName] || []).map(sub => (
+                <option key={sub} value={sub}>{sub}</option>
+              ))}
+            </select>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2" title="Filter rows by the first column value.">
+            <Search className="w-4 h-4 text-gray-500" />
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder={`Search ${firstColHeader.toLowerCase()}`}
+              className="text-sm p-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+            />
+          </div>
+        )}
         <div className="ml-auto flex items-center gap-2">
           <button className="inline-flex items-center gap-1 px-3 py-1.5 text-sm rounded-lg border border-gray-300 hover:bg-gray-50" onClick={() => exportCsv()} title="Export the current summary table as CSV.">
             <Download className="w-4 h-4" /> Export CSV

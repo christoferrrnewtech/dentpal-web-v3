@@ -17,7 +17,7 @@ import { storage } from '@/lib/firebase';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { ProductService } from '@/services/product';
 import CatalogTable from './CatalogTable';
-import { CalendarClock } from 'lucide-react';
+import { CalendarClock, Package, AlertTriangle, CircleSlash, CheckCircle2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 // Category and subcategory options
@@ -840,14 +840,37 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
         </button>
       </div>
 
-      {/* Stock summary banner */}
-      {(stockSummary.low > 0 || stockSummary.out > 0) && (
-        <div className="flex items-center gap-3 text-xs px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-800">
-          <span className="font-medium">Inventory alerts:</span>
-          {stockSummary.out > 0 && (<span className="inline-flex items-center px-2 py-0.5 rounded-full bg-red-600 text-white">{stockSummary.out} Out of stock</span>)}
-          {stockSummary.low > 0 && (<span className="inline-flex items-center px-2 py-0.5 rounded-full bg-amber-500 text-white">{stockSummary.low} Low stock</span>)}
+      {/* KPI metrics for inventory alerts */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className="rounded-xl border border-gray-200 bg-white p-4 flex items-center gap-3">
+          <div className="p-2 rounded-lg bg-gray-100 text-gray-700"><Package className="w-5 h-5" /></div>
+          <div>
+            <div className="text-xs text-gray-500">Total products</div>
+            <div className="text-xl font-semibold text-gray-900">{items.filter(i => (i.status ?? 'active') !== 'deleted').length}</div>
+          </div>
         </div>
-      )}
+        <div className="rounded-xl border border-red-200 bg-red-50 p-4 flex items-center gap-3">
+          <div className="p-2 rounded-lg bg-red-100 text-red-700"><CircleSlash className="w-5 h-5" /></div>
+          <div>
+            <div className="text-xs text-red-700">Out of stock</div>
+            <div className="text-xl font-semibold text-red-800">{stockSummary.out}</div>
+          </div>
+        </div>
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 flex items-center gap-3">
+          <div className="p-2 rounded-lg bg-amber-100 text-amber-700"><AlertTriangle className="w-5 h-5" /></div>
+          <div>
+            <div className="text-xs text-amber-700">Low stock</div>
+            <div className="text-xl font-semibold text-amber-800">{stockSummary.low}</div>
+          </div>
+        </div>
+        <div className="rounded-xl border border-teal-200 bg-teal-50 p-4 flex items-center gap-3">
+          <div className="p-2 rounded-lg bg-teal-100 text-teal-700"><CheckCircle2 className="w-5 h-5" /></div>
+          <div>
+            <div className="text-xs text-teal-700">Active</div>
+            <div className="text-xl font-semibold text-teal-800">{statusCounts.active}</div>
+          </div>
+        </div>
+      </div>
 
       {/* Catalog Table */}
       <CatalogTable
@@ -934,8 +957,6 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
                   </div>
                 </div>
               </div>
-
-              {/* Promotion schedule */}
               {priceForm.promoMode === 'dated' && (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
