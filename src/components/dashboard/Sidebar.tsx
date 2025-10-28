@@ -14,7 +14,8 @@ import {
   IdCard,
   BarChart3,
   PlusSquare,
-  Bell
+  Bell,
+  ShieldCheck
 } from "lucide-react";
 import dentalLogo from "@/assets/dentpal_logo.png";
 import { useAuth } from "@/hooks/use-auth";
@@ -28,13 +29,14 @@ interface SidebarProps {
 const menuItems = [
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
   { id: "profile", label: "Profile", icon: IdCard },
-  { id: "reports", label: "Reports", icon: BarChart3 }, // New: Reports tab
+  { id: "reports", label: "Reports", icon: BarChart3 },
   { id: "booking", label: "Booking", icon: Calendar },
   { id: 'seller-orders', label: 'Seller Orders', icon: Calendar },
   { id: "inventory", label: "Inventory", icon: LayoutDashboard },
   { id: "notifications", label: "Notifications", icon: Bell },
-  { id: "add-product", label: "Add Product", icon: PlusSquare }, // New: direct add product entry
+  { id: "add-product", label: "Add Product", icon: PlusSquare },
   { id: "product-qc", label: "QC Product", icon: CheckCircle },
+  { id: "warranty", label: "Warranty", icon: ShieldCheck },
   { id: "confirmation", label: "Confirmation", icon: CheckCircle },
   { id: "withdrawal", label: "Withdrawal", icon: CreditCard },
   { id: "access", label: "Access", icon: Key },
@@ -57,12 +59,13 @@ const Sidebar = ({ activeItem, onItemClick, onLogout }: SidebarProps) => {
   const permissionByMenuId: Record<string, string> = {
     dashboard: "dashboard",
     profile: "dashboard",
-    reports: "dashboard", // New: allow reports for sellers by default
+    reports: "dashboard",
     booking: "bookings",
     'seller-orders': 'seller-orders',
     inventory: 'inventory',
-    'add-product': 'add-product', // New mapping
+    'add-product': 'add-product',
     'product-qc': 'dashboard',
+    warranty: 'dashboard',
     confirmation: "confirmation",
     withdrawal: "withdrawal",
     access: "access",
@@ -77,6 +80,7 @@ const Sidebar = ({ activeItem, onItemClick, onLogout }: SidebarProps) => {
         // First, apply permission and admin-only filters
         const permitted = menuItems.filter((item) => {
           if (item.id === 'product-qc' && !isAdmin) return false;
+          if (item.id === 'warranty' && !isAdmin) return false;
           const key = permissionByMenuId[item.id] || 'dashboard';
           return hasPermission(key as any);
         });

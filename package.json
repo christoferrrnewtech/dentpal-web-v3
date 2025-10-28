@@ -10,7 +10,8 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "backfill:categories": "node ./scripts/backfill-order-item-categories.cjs",
-    "backfill:categories:dry": "DRY_RUN=1 node ./scripts/backfill-order-item-categories.cjs"
+    "backfill:categories:dry": "DRY_RUN=1 node ./scripts/backfill-order-item-categories.cjs",
+    "seed:compliance": "node ./scripts/seed-warranty-compliance.js"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
