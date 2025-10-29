@@ -1,7 +1,7 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import { Order } from '@/types/order';
 import { Search, RefreshCcw } from 'lucide-react';
-import { SUB_TABS, mapOrderToStage, LifecycleStage } from './config';
+import { SUB_TABS, mapOrderToStage, LifecycleStage, TO_SHIP_SUB_TABS, ToShipStage } from './config';
 import AllOrdersView from './views/AllOrdersView';
 import UnpaidOrdersView from './views/UnpaidOrdersView';
 import ToShipOrdersView from './views/ToShipOrdersView';
@@ -57,9 +57,18 @@ export const OrderTab: React.FC<OrderTabProps> = ({
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [copied, setCopied] = useState<null | 'id' | 'barcode'>(null);
+  // New: to-ship sub-tab state
+  const [toShipSubTab, setToShipSubTab] = useState<ToShipStage>('to-pack');
 
   // Reset to first page when filters or tab change
   useEffect(() => { setPage(1); }, [activeSubTab, dateFrom, dateTo]);
+
+  // Reset to-ship sub-tab when switching to to-ship
+  useEffect(() => {
+    if (activeSubTab === 'to-ship') {
+      setToShipSubTab('to-pack');
+    }
+  }, [activeSubTab]);
 
   // Date-filter orders once for reuse (also powers counts)
   const dateFilteredOrders = useMemo(() => {
@@ -81,13 +90,27 @@ export const OrderTab: React.FC<OrderTabProps> = ({
     return base;
   }, [dateFilteredOrders]);
 
+  // Counts for to-ship sub-tabs
+  const countsByToShipSubTab = useMemo(() => {
+    const toShipOrders = dateFilteredOrders.filter(o => mapOrderToStage(o) === 'to-ship');
+    const base: Record<ToShipStage, number> = { 'to-pack': toShipOrders.length, 'to-arrangement': 0, 'to-hand-over': 0 };
+    // TODO: Update based on fulfillmentStage when added
+    return base;
+  }, [dateFilteredOrders]);
+
   const filtered = useMemo(() => {
     return dateFilteredOrders.filter(o => {
       // stage filter
       if (activeSubTab !== 'all' && !SUB_TABS.find(t => t.id === activeSubTab)?.predicate(o)) return false;
+      // to-ship sub-stage filter
+      if (activeSubTab === 'to-ship') {
+        // For now, all to-ship orders are in 'to-pack'
+        // TODO: Add fulfillmentStage field to Order type and filter accordingly
+        if (toShipSubTab !== 'to-pack') return false;
+      }
       return true;
     });
-  }, [dateFilteredOrders, activeSubTab]);
+  }, [dateFilteredOrders, activeSubTab, toShipSubTab]);
 
   // Compute pagination
   const total = filtered.length;
@@ -218,6 +241,33 @@ export const OrderTab: React.FC<OrderTabProps> = ({
         </button>
       </div>
 
+      {/* To-Ship Sub Tabs (only when To Ship is active) */}
+      {activeSubTab === 'to-ship' && (
+        <div className="bg-orange-50 border border-orange-200 rounded-xl p-3 shadow-sm mt-4">
+          <div className="flex flex-wrap gap-2">
+            {TO_SHIP_SUB_TABS.map(subTab => {
+              const isActive = subTab.id === toShipSubTab;
+              return (
+                <button
+                  key={subTab.id}
+                  onClick={() => setToShipSubTab(subTab.id)}
+                  className={`relative px-3 py-1.5 rounded-lg text-sm font-medium transition focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500/60
+                    ${isActive ? 'bg-orange-600 text-white shadow-sm' : 'bg-white text-orange-700 hover:bg-orange-100 border border-orange-300'}
+                  `}
+                >
+                  <span>{subTab.label}</span>
+                  <span className={`ml-2 inline-flex items-center justify-center text-[11px] font-semibold rounded-full px-1.5 min-w-[1.25rem]
+                    ${isActive ? 'bg-white/20 text-white' : 'bg-orange-200 text-orange-800'}`}>{countsByToShipSubTab[subTab.id]}</span>
+                </button>
+              );
+            })}
+          </div>
+          <div className="mt-2 text-xs text-orange-600">
+            Manage orders through packing, arrangement, and handover stages.
+          </div>
+        </div>
+      )}
+
       {/* Orders View */}
       <ActiveView orders={pagedOrders} onSelectOrder={handleSelectOrder} />
 
@@ -281,29 +331,13 @@ export const OrderTab: React.FC<OrderTabProps> = ({
                     <button className="text-xs px-3 py-1.5 rounded-md border border-gray-200 hover:bg-gray-50" onClick={() => setDetailsOpen(false)}>Close</button>
                   </div>
                 </div>
-                {/* Progress */}
-                <div className="mt-3">
-                  {isTerminal ? (
-                    <div className="text-xs text-gray-600">This order is in a terminal state: <span className="font-medium capitalize">{selectedOrder.status}</span>.</div>
-                  ) : (
-                    <div className="flex items-center gap-2">
-                      {stepOrder.map((s, i) => (
-                        <div key={s} className="flex items-center gap-2">
-                          <div className={`h-2 w-2 rounded-full ${i <= activeIdx ? 'bg-teal-600' : 'bg-gray-300'}`} />
-                          <div className={`text-[11px] ${i <= activeIdx ? 'text-teal-700' : 'text-gray-500'}`}>{s.replace('-', ' ')}</div>
-                          {i < stepOrder.length - 1 && <div className={`mx-2 h-px w-8 ${i < activeIdx ? 'bg-teal-200' : 'bg-gray-200'}`} />}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
               </div>
 
               {/* Body */}
               <div className="p-5">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-                  {/* Left: Buyer & Timing */}
-                  <div className="space-y-3">
+                {/* Meta: Date & Buyer */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-6">
+                  <div className="space-y-3 md:col-span-1">
                     <div>
                       <div className="text-xs text-gray-500">Date</div>
                       <div className="text-sm font-medium text-gray-900">{selectedOrder.timestamp}</div>
@@ -313,63 +347,57 @@ export const OrderTab: React.FC<OrderTabProps> = ({
                       <div className="text-sm font-medium text-gray-900">{selectedOrder.customer.name || '—'}</div>
                       <div className="text-xs text-gray-500">{selectedOrder.customer.contact || ''}</div>
                     </div>
-                    <div>
-                      <div className="text-xs text-gray-500">Tracking No.</div>
-                      <div className="text-sm text-gray-900 break-all">{selectedOrder.barcode}</div>
-                    </div>
                   </div>
+                </div>
 
-                  {/* Middle: Items & Media */}
-                  <div className="space-y-3 md:col-span-2">
-                    <div>
-                      <div className="flex items-center justify-between">
-                        <div className="text-xs text-gray-500">Items</div>
-                        <div className="text-xs text-gray-500">{selectedOrder.currency || 'PHP'}</div>
-                      </div>
-                      {Array.isArray(selectedOrder.items) && selectedOrder.items.length > 0 ? (
-                        <div className="mt-1 -mx-1.5 overflow-hidden border border-gray-200 rounded-lg">
-                          <table className="w-full text-xs">
-                            <thead className="bg-gray-50">
-                              <tr>
-                                <th className="text-left px-2 py-1.5 text-gray-600 font-medium">Name</th>
-                                <th className="text-right px-2 py-1.5 text-gray-600 font-medium">Qty</th>
-                                <th className="text-right px-2 py-1.5 text-gray-600 font-medium">Price</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {selectedOrder.items.map((it, idx) => (
-                                <tr key={idx} className="border-t border-gray-100">
-                                  <td className="px-2 py-1.5 text-gray-900">{it.name}</td>
-                                  <td className="px-2 py-1.5 text-right text-gray-900">{it.quantity}</td>
-                                  <td className="px-2 py-1.5 text-right text-gray-900">{it.price ?? ''}</td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
+                {/* Items table below buyer */}
+                <div className="border rounded-lg overflow-hidden mb-4">
+                  <div className="grid grid-cols-12 gap-2 bg-gray-50 px-3 py-2 text-xs font-medium text-gray-600">
+                    <div className="col-span-1" />
+                    <div className="col-span-6">Product</div>
+                    <div className="col-span-2 text-center">Qty</div>
+                    <div className="col-span-3 text-right">Price</div>
+                  </div>
+                  <div className="divide-y">
+                    {Array.isArray(selectedOrder.items) && selectedOrder.items.length > 0 ? (
+                      selectedOrder.items.map((it, idx) => (
+                        <div key={idx} className="grid grid-cols-12 gap-2 items-center px-3 py-3">
+                          <div className="col-span-1 flex items-center">
+                            <input type="checkbox" className="h-4 w-4 text-teal-600 border-gray-300 rounded" />
+                          </div>
+                          <div className="col-span-6 flex items-start gap-3 min-w-0">
+                            {/* Optional thumbnail for better UX */}
+                            {(it as any).image || it.imageUrl ? (
+                              <img src={(it as any).image || it.imageUrl!} alt={it.name} className="w-10 h-10 rounded-md object-cover border border-gray-200 flex-shrink-0" />
+                            ) : (
+                              <div className="w-10 h-10 rounded-md bg-gray-100 border border-gray-200 flex items-center justify-center text-[10px] text-gray-400">No Image</div>
+                            )}
+                            <div className="min-w-0">
+                              <div className="text-sm font-medium text-gray-900 truncate">{it.name || 'Unnamed product'}</div>
+                              <div className="text-[11px] text-gray-500 truncate mt-0.5">
+                                {it.sku ? `SKU: ${it.sku}` : (it as any).variation ? `Variant: ${(it as any).variation}` : it.productId ? `Product: ${it.productId}` : ''}
+                              </div>
+                            </div>
+                          </div>
+                          <div className="col-span-2 text-center text-sm text-gray-700">{it.quantity}</div>
+                          <div className="col-span-3 text-right text-sm text-gray-900">{typeof it.price !== 'undefined' ? `${selectedOrder.currency || 'PHP'} ${it.price}` : ''}</div>
                         </div>
-                      ) : (
-                        <div className="text-sm font-medium text-gray-900">{selectedOrder.itemsBrief || `${selectedOrder.orderCount} item(s)`}</div>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-3">
-                      {selectedOrder.imageUrl ? (
-                        <img src={selectedOrder.imageUrl} alt="Product" className="w-20 h-20 rounded-lg object-cover border border-gray-200 shadow-sm" />
-                      ) : (
-                        <div className="w-20 h-20 rounded-lg bg-gray-100 border border-gray-200 flex items-center justify-center text-[10px] text-gray-400">No Image</div>
-                      )}
-                    </div>
+                      ))
+                    ) : (
+                      <div className="px-3 py-4 text-sm text-gray-600">{selectedOrder.itemsBrief || `${selectedOrder.orderCount} item(s)`}</div>
+                    )}
                   </div>
+                </div>
 
-                  {/* Right: Amounts */}
-                  <div className="space-y-3">
-                    <div>
-                      <div className="text-xs text-gray-500">Total Amount</div>
-                      <div className="text-lg font-semibold text-gray-900">{selectedOrder.currency || 'PHP'} {selectedOrder.total != null ? selectedOrder.total : '—'}</div>
-                    </div>
-                    <div>
-                      <div className="text-xs text-gray-500">Package</div>
-                      <div className="text-sm text-gray-900">{selectedOrder.package.size}</div>
-                    </div>
+                {/* Package above Total Amount */}
+                <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                  <div className="text-sm text-gray-600">
+                    <div className="font-medium">Package</div>
+                    <div className="text-sm text-gray-500 mt-1">{selectedOrder.package.size}</div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-xs text-gray-500">Total Amount</div>
+                    <div className="text-lg font-semibold">{selectedOrder.currency || 'PHP'} {selectedOrder.total != null ? selectedOrder.total : ''}</div>
                   </div>
                 </div>
               </div>

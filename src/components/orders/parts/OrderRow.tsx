@@ -1,5 +1,6 @@
 import React from 'react';
 import { Order } from '@/types/order';
+import { ChevronDown, ChevronUp, Printer, FileText, Download } from 'lucide-react';
 
 interface OrderRowProps {
   order: Order;
@@ -173,8 +174,8 @@ const OrderRow: React.FC<OrderRowProps> = ({ order, onDetails, onClick }) => {
     return () => document.removeEventListener('click', onDocClick);
   }, [menuOpen, itemsOpen]);
 
-  return (
-    <div className="w-full bg-white border border-gray-200 rounded-xl p-4 shadow-sm">
+    return (
+    <div className="w-full bg-white border border-gray-200 rounded-xl p-4 shadow-sm hover:shadow-md transition-shadow">
       <div className="flex flex-col md:flex-row md:items-center gap-4">
         <div className="flex-1 flex items-center gap-6">
           {/* Date (no time) */}
@@ -189,40 +190,39 @@ const OrderRow: React.FC<OrderRowProps> = ({ order, onDetails, onClick }) => {
           <div className="flex-1 min-w-[200px]" data-items-menu>
             <div className="flex items-center gap-2">
               <p className="font-medium text-gray-900">{order.itemsBrief || `${order.orderCount} item(s)`}</p>
-              {hasMultiItems && (
+              {Array.isArray(order.items) && order.items.length >= 2 && (
                 <button
                   type="button"
-                  className="text-[11px] px-2 py-0.5 border border-gray-200 rounded-md hover:bg-gray-50 text-gray-700"
+                  className="text-[11px] px-2 py-0.5 border border-gray-200 rounded-md hover:bg-gray-50 text-gray-700 flex items-center gap-1"
                   onClick={(e) => { e.stopPropagation(); setItemsOpen(v => !v); }}
                   title="Show items"
                 >
-                  Items ▾
+                  {itemsOpen ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                  Items
                 </button>
               )}
             </div>
-            {/* Inline expanded items list */}
-            {itemsOpen && hasMultiItems && (
-              <div className="mt-2 border border-gray-200 rounded-lg overflow-hidden">
-                <div className="bg-gray-50 px-3 py-2 text-xs text-gray-600">Products in this order</div>
-                <ul className="divide-y divide-gray-100 max-h-64 overflow-auto">
-                  {order.items!.map((it, idx) => (
-                    <li key={idx} className="px-3 py-2 flex items-center gap-3">
-                      {it.imageUrl ? (
-                        <img src={it.imageUrl} alt={it.name} className="w-10 h-10 rounded-md object-cover border border-gray-200" />
-                      ) : (
-                        <div className="w-10 h-10 rounded-md bg-gray-100 border border-gray-200 flex items-center justify-center text-[10px] text-gray-400">No Image</div>
+            {/* Expanded items inline with animation */}
+            {itemsOpen && Array.isArray(order.items) && order.items.length >= 2 && (
+              <div className="mt-2 space-y-2 animate-in slide-in-from-top-2 duration-300">
+                {order.items!.map((it, idx) => (
+                  <div key={idx} className="flex items-center gap-3 p-2 bg-gray-50 rounded-md">
+                    {/* Changed from it.imageUrl to it.image assuming the field name */}
+                    {(it as any).image ? (
+                      <img src={(it as any).image} alt={(it as any).name} className="w-8 h-8 rounded-md object-cover border border-gray-200" />
+                    ) : (
+                      <div className="w-8 h-8 rounded-md bg-gray-100 border border-gray-200 flex items-center justify-center text-[8px] text-gray-400">No Image</div>
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm text-gray-900 truncate">{(it as any).name}</div>
+                      {((it as any).sku || (it as any).productId) && (
+                        <div className="text-[10px] text-gray-500 truncate">{(it as any).sku || (it as any).productId}</div>
                       )}
-                      <div className="flex-1 min-w-0">
-                        <div className="text-sm text-gray-900 truncate">{it.name}</div>
-                        {(it.sku || it.productId) && (
-                          <div className="text-[11px] text-gray-500 truncate">{it.sku || it.productId}</div>
-                        )}
-                      </div>
-                      <div className="text-sm text-gray-700 whitespace-nowrap">x{it.quantity}</div>
-                      <div className="text-sm text-gray-900 whitespace-nowrap">{typeof it.price !== 'undefined' ? `${order.currency || 'PHP'} ${it.price}` : ''}</div>
-                    </li>
-                  ))}
-                </ul>
+                    </div>
+                    <div className="text-sm text-gray-700">x{(it as any).quantity}</div>
+                    <div className="text-sm text-gray-900">{typeof (it as any).price !== 'undefined' ? `${order.currency || 'PHP'} ${(it as any).price}` : ''}</div>
+                  </div>
+                ))}
               </div>
             )}
             {order.total != null && (
@@ -234,21 +234,27 @@ const OrderRow: React.FC<OrderRowProps> = ({ order, onDetails, onClick }) => {
           {/* Size and contact */}
           <div className="hidden lg:block text-xs text-gray-500">{order.package.size} / {order.customer.contact || '—'}</div>
         </div>
-        {/* Actions: compact dropdown */}
+        {/* Actions: compact dropdown with icons */}
         <div className="relative" data-actions-menu>
           <button
             type="button"
-            className="text-xs px-3 py-1 border border-gray-200 rounded-md hover:bg-gray-50 shadow-sm"
+            className="text-xs px-3 py-1 border border-gray-200 rounded-md hover:bg-gray-50 shadow-sm flex items-center gap-1"
             onClick={(e) => { e.stopPropagation(); setMenuOpen(v => !v); }}
             title="Invoice and export options"
           >
-            Actions ▾
+            Actions <ChevronDown className="w-3 h-3" />
           </button>
           {menuOpen && (
             <div className="absolute right-0 mt-2 w-48 bg-white border border-gray-200 rounded-lg shadow-lg overflow-hidden z-10">
-              <button type="button" className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50" onClick={() => { setMenuOpen(false); printInvoice(order); }}>🖨️ Print invoice</button>
-              <button type="button" className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50" onClick={() => { setMenuOpen(false); exportCSV(order); }}>📄 Export CSV</button>
-              <button type="button" className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50" onClick={() => { setMenuOpen(false); exportPDF(order); }}>📎 Export PDF</button>
+              <button type="button" className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 flex items-center gap-2" onClick={() => { setMenuOpen(false); printInvoice(order); }}>
+                <Printer className="w-4 h-4" /> Print invoice
+              </button>
+              <button type="button" className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 flex items-center gap-2" onClick={() => { setMenuOpen(false); exportCSV(order); }}>
+                <Download className="w-4 h-4" /> Export CSV
+              </button>
+              <button type="button" className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 flex items-center gap-2" onClick={() => { setMenuOpen(false); exportPDF(order); }}>
+                <FileText className="w-4 h-4" /> Export PDF
+              </button>
             </div>
           )}
         </div>
@@ -260,20 +266,79 @@ const OrderRow: React.FC<OrderRowProps> = ({ order, onDetails, onClick }) => {
       {open && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
           <div className="absolute inset-0 bg-black/40" onClick={() => setOpen(false)} />
-          <div className="relative z-10 w-[92vw] max-w-md bg-white rounded-xl shadow-lg border border-gray-200 p-4">
-            <div className="flex items-center justify-between mb-2">
-              <h3 className="text-sm font-semibold text-gray-900">Order Details</h3>
-              <button className="text-xs px-2 py-1 rounded border border-gray-200 hover:bg-gray-50" onClick={() => setOpen(false)}>Close</button>
+          <div className="relative z-10 w-[92vw] max-w-2xl bg-white rounded-xl shadow-lg border border-gray-200 p-5">
+            <div className="flex items-start justify-between mb-4">
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">Order #{order.id}</h3>
+                <div className="text-sm text-gray-500 mt-1">{order.timestamp}</div>
+                <div className="text-sm text-gray-700 mt-3"><span className="font-medium">Buyer:</span> {order.customer?.name || '—'}</div>
+                <div className="text-sm text-gray-500">{order.customer?.contact || '—'}</div>
+              </div>
+              <div className="flex flex-col items-end gap-2">
+                {/* Keep a compact status chip visible in the header, but remove status list inside the body */}
+                <div className="text-xs font-medium capitalize px-3 py-1 rounded bg-teal-50 text-teal-700">{order.status}</div>
+                <button className="text-xs px-3 py-1 rounded border border-gray-200 hover:bg-gray-50" onClick={() => setOpen(false)}>Close</button>
+              </div>
             </div>
-            <div className="space-y-2 text-sm text-gray-700">
-              <div><span className="font-medium">Order ID:</span> {order.id}</div>
-              <div><span className="font-medium">Date:</span> {order.timestamp}</div>
-              <div><span className="font-medium">Status:</span> {order.status}</div>
-              {order.itemsBrief && <div><span className="font-medium">Items:</span> {order.itemsBrief}</div>}
-              {order.total != null && <div><span className="font-medium">Total:</span> {order.currency || 'PHP'} {order.total}</div>}
-              <div><span className="font-medium">Buyer:</span> {order.customer.name || '—'}</div>
-              <div><span className="font-medium">Contact:</span> {order.customer.contact || '—'}</div>
-              <div><span className="font-medium">Tracking No.:</span> {order.barcode}</div>
+
+            {/* Items table */}
+            <div className="border rounded-lg overflow-hidden">
+              <div className="grid grid-cols-12 gap-2 bg-gray-50 px-3 py-2 text-xs font-medium text-gray-600">
+                <div className="col-span-1 flex items-center"> </div>
+                <div className="col-span-6">Product</div>
+                <div className="col-span-2 text-center">Qty</div>
+                <div className="col-span-3 text-right">Price</div>
+              </div>
+
+              <div className="divide-y">
+                {Array.isArray(order.items) && order.items.length > 0 ? (
+                  order.items.map((it, idx) => (
+                    <div key={idx} className="grid grid-cols-12 gap-2 items-center px-3 py-3">
+                      <div className="col-span-1 flex items-center">
+                        <input type="checkbox" className="h-4 w-4 text-teal-600 border-gray-300 rounded" />
+                      </div>
+
+                      <div className="col-span-6 flex items-start gap-3 min-w-0">
+                        {/* Thumbnail */}
+                        {(it as any).image || (it as any).imageUrl ? (
+                          <img src={(it as any).image || (it as any).imageUrl} alt={(it as any).name} className="w-10 h-10 rounded-md object-cover border border-gray-200 flex-shrink-0" />
+                        ) : (
+                          <div className="w-10 h-10 rounded-md bg-gray-100 border border-gray-200 flex items-center justify-center text-[10px] text-gray-400">No Image</div>
+                        )}
+
+                        <div className="min-w-0">
+                          <div className="text-sm font-medium text-gray-900 truncate">{(it as any).name || 'Unnamed product'}</div>
+                          <div className="text-[11px] text-gray-500 truncate mt-0.5">{(it as any).sku ? `SKU: ${(it as any).sku}` : (it as any).variation ? `Variant: ${(it as any).variation}` : (it as any).productId ? `Product: ${(it as any).productId}` : ''}</div>
+                        </div>
+                      </div>
+
+                      <div className="col-span-2 text-center text-sm text-gray-700">{(it as any).quantity}</div>
+
+                      <div className="col-span-3 text-right text-sm text-gray-900">{typeof (it as any).price !== 'undefined' ? `${order.currency || 'PHP'} ${(it as any).price}` : ''}</div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="px-3 py-4 text-sm text-gray-600">{order.itemsBrief || `${order.orderCount} item(s)`}</div>
+                )}
+              </div>
+            </div>
+
+            {/* Summary: Total and Package */}
+            <div className="mt-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+              <div className="text-sm text-gray-600">
+                <div className="font-medium">Package</div>
+                <div className="text-sm text-gray-500 mt-1">{order.package?.size || '—'}</div>
+              </div>
+
+              <div className="text-right">
+                <div className="text-xs text-gray-500">Total Amount</div>
+                <div className="text-lg font-semibold">{order.currency || 'PHP'} {order.total != null ? order.total : ''}</div>
+              </div>
+            </div>
+
+            <div className="mt-4 flex justify-end gap-3">
+              <button className="text-sm px-3 py-2 rounded border border-gray-200 hover:bg-gray-50" onClick={() => setOpen(false)}>Close</button>
+              <button className="text-sm px-3 py-2 rounded bg-teal-600 text-white hover:bg-teal-700" onClick={() => { printInvoice(order); setOpen(false); }}>Print Invoice</button>
             </div>
           </div>
         </div>
