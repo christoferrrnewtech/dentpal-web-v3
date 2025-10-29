@@ -1,10 +1,13 @@
 import { db } from '@/lib/firebase';
 import { collection, onSnapshot, query, where, DocumentData, QuerySnapshot, doc, getDoc } from 'firebase/firestore';
+import { getStorage, ref, getDownloadURL } from 'firebase/storage';
 import type { Order } from '@/types/order';
 
 const ORDER_COLLECTION = 'Order';
 // Also support lowercase/plural collection naming used elsewhere in the app
 const ORDER_COLLECTIONS = ['Order', 'orders'] as const;
+
+const storage = getStorage();
 
 // Known Category ID -> Name (keep in sync with Inventory)
 const CATEGORY_ID_TO_NAME: Record<string, string> = {
@@ -242,11 +245,10 @@ const mapDocToOrder = (id: string, data: any): Order => {
   };
 };
 
-// Hydrate missing imageUrl by fetching Product.imageURL
+// Hydrate order imageUrl from first item's Product doc
 const hydrateImageUrl = async (order: Order, data: any): Promise<Order> => {
-  if (order.imageUrl) return order;
-  const items = Array.isArray(data.items) ? data.items : [];
-  const first = items[0] || {};
+  const items = Array.isArray(order.items) ? order.items : [];
+  const first: any = items[0] || {};
   const pid = first.productId || first.productID || first.product?.id || data.productId || data.productID;
   if (!pid) return order;
   try {
@@ -254,7 +256,15 @@ const hydrateImageUrl = async (order: Order, data: any): Promise<Order> => {
     if (pSnap.exists()) {
       const p: any = pSnap.data();
       const img = p.imageURL || p.imageUrl;
-      if (img) return { ...order, imageUrl: String(img) };
+      if (img) {
+        let resolvedImg: string;
+        if (String(img).startsWith('gs://')) {
+          resolvedImg = await getDownloadURL(ref(storage, img));
+        } else {
+          resolvedImg = String(img);
+        }
+        return { ...order, imageUrl: resolvedImg };
+      }
     }
   } catch {}
   return order;
@@ -280,7 +290,7 @@ const hydrateItemCategories = async (order: Order, productCache: Map<string, any
     }
   }
 
-  const itemsNext = items.map(it => {
+  const itemsNext = items.map(async (it) => {
     if (it.category && String(it.category).trim() && it.categoryId) return it;
     const pid = it.productId ? String(it.productId) : '';
     const p: any = pid ? productCache.get(pid) : null;
@@ -290,10 +300,24 @@ const hydrateItemCategories = async (order: Order, productCache: Map<string, any
     const resolved = catLabel || (catId ? CATEGORY_ID_TO_NAME[String(catId)] || '' : '');
     const sub = p.subcategory || p.Subcategory || undefined;
     const cost = p.cost != null ? Number(p.cost) : undefined;
-    if (!resolved && !sub && !catId && cost == null) return it;
-    return { ...it, ...(resolved ? { category: resolved } : {}), ...(sub ? { subcategory: String(sub) } : {}), ...(catId ? { categoryId: String(catId) } : {}), ...(cost != null ? { cost } : {}) };
+    const img = p.imageURL || p.imageUrl || p.thumbnail;
+    let resolvedImg: string | undefined;
+    if (img) {
+      if (String(img).startsWith('gs://')) {
+        try {
+          resolvedImg = await getDownloadURL(ref(storage, img));
+        } catch {
+          resolvedImg = undefined;
+        }
+      } else {
+        resolvedImg = String(img);
+      }
+    }
+    if (!resolved && !sub && !catId && cost == null && !resolvedImg) return it;
+    return { ...it, ...(resolved ? { category: resolved } : {}), ...(sub ? { subcategory: String(sub) } : {}), ...(catId ? { categoryId: String(catId) } : {}), ...(cost != null ? { cost } : {}), ...(resolvedImg ? { imageUrl: resolvedImg } : {}) };
   });
-  return { ...order, items: itemsNext };
+  const resolvedItems = await Promise.all(itemsNext);
+  return { ...order, items: resolvedItems };
 };
 
 export const OrdersService = {

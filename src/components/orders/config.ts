@@ -2,6 +2,8 @@ import { Order } from '@/types/order';
 
 export type LifecycleStage = 'all' | 'unpaid' | 'to-ship' | 'shipping' | 'delivered' | 'failed-delivery' | 'cancellation' | 'return-refund';
 
+export type ToShipStage = 'to-pack' | 'to-arrangement' | 'to-hand-over';
+
 export interface SubTabConfig {
   id: LifecycleStage;
   label: string;
@@ -34,4 +36,10 @@ export const SUB_TABS: SubTabConfig[] = [
   { id: 'failed-delivery', label: 'Failed Delivery', predicate: (o) => o.status === 'failed-delivery' },
   { id: 'cancellation', label: 'Cancellation', predicate: (o) => o.status === 'cancelled' },
   { id: 'return-refund', label: 'Return or Refund', predicate: (o) => o.status === 'returned' || o.status === 'refunded' || o.status === 'return_refund' },
+];
+
+export const TO_SHIP_SUB_TABS: { id: ToShipStage; label: string }[] = [
+  { id: 'to-pack', label: 'To Pack' },
+  { id: 'to-arrangement', label: 'To Arrangement' },
+  { id: 'to-hand-over', label: 'To Hand Over' },
 ];
