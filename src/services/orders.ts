@@ -1,5 +1,5 @@
 import { db } from '@/lib/firebase';
-import { collection, onSnapshot, query, where, DocumentData, QuerySnapshot, doc, getDoc } from 'firebase/firestore';
+import { collection, onSnapshot, query, where, DocumentData, QuerySnapshot, doc, getDoc, updateDoc } from 'firebase/firestore';
 import { getStorage, ref, getDownloadURL } from 'firebase/storage';
 import type { Order } from '@/types/order';
 
@@ -195,6 +195,12 @@ const mapDocToOrder = (id: string, data: any): Order => {
     zip: data.shippingInfo?.zip || data.shippingInfo?.postalCode || undefined,
   } as Order['region'];
 
+  // Resolve to-ship fulfillment sub-stage
+  const fsRaw = String(data.fulfillmentStage || data.shippingInfo?.fulfillmentStage || '').toLowerCase();
+  const fulfillmentStage: Order['fulfillmentStage'] =
+    fsRaw === 'to-arrangement' ? 'to-arrangement' :
+    fsRaw === 'to-hand-over' ? 'to-hand-over' : 'to-pack';
+
   return {
     id,
     orderCount: Number(data.summary?.totalItems || itemsRaw.length || 0),
@@ -242,6 +248,7 @@ const mapDocToOrder = (id: string, data: any): Order => {
       if (['pending', 'unpaid'].includes(paymentStatus) || ['pending', 'unpaid'].includes(topLevelStatus)) return 'pending';
       return 'pending';
     })(),
+    fulfillmentStage,
   };
 };
 
@@ -320,7 +327,7 @@ const hydrateItemCategories = async (order: Order, productCache: Map<string, any
   return { ...order, items: resolvedItems };
 };
 
-export const OrdersService = {
+const OrdersService = {
   listenBySeller(sellerId: string, cb: (orders: Order[]) => void) {
     const latest: Record<string, Order[]> = {};
     const unsubs: Array<() => void> = [];
@@ -377,7 +384,45 @@ export const OrdersService = {
       unsubs.push(unsub);
     });
     return () => { unsubs.forEach(u => { try { u(); } catch {} }); };
-  }
+  },
+  // Update order fulfillment stage
+  updateFulfillmentStage: async (orderId: string, stage: 'to-pack' | 'to-arrangement' | 'to-hand-over'): Promise<void> => {
+    try {
+      // Try both collection names
+      for (const coll of ORDER_COLLECTIONS) {
+        const docRef = doc(db, coll, orderId);
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists()) {
+          await updateDoc(docRef, { fulfillmentStage: stage });
+          return;
+        }
+      }
+      throw new Error(`Order ${orderId} not found`);
+    } catch (error) {
+      console.error('Error updating order fulfillment stage:', error);
+      throw error;
+    }
+  },
+  // New: update high-level order status (e.g., move to Shipping)
+  updateOrderStatus: async (
+    orderId: string,
+    status: 'pending' | 'to-ship' | 'processing' | 'completed' | 'cancelled' | 'returned' | 'refunded' | 'return_refund' | 'failed-delivery'
+  ): Promise<void> => {
+    try {
+      for (const coll of ORDER_COLLECTIONS) {
+        const docRef = doc(db, coll, orderId);
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists()) {
+          await updateDoc(docRef, { status });
+          return;
+        }
+      }
+      throw new Error(`Order ${orderId} not found`);
+    } catch (error) {
+      console.error('Error updating order status:', error);
+      throw error;
+    }
+  },
 };
 
 export default OrdersService;

@@ -1,11 +1,15 @@
 import React from 'react';
 import { Order } from '@/types/order';
-import { ChevronDown, ChevronUp, Printer, FileText, Download } from 'lucide-react';
+import { ChevronDown, ChevronUp, Printer, FileText, Download, Eye } from 'lucide-react';
 
 interface OrderRowProps {
   order: Order;
   onDetails?: () => void; // preferred
   onClick?: () => void;   // backward-compat
+  isToShip?: boolean;     // new: to customize UI for to-ship orders
+  onMoveToArrangement?: (order: Order) => void; // new: callback to move order to arrangement
+  onMoveToHandOver?: (order: Order) => void; // new: move to to-hand-over
+  onConfirmHandover?: (order: Order) => void; // new: confirm handover -> shipping
 }
 
 // Build a high-quality printable invoice HTML with inline styles
@@ -148,7 +152,17 @@ const exportPDF = (order: Order) => {
   printInvoice(order);
 };
 
-const OrderRow: React.FC<OrderRowProps> = ({ order, onDetails, onClick }) => {
+const moveToArrangement = (order: Order, onMove?: (order: Order) => void) => {
+  if (onMove) {
+    onMove(order);
+  } else {
+    // Fallback placeholder
+    console.log(`Moving order ${order.id} to arrangement`);
+    alert(`Order ${order.id} moved to Arrangement stage`);
+  }
+};
+
+const OrderRow: React.FC<OrderRowProps> = ({ order, onDetails, onClick, isToShip = false, onMoveToArrangement, onMoveToHandOver, onConfirmHandover }) => {
   const [open, setOpen] = React.useState(false);
   const [menuOpen, setMenuOpen] = React.useState(false);
   const [itemsOpen, setItemsOpen] = React.useState(false);
@@ -159,6 +173,14 @@ const OrderRow: React.FC<OrderRowProps> = ({ order, onDetails, onClick }) => {
     if (onDetails) return onDetails();
     if (onClick) return onClick();
     setOpen(true);
+  };
+
+  const handleMoveToArrangement = () => {
+    if (onMoveToArrangement) {
+      onMoveToArrangement(order);
+    } else {
+      moveToArrangement(order);
+    }
   };
 
   React.useEffect(() => {
@@ -231,35 +253,94 @@ const OrderRow: React.FC<OrderRowProps> = ({ order, onDetails, onClick }) => {
           </div>
           {/* Status */}
           <div className="text-xs font-medium capitalize px-2 py-1 rounded bg-gray-100 text-gray-700">{order.status}</div>
-          {/* Size and contact */}
-          <div className="hidden lg:block text-xs text-gray-500">{order.package.size} / {order.customer.contact || '—'}</div>
+          {/* Size and contact - hide contact on To Arrangement stage */}
+          <div className="hidden lg:block text-xs text-gray-500">
+            {order.package.size}
+            {order.fulfillmentStage === 'to-arrangement' ? null : <> / {order.customer.contact || '—'}</>}
+          </div>
         </div>
-        {/* Actions: compact dropdown with icons */}
-        <div className="relative" data-actions-menu>
-          <button
-            type="button"
-            className="text-xs px-3 py-1 border border-gray-200 rounded-md hover:bg-gray-50 shadow-sm flex items-center gap-1"
-            onClick={(e) => { e.stopPropagation(); setMenuOpen(v => !v); }}
-            title="Invoice and export options"
-          >
-            Actions <ChevronDown className="w-3 h-3" />
-          </button>
-          {menuOpen && (
-            <div className="absolute right-0 mt-2 w-48 bg-white border border-gray-200 rounded-lg shadow-lg overflow-hidden z-10">
-              <button type="button" className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 flex items-center gap-2" onClick={() => { setMenuOpen(false); printInvoice(order); }}>
-                <Printer className="w-4 h-4" /> Print invoice
-              </button>
-              <button type="button" className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 flex items-center gap-2" onClick={() => { setMenuOpen(false); exportCSV(order); }}>
-                <Download className="w-4 h-4" /> Export CSV
-              </button>
-              <button type="button" className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 flex items-center gap-2" onClick={() => { setMenuOpen(false); exportPDF(order); }}>
-                <FileText className="w-4 h-4" /> Export PDF
+        {/* Conditional rendering based on isToShip and fulfillmentStage */}
+        {isToShip ? (
+          order.fulfillmentStage === 'to-arrangement' ? (
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                className="text-xs px-3 py-1 border border-orange-600 text-orange-700 rounded-md font-medium hover:bg-orange-50"
+                onClick={() => onMoveToHandOver?.(order)}
+              >
+                To Hand Over
               </button>
             </div>
-          )}
-        </div>
-        {/* Details */}
-        <button type="button" onClick={handleDetails} className="text-xs px-3 py-1 border border-teal-600 text-teal-700 rounded-md font-medium hover:bg-teal-50">Details</button>
+          ) : order.fulfillmentStage === 'to-hand-over' ? (
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                className="text-xs px-3 py-1 border border-teal-600 text-teal-700 rounded-md font-medium hover:bg-teal-50"
+                onClick={() => onConfirmHandover?.(order)}
+              >
+                Confirm
+              </button>
+            </div>
+          ) : (
+            // Default (to-pack): keep existing dropdown with details/actions
+            <div className="relative" data-actions-menu>
+              <button
+                type="button"
+                className="text-xs px-3 py-1 border border-teal-600 text-teal-700 rounded-md font-medium hover:bg-teal-50 flex items-center gap-1"
+                onClick={(e) => { e.stopPropagation(); setMenuOpen(v => !v); }}
+                title="Options"
+              >
+                Details <ChevronDown className="w-3 h-3" />
+              </button>
+              {menuOpen && (
+                <div className="absolute right-0 mt-2 w-48 bg-white border border-gray-200 rounded-lg shadow-lg overflow-hidden z-10">
+                  <button type="button" className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 flex items-center gap-2" onClick={() => { setMenuOpen(false); handleDetails(); }}>
+                    <Eye className="w-4 h-4" /> Details
+                  </button>
+                  <button type="button" className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 flex items-center gap-2" onClick={() => { setMenuOpen(false); printInvoice(order); }}>
+                    <Printer className="w-4 h-4" /> Print invoice
+                  </button>
+                  <button type="button" className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 flex items-center gap-2" onClick={() => { setMenuOpen(false); exportCSV(order); }}>
+                    <Download className="w-4 h-4" /> Export CSV
+                  </button>
+                  <button type="button" className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 flex items-center gap-2" onClick={() => { setMenuOpen(false); exportPDF(order); }}>
+                    <FileText className="w-4 h-4" /> Export PDF
+                  </button>
+                </div>
+              )}
+            </div>
+          )
+        ) : (
+          // Original separate Actions and Details for other tabs
+          <>
+            {/* Actions: compact dropdown with icons */}
+            <div className="relative" data-actions-menu>
+              <button
+                type="button"
+                className="text-xs px-3 py-1 border border-gray-200 rounded-md hover:bg-gray-50 shadow-sm flex items-center gap-1"
+                onClick={(e) => { e.stopPropagation(); setMenuOpen(v => !v); }}
+                title="Invoice and export options"
+              >
+                Actions <ChevronDown className="w-3 h-3" />
+              </button>
+              {menuOpen && (
+                <div className="absolute right-0 mt-2 w-48 bg-white border border-gray-200 rounded-lg shadow-lg overflow-hidden z-10">
+                  <button type="button" className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 flex items-center gap-2" onClick={() => { setMenuOpen(false); printInvoice(order); }}>
+                    <Printer className="w-4 h-4" /> Print invoice
+                  </button>
+                  <button type="button" className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 flex items-center gap-2" onClick={() => { setMenuOpen(false); exportCSV(order); }}>
+                    <Download className="w-4 h-4" /> Export CSV
+                  </button>
+                  <button type="button" className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 flex items-center gap-2" onClick={() => { setMenuOpen(false); exportPDF(order); }}>
+                    <FileText className="w-4 h-4" /> Export PDF
+                  </button>
+                </div>
+              )}
+            </div>
+            {/* Details */}
+            <button type="button" onClick={handleDetails} className="text-xs px-3 py-1 border border-teal-600 text-teal-700 rounded-md font-medium hover:bg-teal-50">Details</button>
+          </>
+        )}
       </div>
 
       {/* Details Modal (fallback if no external handler provided) */}
@@ -338,7 +419,17 @@ const OrderRow: React.FC<OrderRowProps> = ({ order, onDetails, onClick }) => {
 
             <div className="mt-4 flex justify-end gap-3">
               <button className="text-sm px-3 py-2 rounded border border-gray-200 hover:bg-gray-50" onClick={() => setOpen(false)}>Close</button>
-              <button className="text-sm px-3 py-2 rounded bg-teal-600 text-white hover:bg-teal-700" onClick={() => { printInvoice(order); setOpen(false); }}>Print Invoice</button>
+              {isToShip ? (
+                order.fulfillmentStage === 'to-arrangement' ? (
+                  <button className="text-sm px-3 py-2 rounded bg-orange-600 text-white hover:bg-orange-700" onClick={() => { onMoveToHandOver?.(order); setOpen(false); }}>To Hand Over</button>
+                ) : order.fulfillmentStage === 'to-hand-over' ? (
+                  <button className="text-sm px-3 py-2 rounded bg-teal-600 text-white hover:bg-teal-700" onClick={() => { onConfirmHandover?.(order); setOpen(false); }}>Confirm</button>
+                ) : (
+                  <button className="text-sm px-3 py-2 rounded bg-teal-600 text-white hover:bg-teal-700" onClick={() => { moveToArrangement(order, onMoveToArrangement); setOpen(false); }}>Move to Arrangement</button>
+                )
+              ) : (
+                <button className="text-sm px-3 py-2 rounded bg-teal-600 text-white hover:bg-teal-700" onClick={() => { printInvoice(order); setOpen(false); }}>Print Invoice</button>
+              )}
             </div>
           </div>
         </div>

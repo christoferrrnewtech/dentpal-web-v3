@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Calendar, Download, RefreshCcw, Search, SlidersHorizontal } from 'lucide-react';
 import { useAuth } from '@/hooks/use-auth';
-import { OrdersService } from '@/services/orders';
+import OrdersService from '@/services/orders';
 import type { Order } from '@/types/order';
 import { db } from '@/lib/firebase';
 import { doc, getDoc, collection, query as fsQuery, where, getDocs } from 'firebase/firestore';

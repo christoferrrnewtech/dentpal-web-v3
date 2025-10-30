@@ -8,8 +8,9 @@ import ToShipOrdersView from './views/ToShipOrdersView';
 import ShippingOrdersView from './views/ShippingOrdersView';
 import DeliveredOrdersView from './views/DeliveredOrdersView';
 import FailedDeliveryOrdersView from './views/FailedDeliveryOrdersView';
-import CancellationOrdersView from './views/CancellationOrdersView.tsx';
-import ReturnRefundOrdersView from './views/ReturnRefundOrdersView.tsx';
+import CancellationOrdersView from './views/CancellationOrdersView';
+import ReturnRefundOrdersView from './views/ReturnRefundOrdersView';
+import OrdersService from '@/services/orders';
 
 /**
  * OrderTab
@@ -93,8 +94,11 @@ export const OrderTab: React.FC<OrderTabProps> = ({
   // Counts for to-ship sub-tabs
   const countsByToShipSubTab = useMemo(() => {
     const toShipOrders = dateFilteredOrders.filter(o => mapOrderToStage(o) === 'to-ship');
-    const base: Record<ToShipStage, number> = { 'to-pack': toShipOrders.length, 'to-arrangement': 0, 'to-hand-over': 0 };
-    // TODO: Update based on fulfillmentStage when added
+    const base: Record<ToShipStage, number> = { 'to-pack': 0, 'to-arrangement': 0, 'to-hand-over': 0 };
+    toShipOrders.forEach(o => {
+      const stage = o.fulfillmentStage || 'to-pack';
+      base[stage as ToShipStage] += 1;
+    });
     return base;
   }, [dateFilteredOrders]);
 
@@ -104,9 +108,8 @@ export const OrderTab: React.FC<OrderTabProps> = ({
       if (activeSubTab !== 'all' && !SUB_TABS.find(t => t.id === activeSubTab)?.predicate(o)) return false;
       // to-ship sub-stage filter
       if (activeSubTab === 'to-ship') {
-        // For now, all to-ship orders are in 'to-pack'
-        // TODO: Add fulfillmentStage field to Order type and filter accordingly
-        if (toShipSubTab !== 'to-pack') return false;
+        const stage = o.fulfillmentStage || 'to-pack';
+        if (stage !== toShipSubTab) return false;
       }
       return true;
     });
@@ -128,6 +131,39 @@ export const OrderTab: React.FC<OrderTabProps> = ({
     setSelectedOrder(o);
     setDetailsOpen(true);
     onSelectOrder?.(o);
+  };
+
+  // Handle moving order to arrangement
+  const handleMoveToArrangement = async (order: Order) => {
+    try {
+      await OrdersService.updateFulfillmentStage(order.id, 'to-arrangement');
+      onRefresh?.();
+    } catch (error) {
+      console.error('Failed to move order to arrangement:', error);
+      alert('Failed to move order. Please try again.');
+    }
+  };
+
+  // Handle moving order to hand over
+  const handleMoveToHandOver = async (order: Order) => {
+    try {
+      await OrdersService.updateFulfillmentStage(order.id, 'to-hand-over');
+      onRefresh?.();
+    } catch (error) {
+      console.error('Failed to move order to hand over:', error);
+      alert('Failed to move order. Please try again.');
+    }
+  };
+
+  // Handle confirming handover -> move to Shipping (processing)
+  const handleConfirmHandover = async (order: Order) => {
+    try {
+      await OrdersService.updateOrderStatus(order.id, 'processing');
+      onRefresh?.();
+    } catch (error) {
+      console.error('Failed to confirm handover:', error);
+      alert('Failed to confirm handover. Please try again.');
+    }
   };
 
   // Accessibility: close on Escape
@@ -269,7 +305,11 @@ export const OrderTab: React.FC<OrderTabProps> = ({
       )}
 
       {/* Orders View */}
-      <ActiveView orders={pagedOrders} onSelectOrder={handleSelectOrder} />
+      {activeSubTab === 'to-ship' ? (
+        <ToShipOrdersView orders={pagedOrders} onSelectOrder={handleSelectOrder} onMoveToArrangement={handleMoveToArrangement} onMoveToHandOver={handleMoveToHandOver} onConfirmHandover={handleConfirmHandover} />
+      ) : (
+        <ActiveView orders={pagedOrders} onSelectOrder={handleSelectOrder} />
+      )}
 
       {/* Pagination */}
       <div className="flex items-center justify-end gap-3 pt-2">
@@ -404,7 +444,23 @@ export const OrderTab: React.FC<OrderTabProps> = ({
 
               {/* Footer */}
               <div className="px-5 pb-5 flex items-center justify-end gap-2 border-t border-gray-100 pt-4">
-                <button className="text-xs px-3 py-1.5 rounded-md border border-gray-200 hover:bg-gray-50" onClick={() => printSummary(selectedOrder)}>Print</button>
+                <button
+                  className="text-xs px-3 py-1.5 rounded-md border border-gray-200 hover:bg-gray-50"
+                  onClick={async () => {
+                    try {
+                      if (activeSubTab === 'to-ship' && selectedOrder) {
+                        await handleMoveToArrangement(selectedOrder);
+                        setToShipSubTab('to-arrangement');
+                      }
+                      printSummary(selectedOrder);
+                      setDetailsOpen(false);
+                    } catch (e) {
+                      console.error(e);
+                    }
+                  }}
+                >
+                  Print
+                </button>
                 <button className="text-xs px-3 py-1.5 rounded-md border border-teal-600 text-teal-700 hover:bg-teal-50" onClick={() => setDetailsOpen(false)}>Close</button>
               </div>
             </div>
