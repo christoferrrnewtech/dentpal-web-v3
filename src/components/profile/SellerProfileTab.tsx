@@ -1,7 +1,9 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from '@/hooks/use-auth';
 import { Pencil, Save, X, Loader2, Upload, Paperclip, CheckCircle2, AlertCircle } from 'lucide-react';
 import Tesseract from 'tesseract.js';
+import SellersService from '@/services/sellers';
+import { Dialog, DialogContent, DialogHeader, DialogFooter, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 
 // Add known tax type catalog for matching from 2303 text
 const TAX_TYPE_CATALOG = [
@@ -31,6 +33,7 @@ const SellerProfileTab: React.FC = () => {
 	const [vendor, setVendor] = useState({
 		categories: [] as string[],
 		companyName: '',
+		storeName: '',
 		address: { street: '', barangay: '', municipality: '', province: '', zip: '' }, // split address
 		contactPerson: '',
 		landline: '',
@@ -58,6 +61,12 @@ const SellerProfileTab: React.FC = () => {
 	// Validation state
 	const [errors, setErrors] = useState<{ mobile: string; email: string; tin: string; tinOcr: string; zip?: string; regDate?: string }>({ mobile: '', email: '', tin: '', tinOcr: '' });
 	const [mapOpen, setMapOpen] = useState(false);
+	// NEW: Review dialog state
+	const [reviewOpen, setReviewOpen] = useState(false);
+	// NEW: Success & Error dialogs
+	const [successOpen, setSuccessOpen] = useState(false);
+	const [errorOpen, setErrorOpen] = useState(false);
+	const [errorMsg, setErrorMsg] = useState<string>('');
 
 	// Suggestion/extraction state
 	type Suggestions = {
@@ -80,6 +89,22 @@ const SellerProfileTab: React.FC = () => {
 	// Wizard steps
 	const STEPS = ['Upload & Review', 'Company & Address', 'Contacts & Documents'];
 	const [step, setStep] = useState(0);
+
+	// Refs for jump-to-edit UX
+	const tinInputRef = useRef<HTMLInputElement>(null);
+	const companyNameRef = useRef<HTMLInputElement>(null);
+	const storeNameRef = useRef<HTMLInputElement>(null);
+	const contactPersonRef = useRef<HTMLInputElement>(null);
+	const streetRef = useRef<HTMLInputElement>(null);
+	const provinceRef = useRef<HTMLSelectElement>(null);
+	const cityRef = useRef<HTMLSelectElement>(null);
+	const barangayRef = useRef<HTMLSelectElement>(null);
+	const zipRef = useRef<HTMLInputElement>(null);
+	const mobileRef = useRef<HTMLInputElement>(null);
+	const emailRef = useRef<HTMLInputElement>(null);
+	const websiteRef = useRef<HTMLInputElement>(null);
+	const bankingRef = useRef<HTMLTextAreaElement>(null);
+	const bankBranchRef = useRef<HTMLInputElement>(null);
 
 	// TIN helpers
 	const normalizeTin = (v: string) => v.replace(/\D/g, '').slice(0, 12);
@@ -162,7 +187,8 @@ const SellerProfileTab: React.FC = () => {
 			.join(', ');
 	}, [vendor.address]);
 
-	const hasErrors = !!(errors.mobile || errors.email || errors.tin || errors.tinOcr || errors.zip || errors.regDate);
+	// Only treat these as blocking errors; OCR mismatch and registration date are warnings
+	const blockingErrors = !!(errors.mobile || errors.email || errors.tin || errors.zip);
 	const addressReady = !!(vendor.address.street && vendor.address.municipality && vendor.address.province);
 
 	// Per-step validation gating
@@ -174,11 +200,11 @@ const SellerProfileTab: React.FC = () => {
 			case 1:
 				return addressReady && !errors.zip;
 			case 2:
-				return !hasErrors && !!vendor.requirements.bir2303 && !!userConfirmed;
+				return !blockingErrors && !!vendor.requirements.bir2303 && !!userConfirmed;
 			default:
 				return true;
 		}
-	}, [step, vendor, extractionLoading, userConfirmed, errors, addressReady, hasErrors]);
+	}, [step, vendor, extractionLoading, userConfirmed, errors.tin, errors.zip, addressReady, blockingErrors]);
 	const next = () => setStep(s => Math.min(s + 1, STEPS.length - 1));
 	const back = () => setStep(s => Math.max(s - 1, 0));
 
@@ -229,6 +255,19 @@ const SellerProfileTab: React.FC = () => {
 			extractFrom2303(file);
 			setUserConfirmed(false);
 		}
+	};
+
+	// NEW: jump-to-edit UX helper
+	const jumpAndFocus = (targetStep: number, ref?: React.RefObject<HTMLElement>, extra?: () => void) => {
+		setReviewOpen(false);
+		setIsEditing(true);
+		if (targetStep === 0) setSuggestionsOpen(true);
+		setStep(targetStep);
+		// Wait for UI to update
+		setTimeout(() => {
+			if (extra) extra();
+			ref?.current?.focus();
+		}, 60);
 	};
 
 	// Extraction: PDF text -> parse; if not possible, render first page and OCR; also OCR images
@@ -527,6 +566,65 @@ const SellerProfileTab: React.FC = () => {
 		autoFillZipFromNames(vendor.address.municipality, vendor.address.province, name);
 	};
 
+	// NEW: Extracted submit logic to reuse from review dialog
+	const submitEnrollment = async () => {
+		setSubmitLoading(true);
+		try {
+			if (!uid) { throw new Error('Not signed in'); }
+			// 1) Upload documents to Storage (SellerImages/<uid>/...)
+			let birUpload: { url: string; path: string } | null = null;
+			if (vendor.requirements.bir2303) {
+				birUpload = await SellersService.uploadImage(uid, vendor.requirements.bir2303, 'SellerImages');
+			}
+			const docFiles: Record<string, File | null> = {
+				secOrDti: vendor.requirements.secOrDti,
+				fdaLto: vendor.requirements.fdaLto,
+				catalogue: vendor.requirements.catalogue,
+				warrantyPolicy: vendor.requirements.warrantyPolicy,
+			};
+			const documents: Record<string, { url: string; path: string }> = {};
+			await Promise.all(Object.entries(docFiles).map(async ([k, file]) => {
+				if (file) {
+					documents[k] = await SellersService.uploadImage(uid, file, 'SellerImages');
+				}
+			}));
+
+			// 2) Build vendor payload and persist to Firestore (Seller collection)
+			const payload: any = {
+				categories: vendor.categories,
+				company: { name: vendor.companyName, storeName: vendor.storeName, address: { line1: vendor.address.street, line2: '', city: vendor.address.municipality, province: vendor.address.province, zip: vendor.address.zip } },
+				contacts: { name: vendor.contactPerson, email: vendor.email, phone: vendor.mobile },
+				// 2303-derived
+				tin: vendor.tin,
+				rdoCode: vendor.rdoCode,
+				taxTypes: vendor.taxTypes,
+				lineOfBusiness: vendor.lineOfBusiness,
+				dateOfRegistration: vendor.dateOfRegistration,
+				// Other details
+				website: vendor.website,
+				bankingInfo: vendor.bankingInfo,
+				bankBranchAddress: vendor.bankBranchAddress,
+				bir: birUpload,
+				documents,
+				requirements: {
+					secOrDti: !!documents.secOrDti,
+					fdaLto: !!documents.fdaLto,
+					catalogue: !!documents.catalogue,
+					warrantyPolicy: !!documents.warrantyPolicy,
+					birSubmitted: !!birUpload,
+					profileCompleted: true,
+				},
+			};
+			await SellersService.saveVendorProfile(uid, payload);
+			setReviewOpen(false);
+			setIsEditing(false);
+			setSuccessOpen(true);
+		} catch (e: any) {
+			setErrorMsg(e?.message || 'Submission failed. Please try again.');
+			setErrorOpen(true);
+		} finally { setSubmitLoading(false); }
+	};
+
 	return (
 		<div className="space-y-6">
 			{Title}
@@ -579,12 +677,12 @@ const SellerProfileTab: React.FC = () => {
 										{/* TIN */}
 										<div>
 											<label className="block text-xs font-medium text-gray-600 mb-1">TIN (from 2303) <span className="ml-1 text-[10px] text-gray-500">{Math.round((suggestions.confidence.tin||0)*100)}%</span></label>
-											<input disabled={!isEditing} value={formattedTin} onChange={onTinChange} inputMode="numeric" className="w-full text-sm p-2 border border-gray-200 rounded-lg disabled:bg-gray-50" />
+											<input ref={tinInputRef} disabled={!isEditing} value={formattedTin} onChange={onTinChange} inputMode="numeric" className="w-full text-sm p-2 border border-gray-200 rounded-lg disabled:bg-gray-50" />
 										</div>
 										{/* Company Name */}
 										<div>
 											<label className="block text-xs font-medium text-gray-600 mb-1">Registered/Trade Name <span className="ml-1 text-[10px] text-gray-500">{Math.round((suggestions.confidence.companyName||0)*100)}%</span></label>
-											<input disabled={!isEditing} value={vendor.companyName} onChange={(e)=> setField('companyName', e.target.value)} className="w-full text-sm p-2 border border-gray-200 rounded-lg disabled:bg-gray-50" />
+											<input ref={companyNameRef} disabled={!isEditing} value={vendor.companyName} onChange={(e)=> setField('companyName', e.target.value)} className="w-full text-sm p-2 border border-gray-200 rounded-lg disabled:bg-gray-50" />
 										</div>
 										{/* Address quick fill */}
 										<div className="md:col-span-2">
@@ -677,15 +775,19 @@ const SellerProfileTab: React.FC = () => {
 							<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
 								<div>
 									<label className="block text-xs font-medium text-gray-600 mb-1">Company Name</label>
-									<input disabled={!isEditing} value={vendor.companyName} onChange={(e)=> setField('companyName', e.target.value)} className="w-full text-sm p-2 border border-gray-200 rounded-lg disabled:bg-gray-50" />
+									<input ref={companyNameRef} disabled={!isEditing} value={vendor.companyName} onChange={(e)=> setField('companyName', e.target.value)} className="w-full text-sm p-2 border border-gray-200 rounded-lg disabled:bg-gray-50" />
+								</div>
+								<div>
+									<label className="block text-xs font-medium text-gray-600 mb-1">Store Name</label>
+									<input ref={storeNameRef} disabled={!isEditing} value={vendor.storeName} onChange={(e)=> setField('storeName', e.target.value)} className="w-full text-sm p-2 border border-gray-200 rounded-lg disabled:bg-gray-50" />
 								</div>
 								<div>
 									<label className="block text-xs font-medium text-gray-600 mb-1">Customer Service Contact Person</label>
-									<input disabled={!isEditing} value={vendor.contactPerson} onChange={(e)=> setField('contactPerson', e.target.value)} className="w-full text-sm p-2 border border-gray-200 rounded-lg disabled:bg-gray-50" />
+									<input ref={contactPersonRef} disabled={!isEditing} value={vendor.contactPerson} onChange={(e)=> setField('contactPerson', e.target.value)} className="w-full text-sm p-2 border border-gray-200 rounded-lg disabled:bg-gray-50" />
 								</div>
 								<div className="md:col-span-2">
 									<label className="block text-xs font-medium text-gray-600 mb-1">Street</label>
-									<input disabled={!isEditing} value={vendor.address.street} onChange={(e)=> setAddressField('street', e.target.value)} className="w-full text-sm p-2 border border-gray-200 rounded-lg disabled:bg-gray-50" />
+									<input ref={streetRef} disabled={!isEditing} value={vendor.address.street} onChange={(e)=> setAddressField('street', e.target.value)} className="w-full text-sm p-2 border border-gray-200 rounded-lg disabled:bg-gray-50" />
 								</div>
 								<div>
 									<label className="block text-xs font-medium text-gray-600 mb-1">Region</label>
@@ -696,28 +798,28 @@ const SellerProfileTab: React.FC = () => {
 								</div>
 								<div>
 									<label className="block text-xs font-medium text-gray-600 mb-1">Province</label>
-									<select disabled={!isEditing} value={selectedProvince} onChange={(e)=> onProvinceSelect(e.target.value)} className="w-full text-sm p-2 border border-gray-200 rounded-lg disabled:bg-gray-50">
+									<select ref={provinceRef} disabled={!isEditing} value={selectedProvince} onChange={(e)=> onProvinceSelect(e.target.value)} className="w-full text-sm p-2 border border-gray-200 rounded-lg disabled:bg-gray-50">
 										<option value="">Select province</option>
 										{(selectedRegion ? provinces : allProvinces).map(p => (<option key={p.code} value={p.code}>{p.name}</option>))}
 									</select>
 								</div>
 								<div>
 									<label className="block text-xs font-medium text-gray-600 mb-1">Municipality / City</label>
-									<select disabled={!isEditing || !selectedProvince} value={selectedCity} onChange={(e)=> onCitySelect(e.target.value)} className="w-full text-sm p-2 border border-gray-200 rounded-lg disabled:bg-gray-50">
+									<select ref={cityRef} disabled={!isEditing || !selectedProvince} value={selectedCity} onChange={(e)=> onCitySelect(e.target.value)} className="w-full text-sm p-2 border border-gray-200 rounded-lg disabled:bg-gray-50">
 										<option value="">Select city/municipality</option>
 										{cities.map(c => (<option key={c.code} value={c.code}>{c.name}</option>))}
 									</select>
 								</div>
 								<div>
 									<label className="block text-xs font-medium text-gray-600 mb-1">Barangay</label>
-									<select disabled={!isEditing || !selectedCity} value={selectedBarangay} onChange={(e)=> onBarangaySelect(e.target.value)} className="w-full text-sm p-2 border border-gray-200 rounded-lg disabled:bg-gray-50">
+									<select ref={barangayRef} disabled={!isEditing || !selectedCity} value={selectedBarangay} onChange={(e)=> onBarangaySelect(e.target.value)} className="w-full text-sm p-2 border border-gray-200 rounded-lg disabled:bg-gray-50">
 										<option value="">Select barangay</option>
 										{barangays.map(b => (<option key={b.code} value={b.code}>{b.name}</option>))}
 									</select>
 								</div>
 								<div>
 									<label className="block text-xs font-medium text-gray-600 mb-1">ZIP Code</label>
-									<input disabled={!isEditing} value={vendor.address.zip} onChange={onZipChange} inputMode="numeric" maxLength={4} placeholder="e.g. 1000" className="w-full text-sm p-2 border border-gray-200 rounded-lg disabled:bg-gray-50" />
+									<input ref={zipRef} disabled={!isEditing} value={vendor.address.zip} onChange={onZipChange} inputMode="numeric" maxLength={4} placeholder="e.g. 1000" className="w-full text-sm p-2 border border-gray-200 rounded-lg disabled:bg-gray-50" />
 									{zipLoading && <p className="mt-1 text-xs text-gray-500">Auto-filling ZIP…</p>}
 									{errors.zip && <p className="mt-1 text-xs text-red-600">{errors.zip}</p>}
 								</div>
@@ -766,6 +868,7 @@ const SellerProfileTab: React.FC = () => {
 								<div>
 									<label className="block text-xs font-medium text-gray-600 mb-1">Mobile No</label>
 									<input
+										ref={mobileRef}
 										disabled={!isEditing}
 										value={formattedMobile}
 										onChange={onMobileChange}
@@ -780,6 +883,7 @@ const SellerProfileTab: React.FC = () => {
 								<div>
 									<label className="block text-xs font-medium text-gray-600 mb-1">Email Address</label>
 									<input
+										ref={emailRef}
 										disabled={!isEditing}
 										type="email"
 										value={vendor.email}
@@ -792,7 +896,7 @@ const SellerProfileTab: React.FC = () => {
 								</div>
 								<div>
 									<label className="block text-xs font-medium text-gray-600 mb-1">Website</label>
-									<input disabled={!isEditing} value={vendor.website} onChange={(e)=> setField('website', e.target.value)} placeholder="https://" className="w-full text-sm p-2 border border-gray-200 rounded-lg disabled:bg-gray-50" />
+									<input ref={websiteRef} disabled={!isEditing} value={vendor.website} onChange={(e)=> setField('website', e.target.value)} placeholder="https://" className="w-full text-sm p-2 border border-gray-200 rounded-lg disabled:bg-gray-50" />
 								</div>
 							</div>
 
@@ -800,11 +904,11 @@ const SellerProfileTab: React.FC = () => {
 							<div className="grid grid-cols-1 gap-4 mt-4">
 								<div>
 									<label className="block text-xs font-medium text-gray-600 mb-1">Payment / Banking Information</label>
-									<textarea disabled={!isEditing} rows={3} value={vendor.bankingInfo} onChange={(e)=> setField('bankingInfo', e.target.value)} className="w-full text-sm p-2 border border-gray-200 rounded-lg disabled:bg-gray-50" placeholder="Bank name, account name/number" />
+									<textarea ref={bankingRef} disabled={!isEditing} rows={3} value={vendor.bankingInfo} onChange={(e)=> setField('bankingInfo', e.target.value)} className="w-full text-sm p-2 border border-gray-200 rounded-lg disabled:bg-gray-50" placeholder="Bank name, account name/number" />
 								</div>
 								<div>
 									<label className="block text-xs font-medium text-gray-600 mb-1">Bank Branch Address</label>
-									<input disabled={!isEditing} value={vendor.bankBranchAddress} onChange={(e)=> setField('bankBranchAddress', e.target.value)} className="w-full text-sm p-2 border border-gray-200 rounded-lg disabled:bg-gray-50" />
+									<input ref={bankBranchRef} disabled={!isEditing} value={vendor.bankBranchAddress} onChange={(e)=> setField('bankBranchAddress', e.target.value)} className="w-full text-sm p-2 border border-gray-200 rounded-lg disabled:bg-gray-50" />
 								</div>
 							</div>
 
@@ -844,21 +948,182 @@ const SellerProfileTab: React.FC = () => {
 					) : (
 						<button
 							disabled={!canProceed || submitLoading}
-							onClick={async () => {
-								setSubmitLoading(true);
-								try {
-									// TODO: send vendor enrollment to backend/storage
-									await new Promise(r => setTimeout(r, 1000));
-									alert('Vendor Enrollment submitted');
-								} finally { setSubmitLoading(false); }
-							}}
+							onClick={() => setReviewOpen(true)}
 							className="inline-flex items-center gap-2 px-3 py-2 text-xs font-medium rounded-lg bg-teal-600 text-white hover:bg-teal-700 disabled:opacity-40"
 						>
-							{submitLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />} Submit Enrollment
+							{submitLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />} Review & Submit
 						</button>
 					)}
 				</div>
 			</div>
+
+			{/* NEW: Review dialog for final confirmation */}
+			<Dialog open={reviewOpen} onOpenChange={setReviewOpen}>
+				<DialogContent className="w-[95vw] sm:max-w-3xl lg:max-w-4xl max-h-[85vh] p-0 overflow-hidden flex flex-col">
+					<DialogHeader className="px-6 pt-5 pb-3 border-b">
+						<DialogTitle>Review your enrollment</DialogTitle>
+						<DialogDescription>Confirm your details. Click Edit to jump to a field.</DialogDescription>
+					</DialogHeader>
+					{/* Scrollable content area */}
+					<div className="px-6 py-4 overflow-y-auto flex-1 space-y-4">
+						{/* Company & Tax */}
+						<div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+							<div className="p-3 border border-gray-200 rounded-lg">
+								<div className="text-xs text-gray-500">TIN</div>
+								<div className="flex items-center justify-between gap-2">
+									<div className="text-sm font-medium text-gray-900">{formattedTin || '—'}</div>
+									<button className="text-xs text-teal-700 hover:underline" onClick={() => jumpAndFocus(0, tinInputRef as any, () => setSuggestionsOpen(true))}>Edit</button>
+								</div>
+								{errors.tinOcr && <p className="mt-1 text-xs text-amber-700">Warning: {errors.tinOcr}</p>}
+							</div>
+							<div className="p-3 border border-gray-200 rounded-lg">
+								<div className="text-xs text-gray-500">RDO Code</div>
+								<div className="flex items-center justify-between gap-2">
+									<div className="text-sm font-medium text-gray-900">{vendor.rdoCode || '—'}</div>
+									<button className="text-xs text-teal-700 hover:underline" onClick={() => jumpAndFocus(0)}>Edit</button>
+								</div>
+							</div>
+							<div className="p-3 border border-gray-200 rounded-lg md:col-span-2">
+								<div className="text-xs text-gray-500">Tax Types</div>
+								<div className="flex items-center justify-between gap-2">
+									<div className="text-sm text-gray-900">{vendor.taxTypes?.length ? vendor.taxTypes.join(', ') : '—'}</div>
+									<button className="text-xs text-teal-700 hover:underline" onClick={() => jumpAndFocus(0)}>Edit</button>
+								</div>
+							</div>
+						</div>
+
+						{/* Company & Address */}
+						<div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+							<div className="p-3 border border-gray-200 rounded-lg">
+								<div className="text-xs text-gray-500">Company Name</div>
+								<div className="flex items-center justify-between gap-2">
+									<div className="text-sm font-medium text-gray-900">{vendor.companyName || '—'}</div>
+									<button className="text-xs text-teal-700 hover:underline" onClick={() => jumpAndFocus(1, companyNameRef as any)}>Edit</button>
+								</div>
+							</div>
+							<div className="p-3 border border-gray-200 rounded-lg">
+								<div className="text-xs text-gray-500">Store Name</div>
+								<div className="flex items-center justify-between gap-2">
+									<div className="text-sm font-medium text-gray-900">{vendor.storeName || '—'}</div>
+									<button className="text-xs text-teal-700 hover:underline" onClick={() => jumpAndFocus(1, storeNameRef as any)}>Edit</button>
+								</div>
+							</div>
+							<div className="p-3 border border-gray-200 rounded-lg md:col-span-2">
+								<div className="text-xs text-gray-500">Address</div>
+								<div className="flex items-center justify-between gap-2">
+									<div className="text-sm text-gray-900">{fullAddress || '—'}</div>
+									<button className="text-xs text-teal-700 hover:underline" onClick={() => jumpAndFocus(1, streetRef as any)}>Edit</button>
+								</div>
+							</div>
+							<div className="p-3 border border-gray-200 rounded-lg md:col-span-2">
+								<div className="text-xs text-gray-500">Categories</div>
+								<div className="flex items-center justify-between gap-2">
+									<div className="text-sm text-gray-900">{vendor.categories?.length ? vendor.categories.join(', ') : '—'}</div>
+									<button className="text-xs text-teal-700 hover:underline" onClick={() => jumpAndFocus(1)}>Edit</button>
+								</div>
+							</div>
+						</div>
+
+						{/* Contacts & Banking */}
+						<div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+							<div className="p-3 border border-gray-200 rounded-lg">
+								<div className="text-xs text-gray-500">Contact Person</div>
+								<div className="flex items-center justify-between gap-2">
+									<div className="text-sm font-medium text-gray-900">{vendor.contactPerson || '—'}</div>
+									<button className="text-xs text-teal-700 hover:underline" onClick={() => jumpAndFocus(1, contactPersonRef as any)}>Edit</button>
+								</div>
+							</div>
+							<div className="p-3 border border-gray-200 rounded-lg">
+								<div className="text-xs text-gray-500">Mobile</div>
+								<div className="flex items-center justify-between gap-2">
+									<div className="text-sm font-medium text-gray-900">{formattedMobile || '—'}</div>
+									<button className="text-xs text-teal-700 hover:underline" onClick={() => jumpAndFocus(2, mobileRef as any)}>Edit</button>
+								</div>
+								{errors.mobile && <p className="mt-1 text-xs text-red-600">{errors.mobile}</p>}
+							</div>
+							<div className="p-3 border border-gray-200 rounded-lg">
+								<div className="text-xs text-gray-500">Email</div>
+								<div className="flex items-center justify-between gap-2">
+									<div className="text-sm font-medium text-gray-900">{vendor.email || '—'}</div>
+									<button className="text-xs text-teal-700 hover:underline" onClick={() => jumpAndFocus(2, emailRef as any)}>Edit</button>
+								</div>
+								{errors.email && <p className="mt-1 text-xs text-red-600">{errors.email}</p>}
+							</div>
+							<div className="p-3 border border-gray-200 rounded-lg">
+								<div className="text-xs text-gray-500">Website</div>
+								<div className="flex items-center justify-between gap-2">
+									<div className="text-sm font-medium text-gray-900">{vendor.website || '—'}</div>
+									<button className="text-xs text-teal-700 hover:underline" onClick={() => jumpAndFocus(2, websiteRef as any)}>Edit</button>
+								</div>
+							</div>
+							<div className="p-3 border border-gray-200 rounded-lg md:col-span-2">
+								<div className="text-xs text-gray-500">Banking Information</div>
+								<div className="flex items-center justify-between gap-2">
+									<div className="text-sm text-gray-900 whitespace-pre-wrap">{vendor.bankingInfo || '—'}</div>
+									<button className="text-xs text-teal-700 hover:underline" onClick={() => jumpAndFocus(2, bankingRef as any)}>Edit</button>
+								</div>
+							</div>
+							<div className="p-3 border border-gray-200 rounded-lg md:col-span-2">
+								<div className="text-xs text-gray-500">Bank Branch Address</div>
+								<div className="flex items-center justify-between gap-2">
+									<div className="text-sm font-medium text-gray-900">{vendor.bankBranchAddress || '—'}</div>
+									<button className="text-xs text-teal-700 hover:underline" onClick={() => jumpAndFocus(2, bankBranchRef as any)}>Edit</button>
+								</div>
+							</div>
+						</div>
+
+						{/* Documents */}
+						<div className="p-3 border border-gray-200 rounded-lg">
+							<div className="text-xs text-gray-500 mb-2">Documents</div>
+							<ul className="text-sm text-gray-900 space-y-1">
+								<li className="flex items-center justify-between"><span>BIR 2303</span><span className="text-gray-700">{vendor.requirements.bir2303 ? (vendor.requirements.bir2303 as File).name : '—'}</span></li>
+								<li className="flex items-center justify-between"><span>SEC/DTI</span><span className="text-gray-700">{vendor.requirements.secOrDti ? (vendor.requirements.secOrDti as File).name : '—'}</span></li>
+								<li className="flex items-center justify-between"><span>FDA LTO</span><span className="text-gray-700">{vendor.requirements.fdaLto ? (vendor.requirements.fdaLto as File).name : '—'}</span></li>
+								<li className="flex items-center justify-between"><span>Catalogue</span><span className="text-gray-700">{vendor.requirements.catalogue ? (vendor.requirements.catalogue as File).name : '—'}</span></li>
+								<li className="flex items-center justify-between"><span>Warranty Policy</span><span className="text-gray-700">{vendor.requirements.warrantyPolicy ? (vendor.requirements.warrantyPolicy as File).name : '—'}</span></li>
+							</ul>
+							<div className="mt-2"><button className="text-xs text-teal-700 hover:underline" onClick={() => jumpAndFocus(2)}>Edit documents</button></div>
+						</div>
+					</div>
+					<DialogFooter className="px-6 py-4 border-t">
+						<button className="px-3 py-2 text-xs rounded-lg border border-gray-200" onClick={() => setReviewOpen(false)}>Back to edit</button>
+						<button
+							disabled={submitLoading}
+							onClick={submitEnrollment}
+							className="inline-flex items-center gap-2 px-3 py-2 text-xs font-medium rounded-lg bg-teal-600 text-white hover:bg-teal-700 disabled:opacity-40"
+						>
+							{submitLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />} Confirm & Submit
+						</button>
+					</DialogFooter>
+				</DialogContent>
+			</Dialog>
+
+			{/* Success Dialog */}
+			<Dialog open={successOpen} onOpenChange={(o)=>{ setSuccessOpen(o); if(!o){ window.location.reload(); } }}>
+				<DialogContent className="w-[90vw] sm:max-w-md p-0 overflow-hidden">
+					<div className="p-6 text-center space-y-3">
+						<CheckCircle2 className="mx-auto h-10 w-10 text-teal-600" />
+						<DialogTitle className="text-base">Enrollment submitted</DialogTitle>
+						<DialogDescription>Your documents were uploaded and your profile is now under review. Seller tools are now unlocked.</DialogDescription>
+						<div className="pt-2 flex items-center justify-center gap-2">
+							<button className="px-3 py-2 text-xs rounded-lg border border-gray-200" onClick={()=>{ setSuccessOpen(false); }}>Close</button>
+							<button className="px-3 py-2 text-xs rounded-lg bg-teal-600 text-white" onClick={()=>{ setSuccessOpen(false); }}>Go to Dashboard</button>
+						</div>
+					</div>
+				</DialogContent>
+			</Dialog>
+			{/* Error Dialog */}
+			<Dialog open={errorOpen} onOpenChange={setErrorOpen}>
+				<DialogContent className="w-[90vw] sm:max-w-md">
+					<DialogHeader>
+						<DialogTitle>Submission failed</DialogTitle>
+						<DialogDescription>{errorMsg}</DialogDescription>
+					</DialogHeader>
+					<DialogFooter>
+						<button className="px-3 py-2 text-xs rounded-lg border border-gray-200" onClick={()=> setErrorOpen(false)}>Close</button>
+					</DialogFooter>
+				</DialogContent>
+			</Dialog>
 
 			{mapOpen && (
 				<div className="fixed inset-0 z-50 flex items-center justify-center">
@@ -877,6 +1142,7 @@ const SellerProfileTab: React.FC = () => {
 								width="100%"
 								height="100%"
 								style={{ border: 0 }}
+							
 								loading="lazy"
 								allowFullScreen
 								src={`https://www.google.com/maps?q=${encodeURIComponent(fullAddress)}&output=embed`}
