@@ -27,18 +27,18 @@ import { Badge } from "@/components/ui/badge";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Dialog, DialogContent, DialogHeader, DialogFooter, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 // Replace backend partner provisioning with direct web user service (Firestore + password email)
-import { createWebUser, updateWebUserAccess, setWebUserStatus, getWebUsers, resendUserInvite } from '@/services/webUserService';
+import { createWebUser, updateWebUserAccess, setWebUserStatus, getWebUsers, resendUserInvite, createSellerSubAccount } from '@/services/webUserService';
 import SellersService from '@/services/sellers';
 import type { WebUserProfile } from '@/types/webUser';
-// Export libs
-import * as XLSX from 'xlsx';
-import jsPDF from 'jspdf';
-import 'jspdf-autotable';
-// New: professional XLSX export with styling + logo
-import ExcelJS from 'exceljs';
-import { saveAs } from 'file-saver';
-import dentpalLogo from '@/assets/dentpal_logo.png';
+import { useAuth } from '@/hooks/use-auth';
 import { useToast } from '@/hooks/use-toast';
+// NEW: missing imports for export utilities and assets
+import ExcelJS from 'exceljs';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
+import { saveAs } from 'file-saver';
+import * as XLSX from 'xlsx';
+import dentpalLogo from '@/assets/dentpal_logo.png';
 
 // Helper to normalize Firestore Timestamp/number/string to epoch millis
 function normalizeTimestamp(value: any): number | null {
@@ -201,7 +201,7 @@ const AccessTab = ({ loading = false, error, setError, onTabChange, onEditUser }
 
   const { toast } = useToast();
 
-  // Vendor Enrollment wizard state
+  // Vendor Enrollment wizard state (re-added)
   const [vendorWizardOpen, setVendorWizardOpen] = useState(false);
   const [vendorSellerId, setVendorSellerId] = useState<string | null>(null);
   const [vendorStep, setVendorStep] = useState<'upload' | 'company'>('upload');
@@ -220,13 +220,13 @@ const AccessTab = ({ loading = false, error, setError, onTabChange, onEditUser }
       let bir = vendorForm.bir;
       if (vendorForm.birFile) {
         const res = await SellersService.uploadImage(vendorSellerId, vendorForm.birFile, 'SellerImages');
-        bir = res;
+        bir = res as any;
       }
       await SellersService.saveVendorProfile(vendorSellerId, {
         tin: vendorForm.tin,
         bir: bir || null,
         requirements: { ...vendorForm.requirements, birSubmitted: !!bir }
-      });
+      } as any);
       setVendorForm(prev => ({ ...prev, bir: bir || null, requirements: { ...prev.requirements, birSubmitted: !!bir } }));
       setVendorStep('company');
       toast({ title: 'BIR uploaded', description: 'Vendor TIN and BIR saved.' });
@@ -244,42 +244,105 @@ const AccessTab = ({ loading = false, error, setError, onTabChange, onEditUser }
         company: vendorForm.company,
         contacts: vendorForm.contacts,
         requirements: { ...vendorForm.requirements, profileCompleted: true },
-      });
+      } as any);
       setVendorWizardOpen(false);
       setVendorSellerId(null);
       toast({ title: 'Vendor profile saved', description: 'Company and contact details stored.' });
+      try { window.dispatchEvent(new CustomEvent('dentpal:refresh-profile')); } catch {}
     } catch (e: any) {
       setError?.(e.message || 'Failed to save vendor profile');
     }
   };
 
-  const filteredUsers = users.filter(user => {
-    const matchesSearch = user.username.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         user.email.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesStatus = filterStatus === "all" || user.status === filterStatus;
-    return matchesSearch && matchesStatus;
-  });
+  // Auth context
+  const { isAdmin, isSeller, isSubAccount, uid, permissions: sellerPermsRaw } = useAuth();
+  const sellerPerms = ensurePermissions('seller', (sellerPermsRaw as any));
 
-  const adminUsers = filteredUsers.filter(user => user.role === 'admin');
-  const sellerUsers = filteredUsers.filter(user => user.role === 'seller');
-
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'active': return 'bg-green-100 text-green-800 border-green-200';
-      case 'inactive': return 'bg-red-100 text-red-800 border-red-200';
-      case 'pending': return 'bg-yellow-100 text-yellow-800 border-yellow-200';
-      default: return 'bg-gray-100 text-gray-800 border-gray-200';
+  // --- Seller Sub-accounts state and helpers (declare BEFORE any early returns) ---
+  // Preset bundles (will be masked by seller's own permissions)
+  const roleBundles: Record<'finance' | 'ops' | 'custom', User['permissions']> = {
+    finance: {
+      dashboard: true,
+      bookings: false,
+      confirmation: false,
+      withdrawal: true,
+      access: false,
+      images: false,
+      users: false,
+      inventory: false,
+      'seller-orders': false,
+      'add-product': false,
+    },
+    ops: {
+      dashboard: true,
+      bookings: false,
+      confirmation: false,
+      withdrawal: false,
+      access: false,
+      images: false,
+      users: false,
+      inventory: true,
+      'seller-orders': true,
+      'add-product': true,
+    },
+    custom: {
+      dashboard: true,
+      bookings: false,
+      confirmation: false,
+      withdrawal: false,
+      access: false,
+      images: false,
+      users: false,
+      inventory: false,
+      'seller-orders': false,
+      'add-product': false,
     }
   };
 
-  const getStatusIcon = (status: string) => {
-    switch (status) {
-      case 'active': return <CheckCircle className="w-4 h-4" />;
-      case 'inactive': return <XCircle className="w-4 h-4" />;
-      case 'pending': return <Clock className="w-4 h-4" />;
-      default: return <AlertCircle className="w-4 h-4" />;
+  // Mask a permission set by the seller's own permissions (never exceed parent)
+  const maskPerms = (perms: User['permissions'], owner: User['permissions']): User['permissions'] => {
+    const out: any = {};
+    (Object.keys(perms) as Array<keyof User['permissions']>).forEach((k) => {
+      out[k] = Boolean(perms[k] && owner[k]);
+    });
+    return out as User['permissions'];
+  };
+
+  // Sub-account creation UI state
+  const [subOpen, setSubOpen] = useState(false);
+  const [subName, setSubName] = useState('');
+  const [subEmail, setSubEmail] = useState('');
+  const [subBundle, setSubBundle] = useState<'finance' | 'ops' | 'custom'>('ops');
+  const [subPerms, setSubPerms] = useState<User['permissions']>(maskPerms(roleBundles[subBundle], sellerPerms));
+  useEffect(() => { setSubPerms(maskPerms(roleBundles[subBundle], sellerPerms)); }, [subBundle, sellerPermsRaw]);
+
+  const canCreateSub = isSeller && !isAdmin && !isSubAccount;
+
+  const handleCreateSub = async () => {
+    if (!canCreateSub) return;
+    if (!subName || !subEmail) return setError?.('Name and email are required');
+    try {
+      const finalPerms = maskPerms(subPerms, sellerPerms);
+      const created = await createSellerSubAccount(uid!, subEmail, subName, finalPerms as any);
+      // Optional: append to local list if present
+      setUsers?.((prev: any) => (Array.isArray(prev) ? [...prev, {
+        id: created.uid,
+        username: created.name,
+        email: created.email,
+        role: 'seller',
+        status: 'active',
+        permissions: created.permissions as any,
+        createdAt: new Date().toISOString(),
+      }] : prev));
+      setSubOpen(false);
+      setSubName(''); setSubEmail(''); setSubBundle('ops');
+      toast({ title: 'Invite sent', description: `Sub-account invite sent to ${created.email}` });
+    } catch (e: any) {
+      setError?.(e.message || 'Failed to create sub-account');
     }
   };
+
+  // --- End Seller Sub-accounts declarations ---
 
   // Load users from Firestore on mount
   useEffect(() => {
@@ -712,15 +775,53 @@ const AccessTab = ({ loading = false, error, setError, onTabChange, onEditUser }
     }
   };
 
+  // Derived lists and UI helpers
+  const filteredUsers = users.filter((user) => {
+    const term = (searchTerm || '').toLowerCase();
+    const uname = (user.username || '').toLowerCase();
+    const mail = (user.email || '').toLowerCase();
+    const matchesSearch = !term || uname.includes(term) || mail.includes(term);
+    const matchesStatus = filterStatus === 'all' || user.status === filterStatus;
+    return matchesSearch && matchesStatus;
+  });
+
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'active': return 'bg-green-100 text-green-800 border-green-200';
+      case 'inactive': return 'bg-red-100 text-red-800 border-red-200';
+      case 'pending': return 'bg-yellow-100 text-yellow-800 border-yellow-200';
+      default: return 'bg-gray-100 text-gray-800 border-gray-200';
+    }
+  };
+
+  const getStatusIcon = (status: string) => {
+    switch (status) {
+      case 'active': return <CheckCircle className="w-4 h-4" />;
+      case 'inactive': return <XCircle className="w-4 h-4" />;
+      case 'pending': return <Clock className="w-4 h-4" />;
+      default: return <AlertCircle className="w-4 h-4" />;
+    }
+  };
+
   const handleExport = () => {
-    const list = activeSection === 'admin' ? adminUsers : activeSection === 'seller' ? sellerUsers : filteredUsers;
+    const list = activeSection === 'admin' 
+      ? filteredUsers.filter(u => u.role === 'admin') 
+      : activeSection === 'seller' 
+        ? filteredUsers.filter(u => u.role === 'seller') 
+        : filteredUsers;
     const title = activeSection === 'admin' ? 'Admin Users' : activeSection === 'seller' ? 'Seller Users' : 'Users';
     exportUsers(list, 'xlsx', title);
   };
 
   // New: handler that receives a type from dropdowns
   const handleExportAs = async (type: 'csv' | 'xlsx' | 'pdf', listOverride?: User[], titleOverride?: string) => {
-    const list = listOverride || (activeSection === 'admin' ? adminUsers : activeSection === 'seller' ? sellerUsers : filteredUsers);
+    const list = listOverride || (
+      activeSection === 'admin' 
+        ? filteredUsers.filter(u => u.role === 'admin') 
+        : activeSection === 'seller' 
+          ? filteredUsers.filter(u => u.role === 'seller') 
+          : filteredUsers
+    );
     const title = titleOverride || (activeSection === 'admin' ? 'Admin Users' : activeSection === 'seller' ? 'Seller Users' : 'Users');
     await exportUsers(list, type, title);
   };
@@ -1030,8 +1131,81 @@ const AccessTab = ({ loading = false, error, setError, onTabChange, onEditUser }
     </div>
   );
 
+  // Seller-only simplified view: show Sub-accounts section only
+  if (isSeller && !isAdmin) {
+    const allowedKeys = (Object.keys(subPerms) as Array<keyof User['permissions']>).filter(k => sellerPerms[k]);
+    return (
+      <div className="space-y-6">
+        <div className="bg-gradient-to-r from-green-600 to-teal-600 rounded-2xl p-6 text-white shadow-lg">
+          <h1 className="text-xl font-semibold">Sub Account</h1>
+          <p className="text-green-100 text-sm">Create team sub-accounts. Permissions cannot exceed your own access.</p>
+        </div>
+
+        <div className="bg-white rounded-xl border p-4">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <Users className="w-4 h-4" />
+              <h3 className="text-sm font-semibold">Seller Sub-accounts</h3>
+            </div>
+            <Button size="sm" onClick={() => setSubOpen(true)} className="bg-teal-600 hover:bg-teal-700 text-white"><UserPlus className="w-4 h-4 mr-1"/> New Sub-account</Button>
+          </div>
+          <p className="text-xs text-gray-500">Only permissions you already have can be granted to sub-accounts.</p>
+        </div>
+
+        <Dialog open={subOpen} onOpenChange={setSubOpen}>
+          <DialogContent className="sm:max-w-lg">
+            <DialogHeader>
+              <DialogTitle>New Sub-account</DialogTitle>
+              <DialogDescription>Invite a team member with limited access.</DialogDescription>
+            </DialogHeader>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs mb-1">Name</label>
+                <Input value={subName} onChange={(e)=> setSubName(e.target.value)} placeholder="Full name" />
+              </div>
+              <div>
+                <label className="block text-xs mb-1">Email</label>
+                <Input type="email" value={subEmail} onChange={(e)=> setSubEmail(e.target.value)} placeholder="name@company.com" />
+              </div>
+              <div>
+                <label className="block text-xs mb-1">Role Bundle</label>
+                <select className="w-full p-2 border rounded" value={subBundle} onChange={(e)=> setSubBundle(e.target.value as any)}>
+                  <option value="ops">Order Management (Orders & Inventory)</option>
+                  <option value="finance">Finance (Withdrawal only)</option>
+                  <option value="custom">Custom</option>
+                </select>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                {allowedKeys.map((k) => (
+                  <label key={String(k)} className="flex items-center gap-2 text-xs">
+                    <input
+                      type="checkbox"
+                      checked={(subPerms as any)[k]}
+                      onChange={(e)=> setSubPerms(p=>({ ...(p as any), [k]: e.target.checked }))}
+                      disabled={subBundle!=='custom'}
+                    />
+                    <span className="capitalize">{String(k).replace('seller-orders','orders').replace('-', ' ')}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={()=> setSubOpen(false)}>Cancel</Button>
+              <Button onClick={handleCreateSub} className="bg-teal-600 hover:bg-teal-700 text-white">Create & Send Invite</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Placeholder for listing existing sub-accounts (future) */}
+        <div className="bg-white rounded-xl border p-4">
+          <div className="text-sm text-gray-600">Sub-account list coming soon.</div>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       {/* Header Section */}
       <div className="bg-gradient-to-r from-green-600 to-teal-600 rounded-2xl p-8 text-white shadow-lg">
         <div className="flex items-center justify-between">
@@ -1086,7 +1260,7 @@ const AccessTab = ({ loading = false, error, setError, onTabChange, onEditUser }
             onClick={() => setActiveSection('admin')}
           >
             <Settings className="w-4 h-4 mr-2" />
-            Admin Users ({adminUsers.length})
+            Admin Users ({filteredUsers.filter(u => u.role === 'admin').length})
           </Button>
           <Button
             variant={activeSection === 'seller' ? 'default' : 'ghost'}
@@ -1097,7 +1271,7 @@ const AccessTab = ({ loading = false, error, setError, onTabChange, onEditUser }
             onClick={() => setActiveSection('seller')}
           >
             <Users className="w-4 h-4 mr-2" />
-            Seller Users ({sellerUsers.length})
+            Seller Users ({filteredUsers.filter(u => u.role === 'seller').length})
           </Button>
         </div>
       </div>
@@ -1179,8 +1353,8 @@ const AccessTab = ({ loading = false, error, setError, onTabChange, onEditUser }
         </div>
       )}
 
-      {activeSection === 'admin' && renderUserList(adminUsers, 'Admin Users')}
-      {activeSection === 'seller' && renderUserList(sellerUsers, 'Seller Users')}
+      {activeSection === 'admin' && renderUserList(filteredUsers.filter(u => u.role === 'admin'), 'Admin Users')}
+      {activeSection === 'seller' && renderUserList(filteredUsers.filter(u => u.role === 'seller'), 'Seller Users')}
 
       {/* Edit Access Dialog */}
       <Dialog open={isEditDialogOpen} onOpenChange={(open) => {
@@ -1350,6 +1524,61 @@ const AccessTab = ({ loading = false, error, setError, onTabChange, onEditUser }
               </DialogFooter>
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* NEW: Seller Sub-accounts */}
+      {canCreateSub && (
+        <div className="bg-white rounded-xl border p-4">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <Users className="w-4 h-4" />
+              <h3 className="text-sm font-semibold">Seller Sub-accounts</h3>
+            </div>
+            <Button size="sm" onClick={() => setSubOpen(true)} className="bg-teal-600 hover:bg-teal-700 text-white"><UserPlus className="w-4 h-4 mr-1"/> New Sub-account</Button>
+          </div>
+          <p className="text-xs text-gray-500">Create sub-accounts for Finance or Operations (Orders & Inventory). Sub-accounts cannot create further sub-accounts.</p>
+        </div>
+      )}
+
+      <Dialog open={subOpen} onOpenChange={setSubOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>New Sub-account</DialogTitle>
+            <DialogDescription>Send an invite to a team member with limited access.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <label className="block text-xs mb-1">Name</label>
+              <Input value={subName} onChange={(e)=> setSubName(e.target.value)} placeholder="Full name" />
+            </div>
+            <div>
+              <label className="block text-xs mb-1">Email</label>
+              <Input type="email" value={subEmail} onChange={(e)=> setSubEmail(e.target.value)} placeholder="name@company.com" />
+            </div>
+            <div>
+              <label className="block text-xs mb-1">Role Bundle</label>
+              <select className="w-full p-2 border rounded" value={subBundle} onChange={(e)=> setSubBundle(e.target.value as any)}>
+                <option value="ops">Order Management (Orders & Inventory)</option>
+                <option value="finance">Finance (Withdrawal only)</option>
+                <option value="custom">Custom</option>
+              </select>
+            </div>
+
+            {/* Permissions grid (for custom tweak) */}
+            <div className="grid grid-cols-2 gap-2">
+              {Object.keys(subPerms).map((k) => (
+                <label key={k} className="flex items-center gap-2 text-xs">
+                  <input type="checkbox" checked={(subPerms as any)[k]} onChange={(e)=> setSubPerms(p=>({ ...(p as any), [k]: e.target.checked }))} disabled={subBundle!=='custom'} />
+                  <span className="capitalize">{k.replace('seller-orders','orders').replace('-', ' ')}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={()=> setSubOpen(false)}>Cancel</Button>
+            <Button onClick={handleCreateSub} className="bg-teal-600 hover:bg-teal-700 text-white">Create & Send Invite</Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

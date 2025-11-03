@@ -15,8 +15,9 @@ export function useProfileCompletion() {
 
   useEffect(() => {
     let mounted = true;
-    (async () => {
-      if (!uid) { setProfile(null); return; }
+
+    const fetchProfile = async () => {
+      if (!uid) { if (mounted) setProfile(null); return; }
       setLoading(true);
       try {
         // Prefer Seller doc (new), fallback to legacy web_users
@@ -33,8 +34,15 @@ export function useProfileCompletion() {
       } finally {
         if (mounted) setLoading(false);
       }
-    })();
-    return () => { mounted = false; };
+    };
+
+    fetchProfile();
+
+    // Listen for refresh requests from other parts of app (e.g., after enrollment submit)
+    const onRefresh = () => { fetchProfile(); };
+    window.addEventListener('dentpal:refresh-profile', onRefresh);
+
+    return () => { mounted = false; window.removeEventListener('dentpal:refresh-profile', onRefresh); };
   }, [uid]);
 
   const { percent, isComplete, issues, vendorProfileComplete } = useMemo(() => {
