@@ -1,0 +1,81 @@
+import { getFirestore, collection, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, query, where } from 'firebase/firestore';
+import app, { storage } from '@/lib/firebase';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+
+const db = getFirestore(app);
+const SELLER_COL = 'Seller';
+const LEGACY_COL = 'web_users';
+
+export interface SellerProfile {
+  id: string;
+  email?: string;
+  name?: string;
+  role?: 'admin' | 'seller';
+  isActive?: boolean;
+  permissions?: Record<string, boolean>;
+  createdAt?: number | string;
+  // Optional vendor profile fields
+  vendor?: {
+    tin?: string;
+    bir?: { url: string; path: string } | null;
+    company?: {
+      name?: string;
+      address?: { line1?: string; line2?: string; city?: string; province?: string; zip?: string };
+    };
+    contacts?: { name?: string; email?: string; phone?: string };
+    requirements?: { birSubmitted?: boolean; profileCompleted?: boolean };
+    // Allow additional keys saved from enrollment
+    [key: string]: any;
+  };
+}
+
+const mapDoc = (d: any): SellerProfile => ({ id: d.id, ...d.data() });
+
+const SellersService = {
+  async list(): Promise<SellerProfile[]> {
+    const dstSnap = await getDocs(collection(db, SELLER_COL));
+    if (!dstSnap.empty) return dstSnap.docs.map(mapDoc);
+    const legacySnap = await getDocs(collection(db, LEGACY_COL));
+    return legacySnap.docs.map(mapDoc);
+  },
+  async get(id: string): Promise<SellerProfile | null> {
+    const d = await getDoc(doc(db, SELLER_COL, id));
+    if (d.exists()) return mapDoc(d);
+    const legacy = await getDoc(doc(db, LEGACY_COL, id));
+    return legacy.exists() ? mapDoc(legacy) : null;
+  },
+  async create(id: string, data: Omit<SellerProfile, 'id'>): Promise<void> {
+    await setDoc(doc(db, SELLER_COL, id), { ...data });
+  },
+  async update(id: string, data: Partial<SellerProfile>): Promise<void> {
+    await updateDoc(doc(db, SELLER_COL, id), { ...data } as any);
+  },
+  async remove(id: string): Promise<void> {
+    await deleteDoc(doc(db, SELLER_COL, id));
+  },
+  async findByEmail(email: string): Promise<SellerProfile[]> {
+    const q1 = query(collection(db, SELLER_COL), where('email', '==', email));
+    const s1 = await getDocs(q1);
+    if (!s1.empty) return s1.docs.map(mapDoc);
+    const q2 = query(collection(db, LEGACY_COL), where('email', '==', email));
+    const s2 = await getDocs(q2);
+    return s2.docs.map(mapDoc);
+  },
+  // Upload a seller image to Firebase Storage under SellerImages/<sellerId>/
+  async uploadImage(sellerId: string, file: File, folder = 'SellerImages'): Promise<{ url: string; path: string }> {
+    const safeName = file.name.replace(/[^a-zA-Z0-9_.-]/g, '_');
+    const path = `${folder}/${sellerId}/${Date.now()}_${safeName}`;
+    const r = ref(storage, path);
+    await uploadBytes(r, file);
+    const url = await getDownloadURL(r);
+    return { url, path };
+  },
+  // Save or update vendor profile details (accepts full vendor payload)
+  async saveVendorProfile(sellerId: string, payload: Record<string, any>): Promise<void> {
+    const refDoc = doc(db, SELLER_COL, sellerId);
+    // Merge vendor fields to avoid wiping unrelated data
+    await setDoc(refDoc, { vendor: payload } as any, { merge: true });
+  }
+};
+
+export default SellersService;

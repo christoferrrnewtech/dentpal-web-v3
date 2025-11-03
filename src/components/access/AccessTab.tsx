@@ -28,6 +28,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Dialog, DialogContent, DialogHeader, DialogFooter, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 // Replace backend partner provisioning with direct web user service (Firestore + password email)
 import { createWebUser, updateWebUserAccess, setWebUserStatus, getWebUsers, resendUserInvite } from '@/services/webUserService';
+import SellersService from '@/services/sellers';
 import type { WebUserProfile } from '@/types/webUser';
 // Export libs
 import * as XLSX from 'xlsx';
@@ -200,6 +201,58 @@ const AccessTab = ({ loading = false, error, setError, onTabChange, onEditUser }
 
   const { toast } = useToast();
 
+  // Vendor Enrollment wizard state
+  const [vendorWizardOpen, setVendorWizardOpen] = useState(false);
+  const [vendorSellerId, setVendorSellerId] = useState<string | null>(null);
+  const [vendorStep, setVendorStep] = useState<'upload' | 'company'>('upload');
+  const [vendorForm, setVendorForm] = useState({
+    tin: '',
+    birFile: null as File | null,
+    bir: null as null | { url: string; path: string },
+    company: { name: '', address: { line1: '', line2: '', city: '', province: '', zip: '' } },
+    contacts: { name: '', email: '', phone: '' },
+    requirements: { birSubmitted: false, profileCompleted: false },
+  });
+
+  const submitBirAndNext = async () => {
+    try {
+      if (!vendorSellerId) return;
+      let bir = vendorForm.bir;
+      if (vendorForm.birFile) {
+        const res = await SellersService.uploadImage(vendorSellerId, vendorForm.birFile, 'SellerImages');
+        bir = res;
+      }
+      await SellersService.saveVendorProfile(vendorSellerId, {
+        tin: vendorForm.tin,
+        bir: bir || null,
+        requirements: { ...vendorForm.requirements, birSubmitted: !!bir }
+      });
+      setVendorForm(prev => ({ ...prev, bir: bir || null, requirements: { ...prev.requirements, birSubmitted: !!bir } }));
+      setVendorStep('company');
+      toast({ title: 'BIR uploaded', description: 'Vendor TIN and BIR saved.' });
+    } catch (e: any) {
+      setError?.(e.message || 'Failed to upload BIR');
+    }
+  };
+
+  const submitCompanyAndFinish = async () => {
+    try {
+      if (!vendorSellerId) return;
+      await SellersService.saveVendorProfile(vendorSellerId, {
+        tin: vendorForm.tin,
+        bir: vendorForm.bir || null,
+        company: vendorForm.company,
+        contacts: vendorForm.contacts,
+        requirements: { ...vendorForm.requirements, profileCompleted: true },
+      });
+      setVendorWizardOpen(false);
+      setVendorSellerId(null);
+      toast({ title: 'Vendor profile saved', description: 'Company and contact details stored.' });
+    } catch (e: any) {
+      setError?.(e.message || 'Failed to save vendor profile');
+    }
+  };
+
   const filteredUsers = users.filter(user => {
     const matchesSearch = user.username.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          user.email.toLowerCase().includes(searchTerm.toLowerCase());
@@ -232,25 +285,35 @@ const AccessTab = ({ loading = false, error, setError, onTabChange, onEditUser }
   useEffect(() => {
     const load = async () => {
       try {
-        const webUsers = await getWebUsers(); // fetch all roles
-        const mapped: User[] = webUsers.map((u: WebUserProfile) => {
-           const createdAtMs = normalizeTimestamp((u as any).createdAt);
-           const lastLoginMs = normalizeTimestamp((u as any).lastLogin);
-          const perms = ensurePermissions(u.role, (u as any).permissions);
-           return {
-             id: u.uid,
-             username: u.name,
-             email: u.email,
-             role: u.role,
-             status: u.isActive ? 'active' : 'inactive',
-             permissions: perms,
-             lastLogin: lastLoginMs ? new Date(lastLoginMs).toISOString() : undefined,
-             createdAt: createdAtMs ? new Date(createdAtMs).toISOString() : new Date().toISOString(),
-           };
-         });
-        setUsers(mapped);
+        // Prefer new Seller collection; fall back to web_users service for non-migrated envs
+        const sellers = await SellersService.list();
+        const webUsers = sellers.length ? sellers.map(s => ({
+          uid: s.id,
+          email: s.email || '',
+          name: s.name || '',
+          role: (s.role as any) || 'seller',
+          isActive: typeof s.isActive === 'boolean' ? s.isActive : true,
+          permissions: s.permissions as any,
+          createdAt: s.createdAt || Date.now(),
+        })) : await getWebUsers();
+         const mapped: User[] = webUsers.map((u: any) => {
+            const createdAtMs = normalizeTimestamp((u as any).createdAt);
+            const lastLoginMs = normalizeTimestamp((u as any).lastLogin);
+           const perms = ensurePermissions(u.role, (u as any).permissions);
+            return {
+              id: u.uid,
+              username: u.name,
+              email: u.email,
+              role: u.role,
+              status: u.isActive ? 'active' : 'inactive',
+              permissions: perms,
+              lastLogin: lastLoginMs ? new Date(lastLoginMs).toISOString() : undefined,
+              createdAt: createdAtMs ? new Date(createdAtMs).toISOString() : new Date().toISOString(),
+            };
+          });
+         setUsers(mapped);
       } catch (e: any) {
-        console.error('Failed to load web users:', e);
+        console.error('Failed to load users:', e);
         setError?.(e.message || 'Failed to load users');
       }
     };
@@ -294,6 +357,14 @@ const AccessTab = ({ loading = false, error, setError, onTabChange, onEditUser }
       };
 
       setUsers(prev => [...prev, user]);
+      // Open Vendor Enrollment wizard for this seller
+      setVendorSellerId(created.uid);
+      setVendorForm(prev => ({
+        ...prev,
+        contacts: { ...(prev.contacts || {}), name: newUser.username || '', email: newUser.email || '', phone: '' },
+      }));
+      setVendorStep('upload');
+      setVendorWizardOpen(true);
       // Optionally refresh from Firestore to reflect authoritative data
       try {
         const webUsers = await getWebUsers();
@@ -1175,6 +1246,110 @@ const AccessTab = ({ loading = false, error, setError, onTabChange, onEditUser }
               {saving ? 'Saving...' : 'Save changes'}
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Vendor Enrollment Wizard */}
+      <Dialog open={vendorWizardOpen} onOpenChange={(o) => setVendorWizardOpen(o)}>
+        <DialogContent className="sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Vendor Enrollment</DialogTitle>
+            <DialogDescription>
+              {vendorStep === 'upload' ? 'Upload and review BIR document' : 'Company, address, and contacts'}
+            </DialogDescription>
+          </DialogHeader>
+
+          {vendorStep === 'upload' ? (
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">TIN Number</label>
+                <Input
+                  placeholder="Enter TIN"
+                  value={vendorForm.tin}
+                  onChange={(e) => setVendorForm(prev => ({ ...prev, tin: e.target.value }))}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">BIR Document (image/PDF)</label>
+                <input
+                  type="file"
+                  accept="image/*,application/pdf"
+                  onChange={(e) => setVendorForm(prev => ({ ...prev, birFile: e.target.files?.[0] || null }))}
+                  className="block w-full text-sm text-gray-700 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-green-50 file:text-green-700 hover:file:bg-green-100"
+                />
+                {vendorForm.bir && (
+                  <div className="mt-2 text-xs text-gray-600">Uploaded: <a className="text-green-700 underline" href={vendorForm.bir.url} target="_blank" rel="noreferrer">View file</a></div>
+                )}
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => { setVendorWizardOpen(false); }}>
+                  Cancel
+                </Button>
+                <Button onClick={submitBirAndNext} className="bg-green-600 hover:bg-green-700 text-white">
+                  Next
+                </Button>
+              </DialogFooter>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Company Name</label>
+                <Input
+                  placeholder="Company Name"
+                  value={vendorForm.company.name}
+                  onChange={(e) => setVendorForm(prev => ({ ...prev, company: { ...prev.company, name: e.target.value } }))}
+                />
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <Input
+                  placeholder="Address line 1"
+                  value={vendorForm.company.address.line1}
+                  onChange={(e) => setVendorForm(prev => ({ ...prev, company: { ...prev.company, address: { ...prev.company.address, line1: e.target.value } } }))}
+                />
+                <Input
+                  placeholder="Address line 2"
+                  value={vendorForm.company.address.line2}
+                  onChange={(e) => setVendorForm(prev => ({ ...prev, company: { ...prev.company, address: { ...prev.company.address, line2: e.target.value } } }))}
+                />
+                <Input
+                  placeholder="City"
+                  value={vendorForm.company.address.city}
+                  onChange={(e) => setVendorForm(prev => ({ ...prev, company: { ...prev.company, address: { ...prev.company.address, city: e.target.value } } }))}
+                />
+                <Input
+                  placeholder="Province"
+                  value={vendorForm.company.address.province}
+                  onChange={(e) => setVendorForm(prev => ({ ...prev, company: { ...prev.company, address: { ...prev.company.address, province: e.target.value } } }))}
+                />
+                <Input
+                  placeholder="ZIP"
+                  value={vendorForm.company.address.zip}
+                  onChange={(e) => setVendorForm(prev => ({ ...prev, company: { ...prev.company, address: { ...prev.company.address, zip: e.target.value } } }))}
+                />
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <Input
+                  placeholder="Contact person"
+                  value={vendorForm.contacts.name}
+                  onChange={(e) => setVendorForm(prev => ({ ...prev, contacts: { ...prev.contacts, name: e.target.value } }))}
+                />
+                <Input
+                  placeholder="Contact email"
+                  value={vendorForm.contacts.email}
+                  onChange={(e) => setVendorForm(prev => ({ ...prev, contacts: { ...prev.contacts, email: e.target.value } }))}
+                />
+                <Input
+                  placeholder="Contact phone"
+                  value={vendorForm.contacts.phone}
+                  onChange={(e) => setVendorForm(prev => ({ ...prev, contacts: { ...prev.contacts, phone: e.target.value } }))}
+                />
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setVendorStep('upload')}>Back</Button>
+                <Button onClick={submitCompanyAndFinish} className="bg-green-600 hover:bg-green-700 text-white">Finish</Button>
+              </DialogFooter>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
     </div>

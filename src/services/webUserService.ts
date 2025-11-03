@@ -16,80 +16,64 @@ import { db, auth } from '@/lib/firebase';
 import type { WebUserProfile, WebUserPermissions, WebUserRole } from '@/types/webUser';
 import { createUserWithEmailAndPassword, sendPasswordResetEmail } from 'firebase/auth';
 
-// Collection reference
-const WEB_USERS_COLLECTION = 'web_users';
+// Collections
+const SELLER_COLLECTION = 'Seller';
+const WEB_USERS_COLLECTION = 'web_users'; // legacy
+
+async function safeUpdateBoth(uid: string, data: Record<string, any>) {
+  // Always update Seller
+  await updateDoc(doc(db, SELLER_COLLECTION, uid), data).catch(() => {});
+  // Mirror to legacy if exists
+  try {
+    const legacyRef = doc(db, WEB_USERS_COLLECTION, uid);
+    const legacy = await getDoc(legacyRef);
+    if (legacy.exists()) await updateDoc(legacyRef, data).catch(() => {});
+  } catch {}
+}
 
 /**
- * Fetch web users from Firestore, optionally filtered by role
+ * Fetch users (prefer Seller, fallback to legacy web_users)
  */
 export async function getWebUsers(roles?: WebUserRole[]): Promise<WebUserProfile[]> {
   try {
-    // Use simple query to avoid index requirements
-    const q = query(collection(db, WEB_USERS_COLLECTION));
-    const querySnapshot = await getDocs(q);
+    const sellerSnap = await getDocs(collection(db, SELLER_COLLECTION));
+    const sourceSnap = !sellerSnap.empty ? sellerSnap : await getDocs(collection(db, WEB_USERS_COLLECTION));
+
     const users: WebUserProfile[] = [];
-    
-    querySnapshot.forEach((doc) => {
-      const userData = doc.data() as Omit<WebUserProfile, 'uid'>;
-      const user = {
-        uid: doc.id,
-        ...userData
-      };
-      
-      // Filter by roles if specified
-      if (!roles || roles.length === 0 || roles.includes(user.role)) {
-        users.push(user);
-      }
+    sourceSnap.forEach((d) => {
+      const userData = d.data() as Omit<WebUserProfile, 'uid'>;
+      const user = { uid: d.id, ...userData } as WebUserProfile;
+      if (!roles || roles.length === 0 || roles.includes(user.role)) users.push(user);
     });
-    
-    // Sort by creation date (newest first)
-    return users.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+
+    return users.sort((a, b) => (Number(b.createdAt || 0) - Number(a.createdAt || 0)));
   } catch (error) {
-    console.error("Error fetching web users:", error);
-    throw new Error("Failed to fetch users");
+    console.error('Error fetching users:', error);
+    throw new Error('Failed to fetch users');
   }
 }
 
-/**
- * Get a single web user by uid
- */
 export async function getWebUser(uid: string): Promise<WebUserProfile | null> {
   try {
-    const userDoc = await getDoc(doc(db, WEB_USERS_COLLECTION, uid));
-    
-    if (userDoc.exists()) {
-      const userData = userDoc.data() as Omit<WebUserProfile, 'uid'>;
-      return {
-        uid: userDoc.id,
-        ...userData
-      };
-    }
-    
-    return null;
+    const sellerDoc = await getDoc(doc(db, SELLER_COLLECTION, uid));
+    if (sellerDoc.exists()) return { uid: sellerDoc.id, ...(sellerDoc.data() as any) };
+    const legacyDoc = await getDoc(doc(db, WEB_USERS_COLLECTION, uid));
+    return legacyDoc.exists() ? ({ uid: legacyDoc.id, ...(legacyDoc.data() as any) }) : null;
   } catch (error) {
-    console.error("Error fetching web user:", error);
-    throw new Error("Failed to fetch user");
+    console.error('Error fetching user:', error);
+    throw new Error('Failed to fetch user');
   }
 }
 
 /**
- * Create a new web user with authentication and Firestore profile
+ * Create auth user + profile (now writes to Seller; mirrors to legacy for compatibility)
  */
 export async function createWebUser(email: string, name: string, role: WebUserRole, permissions: WebUserPermissions): Promise<WebUserProfile> {
   try {
-    console.log('🔥 Starting user creation process for:', email);
-    
-    // Generate a random password that meets Firebase requirements
-    // Must contain: uppercase, lowercase, number, and special character
     const tempPassword = `Temp${Math.random().toString(36).slice(-8)}#${Math.floor(Math.random() * 100)}`;
-    console.log('🔥 Generated temp password (meets requirements), attempting to create auth user...');
-    
-    // Create the user in Firebase Authentication
     const userCredential = await createUserWithEmailAndPassword(auth, email, tempPassword);
     const { user } = userCredential;
-    console.log('✅ Firebase Auth user created successfully:', user.uid);
-    
-    // Create user profile in Firestore
+
     const userData: Omit<WebUserProfile, 'uid'> = {
       email,
       name,
@@ -97,114 +81,65 @@ export async function createWebUser(email: string, name: string, role: WebUserRo
       permissions,
       isActive: true,
       createdAt: Date.now(),
-    };
-    
-    console.log('🔥 Creating Firestore document with data:', userData);
-    console.log('🔥 Document path: web_users/' + user.uid);
-    
-    // Add to web_users collection with UID as document ID
-    await setDoc(doc(db, WEB_USERS_COLLECTION, user.uid), userData);
-    console.log('✅ Firestore document created successfully');
-    
-    // Send password reset email so the user can set their own password
-    // This will send a Firebase-generated email with a password reset link
-    console.log('🔥 Attempting to send password reset email to:', email);
-    
+    } as any;
+
+    // Primary write to Seller
+    await setDoc(doc(db, SELLER_COLLECTION, user.uid), userData);
+    // Mirror to legacy for now
+    try { await setDoc(doc(db, WEB_USERS_COLLECTION, user.uid), userData); } catch {}
+
     try {
-      await sendPasswordResetEmail(auth, email, {
-        url: `${window.location.origin}/auth`, // Redirect after password reset
-        handleCodeInApp: true
-      });
-      console.log(`✅ Password setup email sent successfully to ${email}`);
+      await sendPasswordResetEmail(auth, email, { url: `${window.location.origin}/auth`, handleCodeInApp: true });
     } catch (emailError) {
-      // If email fails, still return success but log the issue
-      console.warn('⚠️ Failed to send email, but user was created:', emailError);
-      console.log('💡 User can still log in with temp password or admin can resend invite');
+      console.warn('Failed to send invite email:', emailError);
     }
-    
-    return {
-      uid: user.uid,
-      ...userData
-    };
+
+    return { uid: user.uid, ...userData } as WebUserProfile;
   } catch (error) {
-    console.error("❌ Error creating web user:", error);
-    console.error("❌ Error details:", {
-      message: error.message,
-      code: error.code,
-      stack: error.stack
-    });
-    throw error; // Re-throw the original error for better debugging
+    console.error('Error creating user:', error);
+    throw error;
   }
 }
 
-/**
- * Update a web user's role and permissions
- */
 export async function updateWebUserAccess(uid: string, role: WebUserRole, permissions: WebUserPermissions): Promise<boolean> {
   try {
-    const userRef = doc(db, WEB_USERS_COLLECTION, uid);
-    await updateDoc(userRef, {
-      role,
-      permissions
-    });
-    
+    await safeUpdateBoth(uid, { role, permissions });
     return true;
   } catch (error) {
-    console.error("Error updating web user access:", error);
-    throw new Error("Failed to update user access");
+    console.error('Error updating access:', error);
+    throw new Error('Failed to update user access');
   }
 }
 
-/**
- * Enable or disable a web user
- */
 export async function setWebUserStatus(uid: string, isActive: boolean): Promise<boolean> {
   try {
-    const userRef = doc(db, WEB_USERS_COLLECTION, uid);
-    await updateDoc(userRef, {
-      isActive
-    });
-    
+    await safeUpdateBoth(uid, { isActive });
     return true;
   } catch (error) {
-    console.error("Error updating web user status:", error);
-    throw new Error("Failed to update user status");
+    console.error('Error updating status:', error);
+    throw new Error('Failed to update user status');
   }
 }
 
-/**
- * Update a user's profile information (name, etc.)
- */
 export async function updateWebUserProfile(
-  uid: string, 
+  uid: string,
   profileData: Partial<Omit<WebUserProfile, 'uid' | 'email' | 'role' | 'permissions' | 'isActive' | 'createdAt'>>
 ): Promise<boolean> {
   try {
-    const userRef = doc(db, WEB_USERS_COLLECTION, uid);
-    await updateDoc(userRef, profileData);
-    
+    await safeUpdateBoth(uid, profileData);
     return true;
   } catch (error) {
-    console.error("Error updating web user profile:", error);
-    throw new Error("Failed to update user profile");
+    console.error('Error updating profile:', error);
+    throw new Error('Failed to update user profile');
   }
 }
 
-/**
- * Resend invitation email to a user
- */
 export async function resendUserInvite(email: string): Promise<boolean> {
   try {
-    // Send password reset email with custom action URL
-    await sendPasswordResetEmail(auth, email, {
-      url: `${window.location.origin}/auth`,
-      handleCodeInApp: true
-    });
-    
-    console.log(`Invitation email resent to ${email}`);
+    await sendPasswordResetEmail(auth, email, { url: `${window.location.origin}/auth`, handleCodeInApp: true });
     return true;
   } catch (error) {
-    console.error("Error resending user invite:", error);
-    throw new Error("Failed to resend invitation");
+    console.error('Error resending invite:', error);
+    throw new Error('Failed to resend invitation');
   }
 }

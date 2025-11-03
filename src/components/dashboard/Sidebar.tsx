@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import dentalLogo from "@/assets/dentpal_logo.png";
 import { useAuth } from "@/hooks/use-auth";
+import { useProfileCompletion } from "@/hooks/useProfileCompletion";
 
 interface SidebarProps {
   activeItem: string;
@@ -47,6 +48,7 @@ const menuItems = [
 const Sidebar = ({ activeItem, onItemClick, onLogout }: SidebarProps) => {
   const [isCollapsed, setIsCollapsed] = useState(false);
   const { hasPermission, loading, isAdmin, isSeller, role } = useAuth();
+  const { vendorProfileComplete } = useProfileCompletion();
 
   const panelLabel = isAdmin
     ? 'Admin Panel'
@@ -77,7 +79,6 @@ const Sidebar = ({ activeItem, onItemClick, onLogout }: SidebarProps) => {
   const visibleMenuItems = loading
     ? []
     : (() => {
-        // First, apply permission and admin-only filters
         const permitted = menuItems.filter((item) => {
           if (item.id === 'product-qc' && !isAdmin) return false;
           if (item.id === 'warranty' && !isAdmin) return false;
@@ -85,7 +86,11 @@ const Sidebar = ({ activeItem, onItemClick, onLogout }: SidebarProps) => {
           return hasPermission(key as any);
         });
 
-        // For sellers (non-admin), enforce requested order and subset
+        // If seller and vendor profile not complete, only show Profile
+        if (isSeller && !isAdmin && !vendorProfileComplete) {
+          return permitted.filter((i) => i.id === 'profile');
+        }
+
         if (isSeller && !isAdmin) {
           const sellerOrder = ['dashboard', 'seller-orders', 'reports', 'inventory', 'add-product', 'profile'];
           const map = new Map(permitted.map((i) => [i.id, i] as const));
