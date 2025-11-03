@@ -40,6 +40,7 @@ const menuItems = [
   { id: "warranty", label: "Warranty", icon: ShieldCheck },
   { id: "confirmation", label: "Confirmation", icon: CheckCircle },
   { id: "withdrawal", label: "Withdrawal", icon: CreditCard },
+  { id: "sub-accounts", label: "Sub Account", icon: Users },
   { id: "access", label: "Access", icon: Key },
   { id: "images", label: "Images", icon: Images },
   { id: "users", label: "Users", icon: Users },
@@ -70,6 +71,7 @@ const Sidebar = ({ activeItem, onItemClick, onLogout }: SidebarProps) => {
     warranty: 'dashboard',
     confirmation: "confirmation",
     withdrawal: "withdrawal",
+    'sub-accounts': 'dashboard',
     access: "access",
     images: "images",
     users: "users",
@@ -92,7 +94,7 @@ const Sidebar = ({ activeItem, onItemClick, onLogout }: SidebarProps) => {
         }
 
         if (isSeller && !isAdmin) {
-          const sellerOrder = ['dashboard', 'seller-orders', 'reports', 'inventory', 'add-product', 'profile'];
+          const sellerOrder = ['dashboard', 'seller-orders', 'reports', 'inventory', 'add-product', 'sub-accounts', 'profile'];
           const map = new Map(permitted.map((i) => [i.id, i] as const));
           return sellerOrder.map((id) => map.get(id)).filter(Boolean) as typeof permitted;
         }

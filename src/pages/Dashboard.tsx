@@ -227,6 +227,8 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
     confirmation: "confirmation",
     withdrawal: "withdrawal",
     access: "access",
+    // NEW: Sub-accounts uses same component as Access but is always allowed for sellers (mapped to dashboard in Sidebar)
+    'sub-accounts': 'dashboard',
     images: "images",
     users: "users",
     'seller-orders': 'seller-orders',
@@ -757,6 +759,16 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
             onTabChange={handleTabChange}
           />
         );
+      // NEW: route sub-accounts tab to AccessTab (seller-facing)
+      case "sub-accounts":
+        return (
+          <AccessTab 
+            loading={loading}
+            error={error}
+            setError={setError}
+            onTabChange={handleTabChange}
+          />
+        );
       case "images":
         if (!isAllowed("images")) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
         return (
@@ -770,233 +782,81 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
       case "users":
         if (!isAllowed("users")) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
         return (
-          <UsersTab 
-            onResetRewardPoints={handleResetRewardPoints}
-            onConfirmationAdminPassword={handleConfirmationAdminPassword}
-            onExport={handleExportUsers}
-          />
+          <UsersTab />
         );
-      case 'seller-orders':
-        if (!isAllowed('seller-orders')) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
-        return <OrderTab orders={confirmationOrders} loading={loading} error={error} />;
-      case 'inventory':
-        if (!isAllowed('inventory')) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
-        return <InventoryTab />;
-      case 'add-product':
-        if (!isAllowed('add-product')) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
-        return <AddProduct />;
-      case 'product-qc':
-        return <ProductQCTab />;
-      case 'notifications':
-        if (!isAllowed('notifications')) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
-        return <NotificationsTab />;
-      case 'warranty':
-        if (!isAdmin) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
-        return <WarrantyManager />;
-      default:
+      // Seller inventory tab
+      case "inventory":
+        if (!isAllowed("inventory")) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
         return (
-          <div className="space-y-8">
-            {/* Top Section - Metrics Cards (3) */}
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              {/* Order Shipped Card */}
-              <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm font-medium text-gray-600 mb-1">ORDER SHIPPED</p>
-                    <p className="text-sm text-gray-500 mb-2">NUMBER OF DELIVERED TRANSACTIONS</p>
-                    <p className="text-2xl font-bold text-gray-900">(average order)</p>
-                  </div>
-                  <div className="w-12 h-12 bg-teal-50 rounded-xl flex items-center justify-center">
-                    <ShoppingCart className="w-6 h-6 text-teal-600" />
-                  </div>
-                </div>
-              </div>
-              {/* Total Transactions Card */}
-              <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm font-medium text-gray-600 mb-1">TOTAL NUMBER OF</p>
-                    <p className="text-sm text-gray-500 mb-2">DELIVERED TRANSACTIONS</p>
-                    <p className="text-2xl font-bold text-gray-900">(total transactions)</p>
-                  </div>
-                  <div className="w-12 h-12 bg-blue-50 rounded-xl flex items-center justify-center">
-                    <TrendingUp className="w-6 h-6 text-blue-600" />
-                  </div>
-                </div>
-              </div>
-              {/* Active Users Card */}
-              <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm font-medium text-gray-600 mb-1">ACTIVE USERS</p>
-                    <p className="text-sm text-gray-500 mb-2">(active users count per day)</p>
-                    <p className="text-2xl font-bold text-gray-900">24,567</p>
-                  </div>
-                  <div className="w-12 h-12 bg-purple-50 rounded-xl flex items-center justify-center">
-                    <Users className="w-6 h-6 text-purple-600" />
-                  </div>
-                </div>
-              </div>
-            </div>
-            {/* Horizontal Filters Bar */}
-            <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100">
-              <div className="flex flex-col lg:flex-row lg:items-end lg:space-x-4 gap-4">
-                {/* Date Filter */}
-                <div className="flex-1 min-w-[160px]">
-                  <label className="block text-xs font-medium text-gray-700 mb-1">DATE RANGE</label>
-                  <select className="w-full p-2 border border-gray-200 rounded-lg text-xs focus:ring-2 focus:ring-teal-500 focus:border-transparent">
-                    <option>Select date range</option>
-                    <option>Last 7 days</option>
-                    <option>Last 30 days</option>
-                    <option>Last 3 months</option>
-                    <option>Last year</option>
-                  </select>
-                </div>
-                {/* Payment Method */}
-                <div className="flex-1 min-w-[160px]">
-                  <label className="block text-xs font-medium text-gray-700 mb-1">PAYMENT METHOD</label>
-                  <select className="w-full p-2 border border-gray-200 rounded-lg text-xs focus:ring-2 focus:ring-teal-500 focus:border-transparent">
-                    <option>All payment methods</option>
-                    <option>Credit Card</option>
-                    <option>Cash</option>
-                    <option>Insurance</option>
-                  </select>
-                </div>
-                {/* Payment Type */}
-                <div className="flex-1 min-w-[160px]">
-                  <label className="block text-xs font-medium text-gray-700 mb-1">PAYMENT TYPE</label>
-                  <select className="w-full p-2 border border-gray-200 rounded-lg text-xs focus:ring-2 focus:ring-teal-500 focus:border-transparent">
-                    <option>All payment types</option>
-                    <option>Full Payment</option>
-                    <option>Partial Payment</option>
-                    <option>Installment</option>
-                  </select>
-                </div>
-                {/* Location */}
-                <div className="flex-1 min-w-[160px]">
-                  <label className="block text-xs font-medium text-gray-700 mb-1">LOCATION</label>
-                  <select className="w-full p-2 border border-gray-200 rounded-lg text-xs focus:ring-2 focus:ring-teal-500 focus:border-transparent">
-                    <option>All locations</option>
-                    <option>Main Clinic</option>
-                    <option>Branch 1</option>
-                    <option>Branch 2</option>
-                  </select>
-                </div>
-                {/* Seller */}
-                <div className="flex-1 min-w-[160px]">
-                  <label className="block text-xs font-medium text-gray-700 mb-1">DENTIST</label>
-                  <select className="w-full p-2 border border-gray-200 rounded-lg text-xs focus:ring-2 focus:ring-teal-500 focus:border-transparent">
-                    <option>All dentists</option>
-                    <option>Dr. Smith</option>
-                    <option>Dr. Johnson</option>
-                    <option>Dr. Williams</option>
-                  </select>
-                </div>
-                {/* Apply / Reset */}
-                <div className="flex items-end gap-2 pt-2">
-                  <button className="px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white text-xs font-medium rounded-lg shadow-sm transition">Apply</button>
-                  <button className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-medium rounded-lg transition">Reset</button>
-                </div>
-              </div>
-            </div>
-            {/* Revenue Chart Section */}
-            <div className="bg-white rounded-2xl p-8 shadow-sm border border-gray-100">
-              <div className="flex items-center justify-between mb-8">
-                <div>
-                  <h3 className="text-xl font-semibold text-gray-900 mb-2">REVENUE</h3>
-                  <p className="text-3xl font-bold text-gray-900">PHP 3,000,000.00</p>
-                </div>
-              </div>
-              <RevenueChart />
-            </div>
-          </div>
+          <InventoryTab />
         );
-      }
-    };
-  
-    const getPageTitle = () => {
-      switch (activeItem) {
-        case "dashboard":
-          return "Dashboard";
-        case "profile":
-          return "Profile";
-        case "reports":
-          return "Reports";
-        case "booking":
-          return "Booking";
-        case 'seller-orders':
-          return 'Seller Orders';
-        case "confirmation":
-          return "Confirmation";
-        case "withdrawal":
-          return "Withdrawal";
-        case "access":
-          return "Access";
-        case "images":
-          return "Images";
-        case "users":
-          return "Users";
-        case "inventory":
-          return "Inventory";
-        case 'add-product':
-          return 'Add Product';
-        case 'notifications':
-          return 'Notifications';
-        case 'warranty':
-          return 'Warranty';
-        default:
-          return "Dashboard";
-      }
-    };
-  
-    const getPageSubtitle = () => {
-      switch (activeItem) {
-        case "dashboard":
-          return `Welcome back, ${user.name || user.email}`;
-        case "profile":
-          return "Manage seller profile, documents, and security";
-        case "reports":
-          return "Sales analytics by brand, category, item, and payment type";
-        case "booking":
-          return "Manage dental appointments and bookings";
-        case 'seller-orders':
-          return 'Manage seller order statuses and actions';
-        case "confirmation":
-          return "Review and confirm patient appointments";
-        case "withdrawal":
-          return "Manage payment withdrawals and financial transactions";
-        case "access":
-          return "Control user access and system permissions";
-        case "images":
-          return "Manage dental images, x-rays, and patient photos";
-        case "users":
-          return "Manage patients, staff, and user accounts";
-        case "inventory":
-          return "Manage clinic stock levels and adjustments";
-        case 'add-product':
-          return 'Create a new product for the inventory';
-        case 'product-qc':
-          return 'Review and approve seller-submitted products before publishing';
-        case 'notifications':
-          return 'Your latest alerts and actions';
-        case 'warranty':
-          return 'Manage warranty claims and policies';
-        default:
-          return "";
-      }
-    };
-  
-    // Live Orders subscription for Orders tab
-    useEffect(() => {
-      if (!uid) return;
-      let unsub: (() => void) | undefined;
-      if (isAdmin) {
-        unsub = OrdersService.listenAll(setConfirmationOrders);
-      } else {
-        unsub = OrdersService.listenBySeller(uid, setConfirmationOrders);
-      }
-      return () => { try { unsub && unsub(); } catch {} };
-    }, [uid, isAdmin]);
+      // Seller add product tab
+      case "add-product":
+        if (!isAllowed("add-product")) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
+        return (
+          <AddProduct />
+        );
+      default:
+        return null;
+    }
+  };
+
+  const getPageTitle = () => {
+    switch (activeItem) {
+      case "dashboard": return "Dashboard";
+      case "booking": return "Booking";
+      case "confirmation": return "Confirmation";
+      case "withdrawal": return "Withdrawal";
+      case "access": return "Access";
+      // NEW: Sub-accounts title
+      case "sub-accounts": return "Sub Account";
+      case "images": return "Images";
+      case "users": return "Users";
+      default: return "Dashboard";
+    }
+  };
+
+  const getPageSubtitle = () => {
+    switch (activeItem) {
+      case "dashboard":
+        return `Welcome back, ${user.name || user.email}`;
+      case "profile":
+        return "Manage seller profile, documents, and security";
+      case "reports":
+        return "Sales analytics by brand, category, item, and payment type";
+      case "booking":
+        return "Manage dental appointments and bookings";
+      case 'seller-orders':
+        return 'Manage seller order statuses and actions';
+      case "confirmation":
+        return "Review and confirm patient appointments";
+      case "withdrawal":
+        return "Manage payment withdrawals and financial transactions";
+      case "access":
+        return "Control user access and system permissions";
+      // NEW: Sub-accounts subtitle
+      case "sub-accounts":
+        return "Create and manage seller sub-accounts";
+      case "images":
+        return "Manage dental images, x-rays, and patient photos";
+      case "users":
+        return "Manage patients, staff, and user accounts";
+      default:
+        return "";
+    }
+  };
+
+  // Live Orders subscription for Orders tab
+  useEffect(() => {
+    if (!uid) return;
+    let unsub: (() => void) | undefined;
+    if (isAdmin) {
+      unsub = OrdersService.listenAll(setConfirmationOrders);
+    } else {
+      unsub = OrdersService.listenBySeller(uid, setConfirmationOrders);
+    }
+    return () => { try { unsub && unsub(); } catch {} };
+  }, [uid, isAdmin]);
 
     return (
       <div className="min-h-screen bg-background flex">

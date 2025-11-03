@@ -22,4 +22,7 @@ export interface WebUserProfile {
   isActive: boolean;
   createdAt: number; // epoch millis
   lastLogin?: number; // epoch millis
+  // NEW: seller sub-account flags
+  isSubAccount?: boolean;
+  parentId?: string; // uid of owning seller (only if isSubAccount)
 }

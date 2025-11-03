@@ -101,6 +101,40 @@ export async function createWebUser(email: string, name: string, role: WebUserRo
   }
 }
 
+export async function createSellerSubAccount(parentSellerId: string, email: string, name: string, permissions: WebUserPermissions): Promise<WebUserProfile> {
+  try {
+    // Enforce non-delegation: mark as sub-account with parentId; role must be 'seller'
+    const tempPassword = `Temp${Math.random().toString(36).slice(-8)}#${Math.floor(Math.random() * 100)}`;
+    const cred = await createUserWithEmailAndPassword(auth, email, tempPassword);
+    const { user } = cred;
+
+    const profile: Omit<WebUserProfile, 'uid'> = {
+      email,
+      name,
+      role: 'seller',
+      permissions,
+      isActive: true,
+      createdAt: Date.now(),
+      isSubAccount: true,
+      parentId: parentSellerId,
+    } as any;
+
+    await setDoc(doc(db, SELLER_COLLECTION, user.uid), profile);
+    try { await setDoc(doc(db, WEB_USERS_COLLECTION, user.uid), profile); } catch {}
+
+    try {
+      await sendPasswordResetEmail(auth, email, { url: `${window.location.origin}/auth`, handleCodeInApp: true });
+    } catch (emailError) {
+      console.warn('Failed to send invite email:', emailError);
+    }
+
+    return { uid: user.uid, ...profile } as WebUserProfile;
+  } catch (error) {
+    console.error('Error creating sub-account:', error);
+    throw error;
+  }
+}
+
 export async function updateWebUserAccess(uid: string, role: WebUserRole, permissions: WebUserPermissions): Promise<boolean> {
   try {
     await safeUpdateBoth(uid, { role, permissions });
