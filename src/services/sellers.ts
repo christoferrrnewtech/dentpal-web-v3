@@ -1,4 +1,4 @@
-import { getFirestore, collection, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, query, where } from 'firebase/firestore';
+import { getFirestore, collection, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, query, where, serverTimestamp, orderBy } from 'firebase/firestore';
 import app, { storage } from '@/lib/firebase';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 
@@ -75,6 +75,42 @@ const SellersService = {
     const refDoc = doc(db, SELLER_COL, sellerId);
     // Merge vendor fields to avoid wiping unrelated data
     await setDoc(refDoc, { vendor: payload } as any, { merge: true });
+  },
+  // Create a sub-account invite under Seller/<sellerId>/members with masked permissions
+  async createSubAccountInvite(parentSellerId: string, name: string, email: string, permissions: Record<string, boolean>, createdBy?: string) {
+    const membersCol = collection(db, SELLER_COL, parentSellerId, 'members');
+    const memberRef = doc(membersCol);
+    const payload = {
+      inviteId: memberRef.id,
+      name,
+      email,
+      permissions,
+      status: 'pending',
+      isSubAccount: true,
+      parentId: parentSellerId,
+      invitedAt: serverTimestamp(),
+      createdAt: serverTimestamp(),
+      createdBy: createdBy || parentSellerId,
+    } as any;
+    await setDoc(memberRef, payload, { merge: true });
+    return { id: memberRef.id, ...payload };
+  },
+  // NEW: List sub-accounts (members) under a seller, newest first
+  async listSubAccounts(parentSellerId: string) {
+    const membersCol = collection(db, SELLER_COL, parentSellerId, 'members');
+    const q1 = query(membersCol, orderBy('createdAt', 'desc'));
+    const snap = await getDocs(q1);
+    return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  },
+  // NEW: Update a sub-account/member doc
+  async updateSubAccount(parentSellerId: string, memberId: string, data: Partial<{ name: string; email: string; permissions: Record<string, boolean>; status: string }>) {
+    const refDoc = doc(db, SELLER_COL, parentSellerId, 'members', memberId);
+    await updateDoc(refDoc, { ...data } as any);
+  },
+  // NEW: Delete a sub-account/member doc
+  async deleteSubAccount(parentSellerId: string, memberId: string) {
+    const refDoc = doc(db, SELLER_COL, parentSellerId, 'members', memberId);
+    await deleteDoc(refDoc);
   }
 };
 

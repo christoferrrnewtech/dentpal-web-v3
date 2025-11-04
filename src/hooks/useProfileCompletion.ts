@@ -9,7 +9,7 @@ export type ProfileIssue = {
 };
 
 export function useProfileCompletion() {
-  const { uid, isSeller } = useAuth();
+  const { uid, isSeller, isSubAccount, parentId } = useAuth();
   const [loading, setLoading] = useState(false);
   const [profile, setProfile] = useState<any | null>(null);
 
@@ -17,10 +17,11 @@ export function useProfileCompletion() {
     let mounted = true;
 
     const fetchProfile = async () => {
+      // Sub-accounts don't need vendor profile; skip fetch to avoid gating.
+      if (isSubAccount) { if (mounted) { setProfile({ source: 'sub-account' }); } return; }
       if (!uid) { if (mounted) setProfile(null); return; }
       setLoading(true);
       try {
-        // Prefer Seller doc (new), fallback to legacy web_users
         const sellerSnap = await getDoc(doc(db, 'Seller', uid));
         if (sellerSnap.exists()) {
           if (mounted) setProfile({ ...sellerSnap.data(), source: 'Seller' });
@@ -43,9 +44,14 @@ export function useProfileCompletion() {
     window.addEventListener('dentpal:refresh-profile', onRefresh);
 
     return () => { mounted = false; window.removeEventListener('dentpal:refresh-profile', onRefresh); };
-  }, [uid]);
+  }, [uid, isSubAccount, parentId]);
 
   const { percent, isComplete, issues, vendorProfileComplete } = useMemo(() => {
+    // Sub-accounts are considered complete; they don't manage vendor enrollment
+    if (isSubAccount) {
+      return { percent: 100, isComplete: true, vendorProfileComplete: true, issues: [] as ProfileIssue[] };
+    }
+
     if (!profile) {
       return { percent: 0, isComplete: false, vendorProfileComplete: false, issues: [{ id: 'profile', label: 'Set up your profile' }] as ProfileIssue[] };
     }
@@ -77,7 +83,7 @@ export function useProfileCompletion() {
 
     const percent = Math.min(100, Math.round(score));
     return { percent, isComplete: percent >= 100, vendorProfileComplete, issues };
-  }, [profile, isSeller]);
+  }, [profile, isSeller, isSubAccount]);
 
   return {
     loading,

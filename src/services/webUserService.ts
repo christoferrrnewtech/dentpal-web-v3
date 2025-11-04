@@ -103,7 +103,6 @@ export async function createWebUser(email: string, name: string, role: WebUserRo
 
 export async function createSellerSubAccount(parentSellerId: string, email: string, name: string, permissions: WebUserPermissions): Promise<WebUserProfile> {
   try {
-    // Enforce non-delegation: mark as sub-account with parentId; role must be 'seller'
     const tempPassword = `Temp${Math.random().toString(36).slice(-8)}#${Math.floor(Math.random() * 100)}`;
     const cred = await createUserWithEmailAndPassword(auth, email, tempPassword);
     const { user } = cred;
@@ -121,6 +120,18 @@ export async function createSellerSubAccount(parentSellerId: string, email: stri
 
     await setDoc(doc(db, SELLER_COLLECTION, user.uid), profile);
     try { await setDoc(doc(db, WEB_USERS_COLLECTION, user.uid), profile); } catch {}
+
+    // Link to members collection (if an invite exists), set uid and activate
+    try {
+      const membersCol = collection(db, SELLER_COLLECTION, parentSellerId, 'members');
+      // Prefer exact match by email
+      const q1 = query(membersCol, where('email', '==', email));
+      const snap = await getDocs(q1);
+      const target = !snap.empty ? snap.docs[0] : null;
+      if (target) {
+        await updateDoc(target.ref, { uid: user.uid, status: 'active', acceptedAt: serverTimestamp() });
+      }
+    } catch {}
 
     try {
       await sendPasswordResetEmail(auth, email, { url: `${window.location.origin}/auth`, handleCodeInApp: true });
