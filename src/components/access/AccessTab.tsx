@@ -18,7 +18,9 @@ import {
   Unlock,
   FileText,
   FileSpreadsheet,
-  File
+  File,
+  ChevronDown,
+  ChevronRight
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -69,6 +71,7 @@ function normalizeTimestamp(value: any): number | null {
 // Default permissions fallback by role
   const defaultPermissionsByRole = (role: 'admin' | 'seller') => ({
     dashboard: true,
+    profile: true,
     bookings: true,
     confirmation: role === 'admin',
     withdrawal: role === 'admin',
@@ -94,6 +97,7 @@ interface User {
   status: 'active' | 'inactive' | 'pending';
   permissions: {
     dashboard: boolean;
+    profile: boolean;
     bookings: boolean;
     confirmation: boolean;
     withdrawal: boolean;
@@ -127,6 +131,7 @@ const AccessTab = ({ loading = false, error, setError, onTabChange, onEditUser }
       status: "active",
       permissions: {
         dashboard: true,
+        profile: true,
         bookings: true,
         confirmation: true,
         withdrawal: true,
@@ -148,6 +153,7 @@ const AccessTab = ({ loading = false, error, setError, onTabChange, onEditUser }
       status: "active",
       permissions: {
         dashboard: true,
+        profile: true,
         bookings: true,
         confirmation: false,
         withdrawal: false,
@@ -169,6 +175,7 @@ const AccessTab = ({ loading = false, error, setError, onTabChange, onEditUser }
       status: "pending",
       permissions: {
         dashboard: true,
+        profile: true,
         bookings: true,
         confirmation: false,
         withdrawal: false,
@@ -263,6 +270,7 @@ const AccessTab = ({ loading = false, error, setError, onTabChange, onEditUser }
   const roleBundles: Record<'finance' | 'ops' | 'custom', User['permissions']> = {
     finance: {
       dashboard: true,
+      profile: true,
       bookings: false,
       confirmation: false,
       withdrawal: true,
@@ -275,6 +283,7 @@ const AccessTab = ({ loading = false, error, setError, onTabChange, onEditUser }
     },
     ops: {
       dashboard: true,
+      profile: true,
       bookings: false,
       confirmation: false,
       withdrawal: false,
@@ -287,6 +296,7 @@ const AccessTab = ({ loading = false, error, setError, onTabChange, onEditUser }
     },
     custom: {
       dashboard: true,
+      profile: true,
       bookings: false,
       confirmation: false,
       withdrawal: false,
@@ -315,34 +325,104 @@ const AccessTab = ({ loading = false, error, setError, onTabChange, onEditUser }
   const [subBundle, setSubBundle] = useState<'finance' | 'ops' | 'custom'>('ops');
   const [subPerms, setSubPerms] = useState<User['permissions']>(maskPerms(roleBundles[subBundle], sellerPerms));
   useEffect(() => { setSubPerms(maskPerms(roleBundles[subBundle], sellerPerms)); }, [subBundle, sellerPermsRaw]);
+  const [subLoading, setSubLoading] = useState(false);
 
+  // Allow seller (not admin/sub) to create sub-accounts
   const canCreateSub = isSeller && !isAdmin && !isSubAccount;
 
+  // Create sub-account invite and optionally auth user
   const handleCreateSub = async () => {
     if (!canCreateSub) return;
-    if (!subName || !subEmail) return setError?.('Name and email are required');
+    if (!subName || !subEmail) { setError?.('Name and email are required'); return; }
     try {
+      setSubLoading(true);
       const finalPerms = maskPerms(subPerms, sellerPerms);
-      const created = await createSellerSubAccount(uid!, subEmail, subName, finalPerms as any);
-      // Optional: append to local list if present
-      setUsers?.((prev: any) => (Array.isArray(prev) ? [...prev, {
-        id: created.uid,
-        username: created.name,
-        email: created.email,
-        role: 'seller',
-        status: 'active',
-        permissions: created.permissions as any,
-        createdAt: new Date().toISOString(),
-      }] : prev));
+      // Save invite in Seller/<uid>/members
+      await SellersService.createSubAccountInvite(uid!, subName, subEmail, finalPerms as any, uid!);
+      // Try to create Auth user and link invite
+      try {
+        const created = await createSellerSubAccount(uid!, subEmail, subName, finalPerms as any);
+        setUsers((prev: any) => (Array.isArray(prev) ? [...prev, {
+          id: created.uid,
+          username: created.name,
+          email: created.email,
+          role: 'seller',
+          status: 'active',
+          permissions: created.permissions as any,
+          createdAt: new Date().toISOString(),
+        }] : prev));
+      } catch (authErr) {
+        console.warn('Auth creation failed; invite record saved only:', authErr);
+      }
       setSubOpen(false);
       setSubName(''); setSubEmail(''); setSubBundle('ops');
-      toast({ title: 'Invite sent', description: `Sub-account invite sent to ${created.email}` });
+      toast({ title: 'Invite sent', description: `Sub-account invite saved for ${subEmail}` });
     } catch (e: any) {
       setError?.(e.message || 'Failed to create sub-account');
+    } finally { setSubLoading(false); }
+  };
+
+  // NEW: sub-accounts list UI state
+  const [manageOpen, setManageOpen] = useState(false);
+  const [members, setMembers] = useState<any[]>([]);
+  const [membersLoading, setMembersLoading] = useState(false);
+  const [editing, setEditing] = useState<any | null>(null);
+
+  // Admin (grouped seller/sub-accounts) hooks declared before any early return to keep hooks order stable
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  type SellerWithSubs = User & { subAccounts?: Array<{ id: string; name?: string; email: string; permissions?: any; status?: string }> };
+  const [sellerWithSubs, setSellerWithSubs] = useState<Record<string, SellerWithSubs>>({});
+
+  const fetchSellerSubs = async (sellerUser: User): Promise<SellerWithSubs> => {
+    try {
+      const subs = await SellersService.listSubAccounts(sellerUser.id).catch(() => []);
+      return { ...(sellerUser as SellerWithSubs), subAccounts: subs as any[] };
+    } catch {
+      return { ...(sellerUser as SellerWithSubs), subAccounts: [] };
     }
   };
 
-  // --- End Seller Sub-accounts declarations ---
+  const toggleExpand = async (seller: User) => {
+    setExpanded(prev => ({ ...prev, [seller.id]: !prev[seller.id] }));
+    if (!sellerWithSubs[seller.id]) {
+      const data = await fetchSellerSubs(seller);
+      setSellerWithSubs(prev => ({ ...prev, [seller.id]: data }));
+    }
+  };
+
+  const loadMembers = async () => {
+    if (!uid) return;
+    try {
+      setMembersLoading(true);
+      const items = await SellersService.listSubAccounts(uid);
+      setMembers(items as any[]);
+    } catch (e) {
+      console.error('Failed to load sub-accounts', e);
+    } finally { setMembersLoading(false); }
+  };
+
+  const handleUpdateMember = async () => {
+    if (!uid || !editing) return;
+    try {
+      await SellersService.updateSubAccount(uid, editing.id, { name: editing.name, permissions: maskPerms(editing.permissions || {}, sellerPerms) });
+      toast({ title: 'Updated', description: 'Sub-account updated successfully.' });
+      await loadMembers();
+      setEditing(null);
+    } catch (e: any) {
+      toast({ title: 'Update failed', description: e.message || 'Please try again', variant: 'destructive' });
+    }
+  };
+
+  const handleDeleteMember = async (m: any) => {
+    if (!uid) return;
+    try {
+      await SellersService.deleteSubAccount(uid, m.id);
+      toast({ title: 'Deleted', description: `${m.email} removed.` });
+      await loadMembers();
+    } catch (e: any) {
+      toast({ title: 'Delete failed', description: e.message || 'Please try again', variant: 'destructive' });
+    }
+  };
 
   // Load users from Firestore on mount
   useEffect(() => {
@@ -398,6 +478,7 @@ const AccessTab = ({ loading = false, error, setError, onTabChange, onEditUser }
         (newUser.role as 'admin' | 'seller') || 'seller',
         (newUser.permissions as any) || {
           dashboard: true,
+          profile: true,
           bookings: true,
           confirmation: false,
           withdrawal: false,
@@ -405,7 +486,8 @@ const AccessTab = ({ loading = false, error, setError, onTabChange, onEditUser }
           images: false,
           users: false,
           inventory: false,
-          'seller-orders': true
+          'seller-orders': true,
+          'add-product': true
         }
       );
 
@@ -548,7 +630,7 @@ const AccessTab = ({ loading = false, error, setError, onTabChange, onEditUser }
 
   const handleDeleteUser = (userId: string) => {
     if (window.confirm("Are you sure you want to delete this user? This action cannot be undone.")) {
-      setUsers(prev => prev.filter(user => user.id !== userId));
+      setUsers(prev => prev.filter((user) => user.id !== userId));
     }
   };
 
@@ -1147,10 +1229,93 @@ const AccessTab = ({ loading = false, error, setError, onTabChange, onEditUser }
               <Users className="w-4 h-4" />
               <h3 className="text-sm font-semibold">Seller Sub-accounts</h3>
             </div>
-            <Button size="sm" onClick={() => setSubOpen(true)} className="bg-teal-600 hover:bg-teal-700 text-white"><UserPlus className="w-4 h-4 mr-1"/> New Sub-account</Button>
+            <div className="flex items-center gap-2">
+              <Button size="sm" variant="outline" onClick={() => { setManageOpen(true); loadMembers(); }}>
+                View Sub Account
+              </Button>
+              <Button size="sm" onClick={() => setSubOpen(true)} className="bg-teal-600 hover:bg-teal-700 text-white"><UserPlus className="w-4 h-4 mr-1"/> New Sub-account</Button>
+            </div>
           </div>
           <p className="text-xs text-gray-500">Only permissions you already have can be granted to sub-accounts.</p>
         </div>
+
+        {/* Manage Sub-accounts Dialog */}
+        <Dialog open={manageOpen} onOpenChange={setManageOpen}>
+          <DialogContent className="sm:max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>Sub-accounts</DialogTitle>
+              <DialogDescription>View, edit, or delete your team members.</DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4">
+              {membersLoading ? (
+                <div className="text-sm text-gray-500">Loading…</div>
+              ) : members.length === 0 ? (
+                <div className="text-sm text-gray-500">No sub-accounts yet.</div>
+              ) : (
+                <div className="divide-y rounded-md border">
+                  {members.map((m) => (
+                    <div key={m.id} className="flex items-center justify-between p-3 hover:bg-gray-50">
+                      <div>
+                        <div className="font-medium">{m.name || m.email}</div>
+                        <div className="text-xs text-gray-500">{m.email}</div>
+                        <div className="mt-1 flex flex-wrap gap-1">
+                          {Object.entries(m.permissions || {}).filter(([,v]) => v).map(([k]) => (
+                            <span key={k} className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">{String(k).replace('seller-orders','orders')}</span>
+                          ))}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Button variant="ghost" size="sm" onClick={() => setEditing({ ...m })}>View</Button>
+                        <Button variant="ghost" size="sm" onClick={() => setEditing({ ...m })}><Edit3 className="w-4 h-4 mr-1"/> Edit</Button>
+                        <Button variant="ghost" size="sm" className="text-red-600 hover:text-red-800" onClick={() => handleDeleteMember(m)}><Trash2 className="w-4 h-4 mr-1"/> Delete</Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setManageOpen(false)}>Close</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Edit/View Sub-account Dialog */}
+        <Dialog open={!!editing} onOpenChange={(o)=> !o && setEditing(null)}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>{editing?.name || 'Sub-account'}</DialogTitle>
+              <DialogDescription>{editing?.email}</DialogDescription>
+            </DialogHeader>
+            {editing && (
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-xs mb-1">Name</label>
+                  <Input value={editing.name || ''} onChange={(e)=> setEditing({ ...editing, name: e.target.value })} />
+                </div>
+                <div>
+                  <label className="block text-xs mb-1">Permissions</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {Object.keys(sellerPerms).filter(k => sellerPerms[k as keyof typeof sellerPerms]).map((k) => (
+                      <label key={k} className="flex items-center gap-2 text-xs">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(editing.permissions?.[k])}
+                          onChange={(e)=> setEditing({ ...editing, permissions: { ...(editing.permissions || {}), [k]: e.target.checked } })}
+                        />
+                        <span className="capitalize">{String(k).replace('seller-orders','orders').replace('-', ' ')}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+            <DialogFooter>
+              <Button variant="outline" onClick={()=> setEditing(null)}>Close</Button>
+              <Button onClick={handleUpdateMember} className="bg-teal-600 hover:bg-teal-700 text-white">Save changes</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         <Dialog open={subOpen} onOpenChange={setSubOpen}>
           <DialogContent className="sm:max-w-lg">
@@ -1175,23 +1340,22 @@ const AccessTab = ({ loading = false, error, setError, onTabChange, onEditUser }
                   <option value="custom">Custom</option>
                 </select>
               </div>
+
+              {/* Permissions grid (for custom tweak) */}
               <div className="grid grid-cols-2 gap-2">
-                {allowedKeys.map((k) => (
-                  <label key={String(k)} className="flex items-center gap-2 text-xs">
-                    <input
-                      type="checkbox"
-                      checked={(subPerms as any)[k]}
-                      onChange={(e)=> setSubPerms(p=>({ ...(p as any), [k]: e.target.checked }))}
-                      disabled={subBundle!=='custom'}
-                    />
-                    <span className="capitalize">{String(k).replace('seller-orders','orders').replace('-', ' ')}</span>
+                {Object.keys(subPerms).map((k) => (
+                  <label key={k} className="flex items-center gap-2 text-xs">
+                    <input type="checkbox" checked={(subPerms as any)[k]} onChange={(e)=> setSubPerms(p=>({ ...(p as any), [k]: e.target.checked }))} disabled={subBundle!=='custom'} />
+                    <span className="capitalize">{k.replace('seller-orders','orders').replace('-', ' ')}</span>
                   </label>
                 ))}
               </div>
             </div>
             <DialogFooter>
               <Button variant="outline" onClick={()=> setSubOpen(false)}>Cancel</Button>
-              <Button onClick={handleCreateSub} className="bg-teal-600 hover:bg-teal-700 text-white">Create & Send Invite</Button>
+              <Button onClick={handleCreateSub} disabled={subLoading} className="bg-teal-600 hover:bg-teal-700 text-white">
+                {subLoading ? 'Sending…' : 'Create & Send Invite'}
+              </Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
@@ -1203,6 +1367,123 @@ const AccessTab = ({ loading = false, error, setError, onTabChange, onEditUser }
       </div>
     );
   }
+
+  // Build a parent->children map for sellers and their sub-accounts (admin view)
+  const renderSellerListGrouped = (userList: User[]) => (
+    <div className="bg-white rounded-2xl border border-gray-200 shadow-sm">
+      <div className="p-6 border-b border-gray-200">
+        <div className="flex items-center justify-between">
+          <h3 className="text-xl font-semibold text-gray-900">Seller Users</h3>
+          <Badge variant="secondary" className="bg-green-50 text-green-700">{userList.length} sellers</Badge>
+        </div>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full">
+          <thead className="bg-gray-50">
+            <tr>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Seller</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Access</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+            </tr>
+          </thead>
+          <tbody className="bg-white divide-y divide-gray-200">
+            {userList.map((seller) => {
+              const isOpen = !!expanded[seller.id];
+              const withSubs = sellerWithSubs[seller.id];
+              return (
+                <>
+                  <tr key={seller.id} className="hover:bg-gray-50">
+                    <td className="px-6 py-3">
+                      <button onClick={() => toggleExpand(seller)} className="mr-2 text-gray-600 hover:text-gray-900">
+                        {isOpen ? <ChevronDown className="w-4 h-4 inline"/> : <ChevronRight className="w-4 h-4 inline"/>}
+                      </button>
+                      <span className="font-medium">{seller.username}</span>
+                      <span className="ml-2 text-xs text-gray-500">{seller.email}</span>
+                    </td>
+                    <td className="px-6 py-3">
+                      <div className="flex flex-wrap gap-1">
+                        {Object.entries(seller.permissions || {}).filter(([,v]) => v).map(([k]) => (
+                          <Badge key={k} variant="secondary" className="text-xs bg-green-100 text-green-800">{k}</Badge>
+                        ))}
+                      </div>
+                    </td>
+                    <td className="px-6 py-3">
+                      <Badge className={`${getStatusColor(seller.status)} text-xs border`}>
+                        <span className="flex items-center space-x-1">{getStatusIcon(seller.status)}<span>{seller.status}</span></span>
+                      </Badge>
+                    </td>
+                    <td className="px-6 py-3">
+                      <div className="flex items-center gap-1">
+                        <Button variant="ghost" size="sm" onClick={() => handleEditUser(seller)} className="text-blue-600 hover:text-blue-800"><Edit3 className="w-4 h-4"/></Button>
+                        <Button variant="ghost" size="sm" onClick={() => handleToggleActive(seller)} className={seller.status==='active'? 'text-amber-600 hover:text-amber-800':'text-green-600 hover:text-green-800'}>{seller.status==='active'? <Lock className="w-4 h-4"/>:<Unlock className="w-4 h-4"/>}</Button>
+                        <Button variant="ghost" size="sm" onClick={() => handleResendInvite(seller)} className="text-gray-600 hover:text-gray-800"><Key className="w-4 h-4"/></Button>
+                        <Button variant="ghost" size="sm" onClick={() => handleDeleteUser(seller.id)} className="text-red-600 hover:text-red-800"><Trash2 className="w-4 h-4"/></Button>
+                      </div>
+                    </td>
+                  </tr>
+                  {isOpen && (
+                    !withSubs ? (
+                      <tr className="bg-gray-50/50">
+                        <td colSpan={4} className="px-12 py-3 text-sm text-gray-500">Loading sub-accounts…</td>
+                      </tr>
+                    ) : (withSubs.subAccounts && withSubs.subAccounts.length > 0 ? (
+                      <>
+                        {withSubs.subAccounts.map((m) => {
+                          const mStatus = (m as any).status || 'pending';
+                          return (
+                            <tr key={`sub-${seller.id}-${m.id}`} className="hover:bg-gray-50">
+                              <td className="px-6 py-3">
+                                <div className="flex items-center">
+                                  <span className="inline-block w-4 mr-2" aria-hidden></span>
+                                  <Users className="w-4 h-4 text-gray-400 mr-2" />
+                                  <div>
+                                    <div className="font-medium">
+                                      {m.name || m.email}
+                                      <Badge className="ml-2 text-[10px] bg-gray-100 text-gray-700 border">Sub account</Badge>
+                                    </div>
+                                    <div className="text-xs text-gray-500">{m.email}</div>
+                                  </div>
+                                </div>
+                              </td>
+                              <td className="px-6 py-3">
+                                <div className="flex flex-wrap gap-1">
+                                  {Object.entries((m as any).permissions || {}).filter(([,v]) => v).map(([k]) => (
+                                    <Badge key={k} variant="secondary" className="text-xs bg-green-100 text-green-800">{String(k)}</Badge>
+                                  ))}
+                                </div>
+                              </td>
+                              <td className="px-6 py-3">
+                                <Badge className={`${getStatusColor(mStatus)} text-xs border`}>
+                                  <span className="flex items-center space-x-1">{getStatusIcon(mStatus)}<span>{mStatus}</span></span>
+                                </Badge>
+                              </td>
+                              <td className="px-6 py-3">
+                                <div className="flex items-center gap-1">
+                                  <Button variant="ghost" size="sm" onClick={() => setEditing({ ...m })} className="text-gray-700 hover:text-gray-900">View</Button>
+                                  <Button variant="ghost" size="sm" onClick={() => setEditing({ ...m })} className="text-blue-600 hover:text-blue-800"><Edit3 className="w-4 h-4"/></Button>
+                                  <Button variant="ghost" size="sm" onClick={async () => { try { await resendUserInvite((m as any).email); toast({ title: 'Invite sent', description: `Password reset link sent to ${(m as any).email}` }); } catch (e: any) { toast({ title: 'Failed to send invite', description: e.message || 'Please try again.' }); } }} className="text-gray-600 hover:text-gray-800"><Key className="w-4 h-4"/></Button>
+                                  <Button variant="ghost" size="sm" className="text-red-600 hover:text-red-800" onClick={() => handleDeleteMember(m)}><Trash2 className="w-4 h-4"/></Button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </>
+                    ) : (
+                      <tr className="bg-gray-50/50">
+                        <td colSpan={4} className="px-12 py-3 text-sm text-gray-500">No sub-accounts.</td>
+                      </tr>
+                    ))
+                  )}
+                </>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
 
   return (
     <div className="space-y-6">
@@ -1354,7 +1635,7 @@ const AccessTab = ({ loading = false, error, setError, onTabChange, onEditUser }
       )}
 
       {activeSection === 'admin' && renderUserList(filteredUsers.filter(u => u.role === 'admin'), 'Admin Users')}
-      {activeSection === 'seller' && renderUserList(filteredUsers.filter(u => u.role === 'seller'), 'Seller Users')}
+      {activeSection === 'seller' && renderSellerListGrouped(filteredUsers.filter(u => u.role === 'seller'))}
 
       {/* Edit Access Dialog */}
       <Dialog open={isEditDialogOpen} onOpenChange={(open) => {
@@ -1535,7 +1816,12 @@ const AccessTab = ({ loading = false, error, setError, onTabChange, onEditUser }
               <Users className="w-4 h-4" />
               <h3 className="text-sm font-semibold">Seller Sub-accounts</h3>
             </div>
-            <Button size="sm" onClick={() => setSubOpen(true)} className="bg-teal-600 hover:bg-teal-700 text-white"><UserPlus className="w-4 h-4 mr-1"/> New Sub-account</Button>
+            <div className="flex items-center gap-2">
+              <Button size="sm" variant="outline" onClick={() => { setManageOpen(true); loadMembers(); }}>
+                View Sub Account
+              </Button>
+              <Button size="sm" onClick={() => setSubOpen(true)} className="bg-teal-600 hover:bg-teal-700 text-white"><UserPlus className="w-4 h-4 mr-1"/> New Sub-account</Button>
+            </div>
           </div>
           <p className="text-xs text-gray-500">Create sub-accounts for Finance or Operations (Orders & Inventory). Sub-accounts cannot create further sub-accounts.</p>
         </div>
@@ -1545,7 +1831,7 @@ const AccessTab = ({ loading = false, error, setError, onTabChange, onEditUser }
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>New Sub-account</DialogTitle>
-            <DialogDescription>Send an invite to a team member with limited access.</DialogDescription>
+            <DialogDescription>Invite a team member with limited access.</DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
             <div>
@@ -1577,7 +1863,9 @@ const AccessTab = ({ loading = false, error, setError, onTabChange, onEditUser }
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={()=> setSubOpen(false)}>Cancel</Button>
-            <Button onClick={handleCreateSub} className="bg-teal-600 hover:bg-teal-700 text-white">Create & Send Invite</Button>
+            <Button onClick={handleCreateSub} disabled={subLoading} className="bg-teal-600 hover:bg-teal-700 text-white">
+              {subLoading ? 'Sending…' : 'Create & Send Invite'}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

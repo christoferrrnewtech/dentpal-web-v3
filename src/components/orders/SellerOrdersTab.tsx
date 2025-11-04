@@ -1,6 +1,6 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import { Order } from '@/types/order';
-import { Search, RefreshCcw } from 'lucide-react';
+import { Search, RefreshCcw, ShoppingCart } from 'lucide-react';
 import { SUB_TABS, mapOrderToStage, LifecycleStage, TO_SHIP_SUB_TABS, ToShipStage } from './config';
 import AllOrdersView from './views/AllOrdersView';
 import UnpaidOrdersView from './views/UnpaidOrdersView';
@@ -104,6 +104,14 @@ export const OrderTab: React.FC<OrderTabProps> = ({
 
   const filtered = useMemo(() => {
     return dateFilteredOrders.filter(o => {
+      // text query filter
+      const q = (query || '').trim().toLowerCase();
+      if (q) {
+        const hay = [o.id, o.barcode, o.itemsBrief, o.customer?.name]
+          .filter(Boolean)
+          .map(v => String(v).toLowerCase());
+        if (!hay.some(h => h.includes(q))) return false;
+      }
       // stage filter
       if (activeSubTab !== 'all' && !SUB_TABS.find(t => t.id === activeSubTab)?.predicate(o)) return false;
       // to-ship sub-stage filter
@@ -113,7 +121,7 @@ export const OrderTab: React.FC<OrderTabProps> = ({
       }
       return true;
     });
-  }, [dateFilteredOrders, activeSubTab, toShipSubTab]);
+  }, [dateFilteredOrders, activeSubTab, toShipSubTab, query]);
 
   // Compute pagination
   const total = filtered.length;
@@ -226,6 +234,40 @@ export const OrderTab: React.FC<OrderTabProps> = ({
 
   return (
     <div className="space-y-6">
+      {/* Header */}
+      <div className="bg-gradient-to-r from-teal-600 to-emerald-600 rounded-2xl p-6 text-white shadow-lg">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-xl font-semibold">Orders</h1>
+            <p className="text-teal-100 text-sm">Track, process, and manage your orders across stages</p>
+          </div>
+          <div className="bg-white/20 rounded-xl p-3">
+            <ShoppingCart className="w-6 h-6" />
+          </div>
+        </div>
+      </div>
+
+      {/* Toolbar */}
+      <div className="bg-white border border-gray-200 rounded-xl p-4 shadow-sm flex flex-wrap items-center gap-3">
+        <div className="relative flex-1 min-w-[220px]">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4" />
+          <input
+            type="text"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search by order ID, buyer, tracking no., or items"
+            className="w-full pl-9 pr-3 py-2 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+          />
+        </div>
+        <button
+          type="button"
+          onClick={() => onRefresh?.()}
+          className="inline-flex items-center gap-2 px-3 py-2 text-sm rounded-lg border border-gray-200 hover:bg-gray-50"
+        >
+          <RefreshCcw className="w-4 h-4" /> Refresh
+        </button>
+      </div>
+      
       {/* Sub Tabs */}
       <div className="bg-white border border-gray-200 rounded-xl p-4 shadow-sm">
         <div className="flex flex-wrap gap-3">
@@ -305,11 +347,30 @@ export const OrderTab: React.FC<OrderTabProps> = ({
       )}
 
       {/* Orders View */}
-      {activeSubTab === 'to-ship' ? (
-        <ToShipOrdersView orders={pagedOrders} onSelectOrder={handleSelectOrder} onMoveToArrangement={handleMoveToArrangement} onMoveToHandOver={handleMoveToHandOver} onConfirmHandover={handleConfirmHandover} />
-      ) : (
-        <ActiveView orders={pagedOrders} onSelectOrder={handleSelectOrder} />
-      )}
+      {activeSubTab === 'to-ship'
+        ? (
+          <ToShipOrdersView
+            orders={pagedOrders}
+            onSelectOrder={handleSelectOrder}
+            onMoveToArrangement={handleMoveToArrangement}
+            onMoveToHandOver={handleMoveToHandOver}
+            onConfirmHandover={handleConfirmHandover}
+          />
+        )
+        : (!loading && pagedOrders.length === 0
+          ? (
+            <div className="bg-white rounded-xl border border-gray-200 p-12 text-center">
+              <div className="w-16 h-16 mx-auto mb-4 bg-gray-100 rounded-full flex items-center justify-center">
+                <ShoppingCart className="w-8 h-8 text-gray-400" />
+              </div>
+              <p className="text-lg font-medium text-gray-900 mb-2">No orders found</p>
+              <p className="text-gray-500">Try adjusting filters or date range to see orders here</p>
+            </div>
+          )
+          : (
+            <ActiveView orders={pagedOrders} onSelectOrder={handleSelectOrder} />
+          )
+        )}
 
       {/* Pagination */}
       <div className="flex items-center justify-end gap-3 pt-2">

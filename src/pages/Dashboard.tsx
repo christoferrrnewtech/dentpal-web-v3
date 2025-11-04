@@ -713,6 +713,16 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
             </div>
           </div>
         );
+      case 'seller-orders':
+        if (!isAllowed('seller-orders')) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
+        return (
+          <OrderTab
+            orders={confirmationOrders}
+            loading={loading}
+            error={error}
+            onRefresh={() => {/* listener keeps it live; left for future manual refresh */}}
+          />
+        );
       case "profile":
         if (!isAllowed("profile")) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
         return <SellerProfileTab />;
@@ -808,6 +818,7 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
       case "confirmation": return "Confirmation";
       case "withdrawal": return "Withdrawal";
       case "access": return "Access";
+      case 'seller-orders': return 'Orders';
       // NEW: Sub-accounts title
       case "sub-accounts": return "Sub Account";
       case "images": return "Images";

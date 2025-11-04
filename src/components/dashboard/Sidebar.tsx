@@ -48,7 +48,7 @@ const menuItems = [
 
 const Sidebar = ({ activeItem, onItemClick, onLogout }: SidebarProps) => {
   const [isCollapsed, setIsCollapsed] = useState(false);
-  const { hasPermission, loading, isAdmin, isSeller, role } = useAuth();
+  const { hasPermission, loading, isAdmin, isSeller, isSubAccount, role } = useAuth();
   const { vendorProfileComplete } = useProfileCompletion();
 
   const panelLabel = isAdmin
@@ -61,38 +61,56 @@ const Sidebar = ({ activeItem, onItemClick, onLogout }: SidebarProps) => {
 
   const permissionByMenuId: Record<string, string> = {
     dashboard: "dashboard",
-    profile: "dashboard",
-    reports: "dashboard",
+    profile: "profile",
+    reports: "reports",
     booking: "bookings",
     'seller-orders': 'seller-orders',
     inventory: 'inventory',
     'add-product': 'add-product',
-    'product-qc': 'dashboard',
-    warranty: 'dashboard',
+    'product-qc': 'product-qc',
+    warranty: 'warranty',
     confirmation: "confirmation",
     withdrawal: "withdrawal",
     'sub-accounts': 'dashboard',
     access: "access",
     images: "images",
     users: "users",
+    notifications: 'notifications',
   };
 
   // Compute visible menu items with role-based ordering for sellers
   const visibleMenuItems = loading
     ? []
     : (() => {
-        const permitted = menuItems.filter((item) => {
+        // Start from permitted list
+        let permitted = menuItems.filter((item) => {
           if (item.id === 'product-qc' && !isAdmin) return false;
           if (item.id === 'warranty' && !isAdmin) return false;
-          const key = permissionByMenuId[item.id] || 'dashboard';
-          return hasPermission(key as any);
+          const key = permissionByMenuId[item.id];
+
+          // For sub-accounts: only show items that have an explicit permission flag and it's true
+          if (isSubAccount) {
+            if (!key) return false; // no explicit key => do not show
+            return hasPermission(key as any);
+          }
+
+          // Primary/admin: default to dashboard when specific key not mapped
+          return hasPermission((key || 'dashboard') as any);
         });
 
-        // If seller and vendor profile not complete, only show Profile
+        // Sub-accounts: never show Access or Sub Account regardless of permissions
+        if (isSubAccount) {
+          permitted = permitted.filter((i) => i.id !== 'access' && i.id !== 'sub-accounts');
+          // No vendor gating for sub-accounts
+          return permitted;
+        }
+
+        // If seller (primary) and vendor profile not complete, only show Profile
         if (isSeller && !isAdmin && !vendorProfileComplete) {
           return permitted.filter((i) => i.id === 'profile');
         }
 
+        // Primary sellers (not sub-accounts): custom seller ordering
         if (isSeller && !isAdmin) {
           const sellerOrder = ['dashboard', 'seller-orders', 'reports', 'inventory', 'add-product', 'sub-accounts', 'profile'];
           const map = new Map(permitted.map((i) => [i.id, i] as const));
