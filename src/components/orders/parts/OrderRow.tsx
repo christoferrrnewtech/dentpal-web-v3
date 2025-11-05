@@ -4,15 +4,14 @@ import { ChevronDown, ChevronUp, Printer, FileText, Download, Eye } from 'lucide
 
 interface OrderRowProps {
   order: Order;
-  onDetails?: () => void; // preferred
-  onClick?: () => void;   // backward-compat
-  isToShip?: boolean;     // new: to customize UI for to-ship orders
-  onMoveToArrangement?: (order: Order) => void; // new: callback to move order to arrangement
-  onMoveToHandOver?: (order: Order) => void; // new: move to to-hand-over
-  onConfirmHandover?: (order: Order) => void; // new: confirm handover -> shipping
+  onDetails?: () => void; 
+  onClick?: () => void;   
+  isToShip?: boolean;    
+  onMoveToArrangement?: (order: Order) => void; 
+  onMoveToHandOver?: (order: Order) => void; 
+  onConfirmHandover?: (order: Order) => void; 
 }
 
-// Build a high-quality printable invoice HTML with inline styles
 const buildInvoiceHTML = (order: Order) => {
   const currency = order.currency || 'PHP';
   const total = order.total != null ? order.total : '';
@@ -120,8 +119,7 @@ const printInvoice = (order: Order) => {
   w.document.open();
   w.document.write(html);
   w.document.close();
-  // Some browsers need a small delay before print
-  setTimeout(() => w.print(), 300);
+  setTimeout(() => w.print(), 200);
 };
 
 const exportCSV = (order: Order) => {
@@ -148,7 +146,6 @@ const exportCSV = (order: Order) => {
 };
 
 const exportPDF = (order: Order) => {
-  // Use the same high-quality invoice HTML and let the user Save as PDF
   printInvoice(order);
 };
 
@@ -156,7 +153,6 @@ const moveToArrangement = (order: Order, onMove?: (order: Order) => void) => {
   if (onMove) {
     onMove(order);
   } else {
-    // Fallback placeholder
     console.log(`Moving order ${order.id} to arrangement`);
     alert(`Order ${order.id} moved to Arrangement stage`);
   }

@@ -1,6 +1,6 @@
 import React from 'react';
 import { InventoryItem } from './types';
-import { Pencil, Edit3, Trash2, RotateCcw } from 'lucide-react';
+import { Pencil, Edit3, Trash2, RotateCcw, Filter } from 'lucide-react';
 
 interface Props {
   items: InventoryItem[];
@@ -18,40 +18,176 @@ const CatalogTable: React.FC<Props> = ({ items, onToggleActive, onEdit, onEditPr
   const isViolationView = tabKey === 'violation';
   const isPendingView = tabKey === 'pending_qc';
 
+  // Filters per column
+  const [filters, setFilters] = React.useState({
+    product: '',
+    priceMin: '',
+    priceMax: '',
+    stockMin: '',
+    stockMax: '',
+    active: 'all' as 'all' | 'active' | 'inactive' | 'deleted' | 'pending_qc' | 'violation' | 'draft',
+  });
+  const [openFilter, setOpenFilter] = React.useState<{[k: string]: boolean}>({});
+
+  const toggleFilter = (key: string) => setOpenFilter((p) => ({ ...p, [key]: !p[key] }));
+  const closeAllFilters = () => setOpenFilter({});
+
+  // Derived: filtered list
+  const filteredItems = React.useMemo(() => {
+    const nameQ = filters.product.trim().toLowerCase();
+    const priceMin = filters.priceMin ? Number(filters.priceMin) : null;
+    const priceMax = filters.priceMax ? Number(filters.priceMax) : null;
+    const stockMin = filters.stockMin ? Number(filters.stockMin) : null;
+    const stockMax = filters.stockMax ? Number(filters.stockMax) : null;
+
+    return items.filter((i) => {
+      // Product name filter
+      if (nameQ && !String(i.name || '').toLowerCase().includes(nameQ)) return false;
+      // Price range (when column present)
+      const price = i.specialPrice != null && Number(i.specialPrice) > 0 ? Number(i.specialPrice) : (i.price != null ? Number(i.price) : null);
+      if ((priceMin != null) && price != null && !(price >= priceMin)) return false;
+      if ((priceMax != null) && price != null && !(price <= priceMax)) return false;
+      // Stock range
+      const stock = i.inStock != null ? Number(i.inStock) : null;
+      if ((stockMin != null) && stock != null && !(stock >= stockMin)) return false;
+      if ((stockMax != null) && stock != null && !(stock <= stockMax)) return false;
+      // Active/status filter
+      const s = (i.status as any) || 'active';
+      if (filters.active !== 'all') {
+        if (filters.active === 'active' && s !== 'active') return false;
+        if (filters.active === 'inactive' && s !== 'inactive') return false;
+        if (filters.active === 'deleted' && s !== 'deleted') return false;
+        if (filters.active === 'pending_qc' && s !== 'pending_qc') return false;
+        if (filters.active === 'violation' && s !== 'violation') return false;
+        if (filters.active === 'draft' && s !== 'draft') return false;
+      }
+      return true;
+    });
+  }, [items, filters]);
+
   // Simple client-side pagination
   const [page, setPage] = React.useState(1);
   const pageSize = 10;
-  const totalPages = Math.max(1, Math.ceil(items.length / pageSize));
-  React.useEffect(() => { setPage(1); }, [items, tabKey]);
+  const totalPages = Math.max(1, Math.ceil(filteredItems.length / pageSize));
+  React.useEffect(() => { setPage(1); }, [filteredItems, tabKey]);
   const paged = React.useMemo(() => {
     const start = (page - 1) * pageSize;
-    return items.slice(start, start + pageSize);
-  }, [items, page]);
+    return filteredItems.slice(start, start + pageSize);
+  }, [filteredItems, page]);
+
+  // Helper components: Filter popovers
+  const HeaderWithFilter: React.FC<{ label: string; fkey: string; children: React.ReactNode; className?: string }> = ({ label, fkey, children, className }) => (
+    <th className={`px-4 py-2 relative ${className || ''}`}>
+      <div className="flex items-center gap-2 text-left text-[11px] font-semibold text-gray-600 tracking-wide">
+        <span>{label}</span>
+        <button type="button" onClick={() => toggleFilter(fkey)} className="p-1 -m-1 rounded hover:bg-gray-200/60" title={`Filter by ${label.toLowerCase()}`}>
+          <Filter className="w-3.5 h-3.5 text-gray-500" />
+        </button>
+      </div>
+      {openFilter[fkey] && (
+        <div className="absolute z-20 mt-2 right-2 top-full bg-white border border-gray-200 rounded-lg shadow p-3 w-64" onClick={(e)=> e.stopPropagation()}>
+          {children}
+          <div className="mt-3 flex justify-end gap-2">
+            <button className="px-2 py-1 text-xs border rounded" onClick={() => { setFilters((f) => ({ ...f, ...(fkey === 'product' ? { product: '' } : fkey === 'price' ? { priceMin: '', priceMax: '' } : fkey === 'stock' ? { stockMin: '', stockMax: '' } : fkey === 'active' ? { active: 'all' } : {}) })); closeAllFilters(); }}>Clear</button>
+            <button className="px-2 py-1 text-xs rounded bg-teal-600 text-white" onClick={() => closeAllFilters()}>Apply</button>
+          </div>
+        </div>
+      )}
+    </th>
+  );
 
   return (
     <div className="border border-gray-200 rounded-xl overflow-hidden bg-white">
       <table className="w-full text-sm">
         <thead className="bg-gray-50 border-b border-gray-200">
-          <tr className="text-left text-[11px] font-semibold text-gray-600 tracking-wide">
-            <th className="px-4 py-2">PRODUCT</th>
+          <tr className="text-left">
+            <HeaderWithFilter fkey="product" label="PRODUCT">
+              <div className="space-y-2">
+                <label className="block text-[11px] text-gray-600">Name</label>
+                <input
+                  className="w-full p-2 border border-gray-200 rounded text-xs"
+                  placeholder="Search name..."
+                  value={filters.product}
+                  onChange={(e) => setFilters((f) => ({ ...f, product: e.target.value }))}
+                />
+              </div>
+            </HeaderWithFilter>
             {isViolationView ? (
-              <>
-                <th className="px-4 py-2">REASON</th>
-                <th className="px-4 py-2">ACTIONS</th>
-              </>
+              <th className="px-4 py-2 text-left text-[11px] font-semibold text-gray-600 tracking-wide">REASON</th>
             ) : isPendingView ? (
               <>
-                <th className="px-4 py-2 hidden sm:table-cell">TIMESTAMP</th>
-                <th className="px-4 py-2 hidden sm:table-cell">PRICE</th>
-                <th className="px-4 py-2">STOCK</th>
-                <th className="px-4 py-2">ACTIONS</th>
+                <th className="px-4 py-2 hidden sm:table-cell text-left text-[11px] font-semibold text-gray-600 tracking-wide">TIMESTAMP</th>
+                <HeaderWithFilter fkey="price" label="PRICE" className="hidden sm:table-cell">
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-[11px] text-gray-600">Min</label>
+                      <input type="number" className="w-full p-2 border border-gray-200 rounded text-xs" value={filters.priceMin} onChange={(e)=> setFilters((f)=> ({...f, priceMin: e.target.value}))} />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] text-gray-600">Max</label>
+                      <input type="number" className="w-full p-2 border border-gray-200 rounded text-xs" value={filters.priceMax} onChange={(e)=> setFilters((f)=> ({...f, priceMax: e.target.value}))} />
+                    </div>
+                  </div>
+                </HeaderWithFilter>
+                <HeaderWithFilter fkey="stock" label="STOCK">
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-[11px] text-gray-600">Min</label>
+                      <input type="number" className="w-full p-2 border border-gray-200 rounded text-xs" value={filters.stockMin} onChange={(e)=> setFilters((f)=> ({...f, stockMin: e.target.value}))} />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] text-gray-600">Max</label>
+                      <input type="number" className="w-full p-2 border border-gray-200 rounded text-xs" value={filters.stockMax} onChange={(e)=> setFilters((f)=> ({...f, stockMax: e.target.value}))} />
+                    </div>
+                  </div>
+                </HeaderWithFilter>
+                <th className="px-4 py-2 text-left text-[11px] font-semibold text-gray-600 tracking-wide">ACTIONS</th>
               </>
             ) : (
               <>
-                <th className="px-4 py-2 hidden sm:table-cell">PRICE</th>
-                <th className="px-4 py-2">STOCK</th>
-                <th className="px-4 py-2 hidden md:table-cell">ACTIVE</th>
-                <th className="px-4 py-2">ACTIONS</th>
+                <HeaderWithFilter fkey="price" label="PRICE" className="hidden sm:table-cell">
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-[11px] text-gray-600">Min</label>
+                      <input type="number" className="w-full p-2 border border-gray-200 rounded text-xs" value={filters.priceMin} onChange={(e)=> setFilters((f)=> ({...f, priceMin: e.target.value}))} />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] text-gray-600">Max</label>
+                      <input type="number" className="w-full p-2 border border-gray-200 rounded text-xs" value={filters.priceMax} onChange={(e)=> setFilters((f)=> ({...f, priceMax: e.target.value}))} />
+                    </div>
+                  </div>
+                </HeaderWithFilter>
+                <HeaderWithFilter fkey="stock" label="STOCK">
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-[11px] text-gray-600">Min</label>
+                      <input type="number" className="w-full p-2 border border-gray-200 rounded text-xs" value={filters.stockMin} onChange={(e)=> setFilters((f)=> ({...f, stockMin: e.target.value}))} />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] text-gray-600">Max</label>
+                      <input type="number" className="w-full p-2 border border-gray-200 rounded text-xs" value={filters.stockMax} onChange={(e)=> setFilters((f)=> ({...f, stockMax: e.target.value}))} />
+                    </div>
+                  </div>
+                </HeaderWithFilter>
+                <HeaderWithFilter fkey="active" label="ACTIVE" className="hidden md:table-cell">
+                  <div className="space-y-2">
+                    <label className="block text-[11px] text-gray-600">Status</label>
+                    <select
+                      className="w-full p-2 border border-gray-200 rounded text-xs"
+                      value={filters.active}
+                      onChange={(e)=> setFilters((f)=> ({...f, active: e.target.value as any}))}
+                    >
+                      <option value="all">All</option>
+                      <option value="active">Active</option>
+                      <option value="inactive">Inactive</option>
+                      <option value="draft">Draft</option>
+                      <option value="pending_qc">Pending QC</option>
+                      <option value="violation">Violation</option>
+                      <option value="deleted">Deleted</option>
+                    </select>
+                  </div>
+                </HeaderWithFilter>
+                <th className="px-4 py-2 text-left text-[11px] font-semibold text-gray-600 tracking-wide">ACTIONS</th>
               </>
             )}
           </tr>

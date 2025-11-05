@@ -262,6 +262,9 @@ const AddProduct: React.FC = () => {
     handleCreateItem();
   };
 
+  const [showSubmittedDialog, setShowSubmittedDialog] = useState(false);
+  const [submittedProductName, setSubmittedProductName] = useState<string>('');
+
   const handleCreateItem = useCallback(async (createStatus?: ItemStatus) => {
     if (!effectiveSellerId) {
       toast({ title: 'Select a seller first', description: 'Choose a seller to create items under.' });
@@ -364,13 +367,20 @@ const AddProduct: React.FC = () => {
       if (newItem.imagePreview) URL.revokeObjectURL(newItem.imagePreview);
       variants.forEach(v => { if (v.imagePreview) URL.revokeObjectURL(v.imagePreview); });
 
+      const createdName = newItem.name?.trim() || '';
       resetNewItem();
       setVariants([]);
       setSelectedCategoryId('');
       setSelectedSubcategoryId('');
-      toast({ title: createStatus === 'draft' ? 'Draft saved' : 'Product created', description: `${newItem.name} ${createStatus === 'draft' ? 'has been saved as a draft.' : 'has been added to catalog.'}` });
-      // Go back to Inventory tab
-      navigate('/?tab=inventory');
+
+      if (createStatus === 'draft') {
+        toast({ title: 'Draft saved', description: `${createdName || 'Product'} has been saved as a draft.` });
+        navigate('/?tab=inventory');
+      } else {
+        // Show centered confirmation dialog instead of immediate navigation
+        setSubmittedProductName(createdName);
+        setShowSubmittedDialog(true);
+      }
     } catch (e) {
       console.error('Create item failed', e);
       toast({ title: 'Failed to create product', description: 'Please try again.' });
@@ -681,6 +691,37 @@ const AddProduct: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* Submitted dialog */}
+      {showSubmittedDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/40" onClick={() => setShowSubmittedDialog(false)} />
+          <div className="relative z-10 w-[92vw] max-w-md bg-white rounded-2xl shadow-xl border border-gray-200 p-6">
+            <div className="text-center">
+              <div className="mx-auto mb-3 h-12 w-12 rounded-full bg-green-100 flex items-center justify-center text-green-600">✓</div>
+              <h3 className="text-lg font-semibold text-gray-900">Product submitted</h3>
+              <p className="mt-1 text-sm text-gray-600">
+                {submittedProductName ? (<><span className="font-medium">{submittedProductName}</span> has been submitted.</>) : 'Your product has been submitted.'}
+                {' '}Please wait for the approval of the product.
+              </p>
+            </div>
+            <div className="mt-6 flex items-center justify-center gap-3">
+              <button
+                className="px-4 py-2 text-sm font-medium rounded-lg border border-gray-300 hover:bg-gray-50"
+                onClick={() => setShowSubmittedDialog(false)}
+              >
+                Add another
+              </button>
+              <button
+                className="px-4 py-2 text-sm font-medium rounded-lg bg-teal-600 text-white hover:bg-teal-700"
+                onClick={() => { setShowSubmittedDialog(false); navigate('/?tab=inventory'); }}
+              >
+                Go to Inventory
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

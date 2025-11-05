@@ -222,7 +222,7 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
   const permissionByMenuId: Record<string, keyof ReturnType<typeof useAuth>["permissions"] | 'dashboard'> = {
     dashboard: "dashboard",
     profile: "dashboard",
-    reports: "dashboard",
+    reports: "reports", // fixed: use reports permission
     booking: "bookings",
     confirmation: "confirmation",
     withdrawal: "withdrawal",
@@ -235,6 +235,8 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
     inventory: 'inventory',
     'add-product': 'add-product',
     notifications: 'dashboard',
+    // NEW: Admin QC tab permission mapping
+    'product-qc': 'product-qc',
   } as any;
 
   const isAllowed = (itemId: string) => hasPermission((permissionByMenuId[itemId] || 'dashboard') as any);
@@ -243,7 +245,21 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
   useEffect(() => {
     if (authLoading) return;
     if (!isAllowed(activeItem)) {
-      const order = ["dashboard", "profile", "reports", "booking", "seller-orders", "inventory", "confirmation", "withdrawal", "access", "images", "users"];
+      const order = [
+        "dashboard",
+        "profile",
+        "reports",
+        "booking",
+        "seller-orders",
+        "inventory",
+        // Include admin QC tab in fallback order
+        "product-qc",
+        "confirmation",
+        "withdrawal",
+        "access",
+        "images",
+        "users",
+      ];
       const firstAllowed = order.find((id) => isAllowed(id));
       if (firstAllowed) setActiveItem(firstAllowed);
     }
@@ -723,6 +739,10 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
             onRefresh={() => {/* listener keeps it live; left for future manual refresh */}}
           />
         );
+      // NEW: Admin Pending QC tab
+      case 'product-qc':
+        if (!isAllowed('product-qc')) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
+        return <ProductQCTab />;
       case "profile":
         if (!isAllowed("profile")) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
         return <SellerProfileTab />;
@@ -819,6 +839,9 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
       case "withdrawal": return "Withdrawal";
       case "access": return "Access";
       case 'seller-orders': return 'Orders';
+      case 'reports': return 'Reports'; // added proper title
+      // NEW: Admin QC title
+      case 'product-qc': return 'Pending QC';
       // NEW: Sub-accounts title
       case "sub-accounts": return "Sub Account";
       case "images": return "Images";
@@ -839,6 +862,9 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
         return "Manage dental appointments and bookings";
       case 'seller-orders':
         return 'Manage seller order statuses and actions';
+      // NEW: Admin QC subtitle
+      case 'product-qc':
+        return 'Review and approve products pending quality control';
       case "confirmation":
         return "Review and confirm patient appointments";
       case "withdrawal":
