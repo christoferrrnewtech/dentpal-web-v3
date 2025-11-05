@@ -11,6 +11,8 @@ export type WebUserPermissions = {
   inventory: boolean;
   'seller-orders': boolean;
   'add-product': boolean; // New: Allow access to Add Product/Manage Product
+  'product-qc': boolean; // New: Admin Pending QC tab
+  reports: boolean; // New: Reports visibility
 };
 
 export interface WebUserProfile {

@@ -1450,6 +1450,14 @@ const AccessTab = ({ loading = false, error, setError, onTabChange, onEditUser }
                                 <div className="flex flex-wrap gap-1">
                                   {Object.entries((m as any).permissions || {}).filter(([,v]) => v).map(([k]) => (
                                     <Badge key={k} variant="secondary" className="text-xs bg-green-100 text-green-800">{String(k)}</Badge>
+                                    <div className="text-xs text-gray-500">{m.email}</div>
+                                  </div>
+                                </div>
+                              </td>
+                              <td className="px-6 py-3">
+                                <div className="flex flex-wrap gap-1">
+                                  {Object.entries((m as any).permissions || {}).filter(([,v]) => v).map(([k]) => (
+                                    <Badge key={k} variant="secondary" className="text-xs bg-green-100 text-green-800">{String(k)}</Badge>
                                   ))}
                                 </div>
                               </td>
@@ -1570,14 +1578,6 @@ const AccessTab = ({ loading = false, error, setError, onTabChange, onEditUser }
                 className="pl-10"
               />
             </div>
-            <div className="flex items-center space-x-3">
-              <div className="relative">
-                <Filter className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
-                <select
-                  className="pl-10 pr-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                  value={filterStatus}
-                  onChange={(e) => setFilterStatus(e.target.value)}
-                >
                   <option value="all">All Status</option>
                   <option value="active">Active</option>
                   <option value="inactive">Inactive</option>

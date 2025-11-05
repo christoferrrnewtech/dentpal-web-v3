@@ -167,6 +167,9 @@ export const OrderTab: React.FC<OrderTabProps> = ({
   const handleConfirmHandover = async (order: Order) => {
     try {
       await OrdersService.updateOrderStatus(order.id, 'processing');
+      // After confirming handover, navigate to Shipping tab
+      setActiveSubTab('shipping');
+      setPage(1);
       onRefresh?.();
     } catch (error) {
       console.error('Failed to confirm handover:', error);
@@ -234,19 +237,6 @@ export const OrderTab: React.FC<OrderTabProps> = ({
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="bg-gradient-to-r from-teal-600 to-emerald-600 rounded-2xl p-6 text-white shadow-lg">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-xl font-semibold">Orders</h1>
-            <p className="text-teal-100 text-sm">Track, process, and manage your orders across stages</p>
-          </div>
-          <div className="bg-white/20 rounded-xl p-3">
-            <ShoppingCart className="w-6 h-6" />
-          </div>
-        </div>
-      </div>
-
       {/* Toolbar */}
       <div className="bg-white border border-gray-200 rounded-xl p-4 shadow-sm flex flex-wrap items-center gap-3">
         <div className="relative flex-1 min-w-[220px]">
@@ -268,7 +258,6 @@ export const OrderTab: React.FC<OrderTabProps> = ({
         </button>
       </div>
       
-      {/* Sub Tabs */}
       <div className="bg-white border border-gray-200 rounded-xl p-4 shadow-sm">
         <div className="flex flex-wrap gap-3">
           {SUB_TABS.map(tab => {
@@ -290,7 +279,6 @@ export const OrderTab: React.FC<OrderTabProps> = ({
         </div>
       </div>
 
-      {/* Filters: From / To date pickers */}
       <div className="bg-white border border-gray-200 rounded-xl p-4 shadow-sm flex flex-wrap items-end gap-3">
         <div className="flex flex-col">
           <label className="text-xs font-medium text-gray-600 mb-1">From date</label>
@@ -319,7 +307,6 @@ export const OrderTab: React.FC<OrderTabProps> = ({
         </button>
       </div>
 
-      {/* To-Ship Sub Tabs (only when To Ship is active) */}
       {activeSubTab === 'to-ship' && (
         <div className="bg-orange-50 border border-orange-200 rounded-xl p-3 shadow-sm mt-4">
           <div className="flex flex-wrap gap-2">
@@ -346,7 +333,6 @@ export const OrderTab: React.FC<OrderTabProps> = ({
         </div>
       )}
 
-      {/* Orders View */}
       {activeSubTab === 'to-ship'
         ? (
           <ToShipOrdersView
@@ -372,7 +358,6 @@ export const OrderTab: React.FC<OrderTabProps> = ({
           )
         )}
 
-      {/* Pagination */}
       <div className="flex items-center justify-end gap-3 pt-2">
         <div className="hidden sm:flex items-center gap-2 text-xs text-gray-600 mr-2">
           <span>Rows per page</span>
@@ -405,7 +390,6 @@ export const OrderTab: React.FC<OrderTabProps> = ({
         </div>
       </div>
 
-      {/* Details Dialog */}
       {detailsOpen && selectedOrder && (() => {
         const stg = mapOrderToStage(selectedOrder);
         const isTerminal = ['failed-delivery','cancellation','return-refund'].includes(stg);
@@ -436,7 +420,6 @@ export const OrderTab: React.FC<OrderTabProps> = ({
 
               {/* Body */}
               <div className="p-5">
-                {/* Meta: Date & Buyer */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-6">
                   <div className="space-y-3 md:col-span-1">
                     <div>
@@ -451,7 +434,6 @@ export const OrderTab: React.FC<OrderTabProps> = ({
                   </div>
                 </div>
 
-                {/* Items table below buyer */}
                 <div className="border rounded-lg overflow-hidden mb-4">
                   <div className="grid grid-cols-12 gap-2 bg-gray-50 px-3 py-2 text-xs font-medium text-gray-600">
                     <div className="col-span-1" />
