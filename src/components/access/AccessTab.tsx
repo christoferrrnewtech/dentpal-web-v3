@@ -1448,29 +1448,46 @@ const AccessTab = ({ loading = false, error, setError, onTabChange, onEditUser }
                               </td>
                               <td className="px-6 py-3">
                                 <div className="flex flex-wrap gap-1">
-                                  {Object.entries((m as any).permissions || {}).filter(([,v]) => v).map(([k]) => (
-                                    <Badge key={k} variant="secondary" className="text-xs bg-green-100 text-green-800">{String(k)}</Badge>
-                                    <div className="text-xs text-gray-500">{m.email}</div>
-                                  </div>
-                                </div>
-                              </td>
-                              <td className="px-6 py-3">
-                                <div className="flex flex-wrap gap-1">
-                                  {Object.entries((m as any).permissions || {}).filter(([,v]) => v).map(([k]) => (
-                                    <Badge key={k} variant="secondary" className="text-xs bg-green-100 text-green-800">{String(k)}</Badge>
-                                  ))}
+                                  {Object.entries((m as any).permissions || {})
+                                    .filter(([, v]) => v)
+                                    .map(([k]) => (
+                                      <Badge
+                                        key={k}
+                                        variant="secondary"
+                                        className="text-xs bg-green-100 text-green-800"
+                                      >
+                                        {String(k)}
+                                      </Badge>
+                                    ))}
                                 </div>
                               </td>
                               <td className="px-6 py-3">
                                 <Badge className={`${getStatusColor(mStatus)} text-xs border`}>
-                                  <span className="flex items-center space-x-1">{getStatusIcon(mStatus)}<span>{mStatus}</span></span>
+                                  <span className="flex items-center space-x-1">
+                                    {getStatusIcon(mStatus)}
+                                    <span>{mStatus}</span>
+                                  </span>
                                 </Badge>
                               </td>
                               <td className="px-6 py-3">
                                 <div className="flex items-center gap-1">
                                   <Button variant="ghost" size="sm" onClick={() => setEditing({ ...m })} className="text-gray-700 hover:text-gray-900">View</Button>
                                   <Button variant="ghost" size="sm" onClick={() => setEditing({ ...m })} className="text-blue-600 hover:text-blue-800"><Edit3 className="w-4 h-4"/></Button>
-                                  <Button variant="ghost" size="sm" onClick={async () => { try { await resendUserInvite((m as any).email); toast({ title: 'Invite sent', description: `Password reset link sent to ${(m as any).email}` }); } catch (e: any) { toast({ title: 'Failed to send invite', description: e.message || 'Please try again.' }); } }} className="text-gray-600 hover:text-gray-800"><Key className="w-4 h-4"/></Button>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={async () => {
+                                      try {
+                                        await resendUserInvite((m as any).email);
+                                        toast({ title: 'Invite sent', description: `Password reset link sent to ${(m as any).email}` });
+                                      } catch (e: any) {
+                                        toast({ title: 'Failed to send invite', description: e.message || 'Please try again.' });
+                                      }
+                                    }}
+                                    className="text-gray-600 hover:text-gray-800"
+                                  >
+                                    <Key className="w-4 h-4"/>
+                                  </Button>
                                   <Button variant="ghost" size="sm" className="text-red-600 hover:text-red-800" onClick={() => handleDeleteMember(m)}><Trash2 className="w-4 h-4"/></Button>
                                 </div>
                               </td>
@@ -1495,21 +1512,7 @@ const AccessTab = ({ loading = false, error, setError, onTabChange, onEditUser }
 
   return (
     <div className="space-y-6">
-      {/* Header Section */}
-      <div className="bg-gradient-to-r from-green-600 to-teal-600 rounded-2xl p-8 text-white shadow-lg">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-3xl font-bold mb-2">Access Control</h1>
-            <p className="text-green-100">Manage user access and system permissions</p>
-          </div>
-          <div className="flex items-center space-x-4">
-            <div className="bg-white/20 rounded-xl p-4">
-              <Shield className="w-8 h-8" />
-            </div>
-          </div>
-        </div>
-      </div>
-
+     
       {/* Error Display */}
       {error && (
         <div className="bg-red-50 border border-red-200 rounded-xl p-4 flex items-center space-x-3">
@@ -1578,36 +1581,41 @@ const AccessTab = ({ loading = false, error, setError, onTabChange, onEditUser }
                 className="pl-10"
               />
             </div>
-                  <option value="all">All Status</option>
-                  <option value="active">Active</option>
-                  <option value="inactive">Inactive</option>
-                  <option value="pending">Pending</option>
-                </select>
-              </div>
-              {/* Export dropdown in toolbar */}
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="outline" className="flex items-center space-x-2">
-                    <Download className="w-4 h-4" />
-                    <span>Export</span>
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuItem onClick={() => handleExportAs('csv')}>
-                    <FileText className="w-4 h-4 mr-2" />
-                    Export as CSV
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => handleExportAs('xlsx')}>
-                    <FileSpreadsheet className="w-4 h-4 mr-2" />
-                    Export as Excel (XLSX)
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => handleExportAs('pdf')}>
-                    <File className="w-4 h-4 mr-2" />
-                    Export as PDF
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
+            <div className="md:w-64">
+              <select
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                value={filterStatus}
+                onChange={(e) => setFilterStatus(e.target.value)}
+              >
+                <option value="all">All Status</option>
+                <option value="active">Active</option>
+                <option value="inactive">Inactive</option>
+                <option value="pending">Pending</option>
+              </select>
             </div>
+            {/* Export dropdown in toolbar */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" className="flex items-center space-x-2">
+                  <Download className="w-4 h-4" />
+                  <span>Export</span>
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={() => handleExportAs('csv')}>
+                  <FileText className="w-4 h-4 mr-2" />
+                  Export as CSV
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => handleExportAs('xlsx')}>
+                  <FileSpreadsheet className="w-4 h-4 mr-2" />
+                  Export as Excel (XLSX)
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => handleExportAs('pdf')}>
+                  <File className="w-4 h-4 mr-2" />
+                  Export as PDF
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </div>
       )}

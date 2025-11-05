@@ -24,6 +24,7 @@ import AddProduct from '@/pages/AddProduct'; // New
 import NotificationsTab from '@/components/notifications/NotificationsTab';
 import { useLocation, useNavigate } from 'react-router-dom';
 import WarrantyManager from '@/pages/admin/WarrantyManager';
+import CategoryManager from '@/pages/admin/CategoryManager';
 
 interface DashboardProps {
   user: { name?: string; email: string };
@@ -237,6 +238,10 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
     notifications: 'dashboard',
     // NEW: Admin QC tab permission mapping
     'product-qc': 'product-qc',
+    // NEW: Warranty tab mapping (admin-only in UI; permission optional)
+    'warranty': 'warranty',
+    // NEW: Categories tab mapping (admin-only)
+    'categories': 'categories',
   } as any;
 
   const isAllowed = (itemId: string) => hasPermission((permissionByMenuId[itemId] || 'dashboard') as any);
@@ -826,6 +831,14 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
         return (
           <AddProduct />
         );
+      // NEW: Admin Warranty tab
+      case 'warranty':
+        if (!isAdmin) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
+        return <WarrantyManager />;
+      // NEW: Admin Categories tab
+      case 'categories':
+        if (!isAdmin) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
+        return <CategoryManager />;
       default:
         return null;
     }
@@ -846,6 +859,10 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
       case "sub-accounts": return "Sub Account";
       case "images": return "Images";
       case "users": return "Users";
+      // NEW: Warranty title
+      case 'warranty': return 'Warranty';
+      // NEW: Categories title
+      case 'categories': return 'Categories';
       default: return "Dashboard";
     }
   };
@@ -878,6 +895,12 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
         return "Manage dental images, x-rays, and patient photos";
       case "users":
         return "Manage patients, staff, and user accounts";
+      // NEW: Warranty subtitle
+      case 'warranty':
+        return 'Set warranty durations by category and subcategory';
+      // NEW: Categories subtitle
+      case 'categories':
+        return 'Create, rename, and delete categories and their subcategories';
       default:
         return "";
     }

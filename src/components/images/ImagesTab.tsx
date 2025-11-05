@@ -490,21 +490,6 @@ const ImagesTab = ({ loading = false, error, setError, onTabChange }: ImagesTabP
 
   return (
     <div className="space-y-8" onDragEnter={handleDrag} onDragLeave={handleDrag} onDragOver={handleDrag}>
-      {/* Header Section */}
-      <div className="bg-gradient-to-r from-teal-600 to-cyan-600 rounded-2xl p-8 text-white shadow-lg">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-3xl font-bold mb-2">Images Management</h1>
-            <p className="text-teal-100">Manage promotional images, banners, and pop-up assets</p>
-          </div>
-          <div className="flex items-center space-x-4">
-            <div className="bg-white/20 rounded-xl p-4">
-              <ImageIcon className="w-8 h-8" />
-            </div>
-          </div>
-        </div>
-      </div>
-
       {/* Error Display */}
       {error && (
         <div className="bg-red-50 border border-red-200 rounded-xl p-4 flex items-center space-x-3">

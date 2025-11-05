@@ -15,7 +15,8 @@ import {
   BarChart3,
   PlusSquare,
   Bell,
-  ShieldCheck
+  ShieldCheck,
+  FolderTree
 } from "lucide-react";
 import dentalLogo from "@/assets/dentpal_logo.png";
 import { useAuth } from "@/hooks/use-auth";
@@ -38,6 +39,7 @@ const menuItems = [
   { id: "add-product", label: "Add Product", icon: PlusSquare },
   { id: "product-qc", label: "QC Product", icon: CheckCircle },
   { id: "warranty", label: "Warranty", icon: ShieldCheck },
+  { id: "categories", label: "Categories", icon: FolderTree },
   { id: "confirmation", label: "Confirmation", icon: CheckCircle },
   { id: "withdrawal", label: "Withdrawal", icon: CreditCard },
   { id: "sub-accounts", label: "Sub Account", icon: Users },
@@ -69,6 +71,7 @@ const Sidebar = ({ activeItem, onItemClick, onLogout }: SidebarProps) => {
     'add-product': 'add-product',
     'product-qc': 'product-qc',
     warranty: 'warranty',
+    categories: 'categories',
     confirmation: "confirmation",
     withdrawal: "withdrawal",
     'sub-accounts': 'dashboard',
@@ -86,6 +89,9 @@ const Sidebar = ({ activeItem, onItemClick, onLogout }: SidebarProps) => {
         let permitted = menuItems.filter((item) => {
           if (item.id === 'product-qc' && !isAdmin) return false;
           if (item.id === 'warranty' && !isAdmin) return false;
+          if (item.id === 'categories' && !isAdmin) return false;
+          // TEMP: hide seller tabs from admin panel
+          if (isAdmin && ['seller-orders','inventory','add-product','sub-accounts'].includes(item.id)) return false;
           const key = permissionByMenuId[item.id];
 
           // For sub-accounts: only show items that have an explicit permission flag and it's true
