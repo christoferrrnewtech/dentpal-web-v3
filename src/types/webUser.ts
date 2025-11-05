@@ -13,6 +13,8 @@ export type WebUserPermissions = {
   'add-product': boolean; // New: Allow access to Add Product/Manage Product
   'product-qc': boolean; // New: Admin Pending QC tab
   reports: boolean; // New: Reports visibility
+  warranty: boolean; // NEW: Admin Warranty tab
+  categories?: boolean; // NEW: Admin Categories tab (optional, admin-only)
 };
 
 export interface WebUserProfile {
