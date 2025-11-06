@@ -15,11 +15,12 @@ const AddProduct: React.FC = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
   const { uid, isSeller, isAdmin } = useAuth();
+  const { isSubAccount, parentId } = useAuth();
 
   // Admin seller picker
   const [sellers, setSellers] = useState<Array<{ uid: string; name?: string; email: string }>>([]);
   const [selectedSellerId, setSelectedSellerId] = useState<string | null>(null);
-  const effectiveSellerId = isSeller ? uid : selectedSellerId;
+  const effectiveSellerId = isSeller ? (isSubAccount ? (parentId || uid) : uid) : selectedSellerId;
 
   useEffect(() => {
     let mounted = true;

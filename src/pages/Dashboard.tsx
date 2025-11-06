@@ -35,7 +35,7 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
   const [activeItem, setActiveItem] = useState("dashboard");
   const { hasPermission, loading: authLoading } = useAuth();
   const { isAdmin } = useAuth();
-  const { uid } = useAuth();
+  const { uid, isSubAccount, parentId } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
   
@@ -912,6 +912,8 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
     let unsub: (() => void) | undefined;
     if (isAdmin) {
       unsub = OrdersService.listenAll(setConfirmationOrders);
+    } else if (isSubAccount && parentId) {
+      unsub = OrdersService.listenBySeller(parentId, setConfirmationOrders);
     } else {
       unsub = OrdersService.listenBySeller(uid, setConfirmationOrders);
     }

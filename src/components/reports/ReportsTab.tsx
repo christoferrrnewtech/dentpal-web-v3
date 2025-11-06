@@ -118,7 +118,9 @@ const ReportsTab: React.FC = () => {
   // Subscribe to orders based on role
   useEffect(() => {
     let unsub = () => {};
+    const { isSubAccount, parentId } = useAuth();
     if (isAdmin) unsub = OrdersService.listenAll(setOrders);
+    else if (isSubAccount && parentId) unsub = OrdersService.listenBySeller(parentId, setOrders);
     else if (uid) unsub = OrdersService.listenBySeller(uid, setOrders);
     return () => unsub();
   }, [isAdmin, uid]);
