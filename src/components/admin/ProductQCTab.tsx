@@ -16,6 +16,8 @@ interface Row {
   qcReason?: string;
 }
 
+const currency = new Intl.NumberFormat('en-PH', { style: 'currency', currency: 'PHP', maximumFractionDigits: 2 });
+
 const ProductQCTab: React.FC = () => {
   const [tab, setTab] = useState<'pending' | 'approved' | 'violation'>('pending');
   const [rows, setRows] = useState<Row[]>([]);
@@ -24,7 +26,10 @@ const ProductQCTab: React.FC = () => {
   const [reason, setReason] = useState('');
   const [qcTime, setQcTime] = useState<string>('');
   const [preview, setPreview] = useState<Row | null>(null);
+  const [previewDetail, setPreviewDetail] = useState<null | { product: any; variations: any[] }>(null);
   const [sellerNames, setSellerNames] = useState<Record<string, string>>({});
+  const [priceMap, setPriceMap] = useState<Record<string, number | undefined>>({});
+  const [stockMap, setStockMap] = useState<Record<string, number | undefined>>({});
   const { toast } = useToast();
   const { uid } = useAuth();
 
@@ -72,7 +77,7 @@ const ProductQCTab: React.FC = () => {
     return () => { if (typeof unsubscribe === 'function') unsubscribe(); };
   }, [tab]);
 
-  // Resolve seller names from web_users once rows change
+  // Resolve seller names
   useEffect(() => {
     const ids = Array.from(new Set(rows.map(r => r.sellerId).filter((v): v is string => !!v)));
     const missing = ids.filter(id => !(id in sellerNames));
@@ -100,6 +105,41 @@ const ProductQCTab: React.FC = () => {
 
     return () => { cancelled = true; };
   }, [rows, sellerNames]);
+
+  // Derive product price and total stock for list view (especially Pending QC)
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      const targets = rows.filter(r => priceMap[r.id] === undefined || stockMap[r.id] === undefined);
+      if (targets.length === 0) return;
+      const updatesPrice: Record<string, number | undefined> = {};
+      const updatesStock: Record<string, number | undefined> = {};
+      await Promise.all(targets.map(async (r) => {
+        try {
+          const detail = await ProductService.getProductDetail(r.id);
+          if (!detail) { updatesPrice[r.id] = undefined; updatesStock[r.id] = undefined; return; }
+          const p: any = detail.product;
+          const vars: any[] = Array.isArray(detail.variations) ? detail.variations : [];
+          // price: prefer product.lowestPrice, else min variation price
+          const varPrices = vars.map(v => Number(v.price ?? 0)).filter(n => Number.isFinite(n) && n > 0);
+          const minVar = varPrices.length ? Math.min(...varPrices) : undefined;
+          const price = p?.lowestPrice != null ? Number(p.lowestPrice) : (p?.price != null ? Number(p.price) : minVar);
+          const totalStock = vars.reduce((s, v) => s + (Number(v.stock ?? 0) || 0), 0);
+          updatesPrice[r.id] = price;
+          updatesStock[r.id] = totalStock;
+        } catch {
+          updatesPrice[r.id] = undefined;
+          updatesStock[r.id] = undefined;
+        }
+      }));
+      if (!cancelled && (Object.keys(updatesPrice).length || Object.keys(updatesStock).length)) {
+        setPriceMap(prev => ({ ...prev, ...updatesPrice }));
+        setStockMap(prev => ({ ...prev, ...updatesStock }));
+      }
+    };
+    load();
+    return () => { cancelled = true; };
+  }, [rows]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -133,6 +173,21 @@ const ProductQCTab: React.FC = () => {
       toast({ title: 'Failed to reject', description: 'Please try again.' });
     }
   };
+
+  // Load preview details when preview row set
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!preview) { setPreviewDetail(null); return; }
+      try {
+        const detail = await ProductService.getProductDetail(preview.id);
+        if (!cancelled) setPreviewDetail(detail);
+      } catch {
+        if (!cancelled) setPreviewDetail(null);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [preview]);
 
   return (
     <div className="space-y-6">
@@ -174,13 +229,14 @@ const ProductQCTab: React.FC = () => {
         ))}
       </div>
 
-      {/* Table */}
+      {/* Table: columns -> Seller, Product Name, Price, Image, Action (Violation shows extra Reason) */}
       <div className="border border-gray-200 rounded-xl overflow-hidden bg-white">
         <table className="w-full text-sm">
           <thead className="bg-gray-50 border-b border-gray-200">
             <tr className="text-left text-[11px] font-semibold text-gray-600 tracking-wide">
               <th className="px-4 py-2">SELLER</th>
-              <th className="px-4 py-2">PRODUCT</th>
+              <th className="px-4 py-2">PRODUCT NAME</th>
+              <th className="px-4 py-2">PRODUCT PRICE</th>
               <th className="px-4 py-2">IMAGE</th>
               {tab === 'violation' && <th className="px-4 py-2">REASON</th>}
               <th className="px-4 py-2 w-48">ACTIONS</th>
@@ -192,7 +248,14 @@ const ProductQCTab: React.FC = () => {
                 <td className="px-4 py-3 text-gray-700">
                   <div className="text-sm font-medium">{(r.sellerId && sellerNames[r.sellerId]) || r.sellerId || '—'}</div>
                 </td>
-                <td className="px-4 py-3 text-gray-900 font-medium">{r.name}</td>
+                <td className="px-4 py-3 text-gray-900">{r.name || '—'}</td>
+                <td className="px-4 py-3 text-gray-900 font-medium">
+                  {priceMap[r.id] != null ? (
+                    <span>{currency.format(Number(priceMap[r.id]))}</span>
+                  ) : (
+                    <span className="text-gray-500">—</span>
+                  )}
+                </td>
                 <td className="px-4 py-3">
                   {r.imageURL ? (
                     <img src={r.imageURL} alt={r.name} className="h-12 w-12 rounded object-cover bg-gray-100 border" />
@@ -236,32 +299,87 @@ const ProductQCTab: React.FC = () => {
             ))}
             {filtered.length === 0 && (
               <tr>
-                <td colSpan={tab === 'violation' ? 5 : 4} className="px-4 py-8 text-center text-xs text-gray-500">No products.</td>
+                <td colSpan={tab === 'violation' ? 6 : 5} className="px-4 py-8 text-center text-xs text-gray-500">No products.</td>
               </tr>
             )}
           </tbody>
         </table>
       </div>
 
-      {/* Preview Dialog */}
+      {/* Preview Dialog: detailed high-UX card with product and variations */}
       {preview && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
           <div className="absolute inset-0 bg-black/40" onClick={() => setPreview(null)} />
-          <div className="relative bg-white rounded-lg shadow-xl w-full max-w-lg p-6">
-            <div className="flex items-center gap-3 mb-3">
-              {preview.imageURL ? (
-                <img src={preview.imageURL} alt={preview.name} className="h-14 w-14 rounded object-cover border" />
-              ) : (
-                <div className="h-14 w-14 rounded bg-gray-100 border" />
-              )}
-              <div>
-                <div className="text-base font-semibold text-gray-900">{preview.name}</div>
-                <div className="text-xs text-gray-500">Seller: {preview.sellerId || '—'}</div>
+          <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-3xl p-6">
+            <div className="flex flex-col md:flex-row gap-6">
+              <div className="md:w-1/3">
+                {preview.imageURL ? (
+                  <img src={preview.imageURL} alt={preview.name} className="w-full aspect-square object-cover rounded-xl border bg-gray-50" />
+                ) : (
+                  <div className="w-full aspect-square rounded-xl border bg-gray-50" />
+                )}
+              </div>
+              <div className="md:w-2/3 space-y-2">
+                <div className="text-xl font-semibold text-gray-900">{preview.name}</div>
+                <div className="text-sm text-gray-500">Seller: {(preview.sellerId && sellerNames[preview.sellerId]) || preview.sellerId || '—'}</div>
+                <div className="mt-2 text-sm text-gray-700 whitespace-pre-wrap break-words max-h-40 overflow-auto border rounded-lg p-3 bg-gray-50">
+                  {preview.description || 'No description'}
+                </div>
+                <div className="grid grid-cols-2 gap-3 mt-3">
+                  <div className="p-3 rounded-lg border bg-white">
+                    <div className="text-[10px] text-gray-500">Price</div>
+                    <div className="text-base font-semibold">{priceMap[preview.id] != null ? currency.format(Number(priceMap[preview.id])) : '—'}</div>
+                  </div>
+                  <div className="p-3 rounded-lg border bg-white">
+                    <div className="text-[10px] text-gray-500">Quantity (Total stock)</div>
+                    <div className="text-base font-semibold">{stockMap[preview.id] != null ? Number(stockMap[preview.id]).toLocaleString() : '—'}</div>
+                  </div>
+                </div>
               </div>
             </div>
-            <div className="text-sm text-gray-700 whitespace-pre-wrap break-words max-h-60 overflow-auto">
-              {preview.description || 'No description'}
+
+            {/* Variations table */}
+            <div className="mt-6">
+              <div className="text-sm font-semibold text-gray-900 mb-2">Variations</div>
+              <div className="overflow-auto border rounded-xl">
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-50 text-gray-600">
+                    <tr>
+                      <th className="text-left px-3 py-2 font-medium">Name</th>
+                      <th className="text-left px-3 py-2 font-medium">SKU</th>
+                      <th className="text-left px-3 py-2 font-medium">Price</th>
+                      <th className="text-left px-3 py-2 font-medium">Stock</th>
+                      <th className="text-left px-3 py-2 font-medium">Dimension</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {previewDetail?.variations?.length ? (
+                      previewDetail.variations.map((v: any) => {
+                        const dim = v.dimension || v.dimensions || {};
+                        const h = Number(dim.height ?? dim.H ?? 0) || undefined;
+                        const w = Number(dim.width ?? dim.W ?? 0) || undefined;
+                        const l = Number(dim.length ?? dim.L ?? 0) || undefined;
+                        const dimTxt = [l, w, h].filter(x => x != null).join(' × ');
+                        return (
+                          <tr key={v.id} className="border-t last:border-b-0">
+                            <td className="px-3 py-2">{v.name || '—'}</td>
+                            <td className="px-3 py-2">{v.SKU || v.sku || '—'}</td>
+                            <td className="px-3 py-2">{v.price != null ? currency.format(Number(v.price)) : '—'}</td>
+                            <td className="px-3 py-2">{v.stock != null ? Number(v.stock).toLocaleString() : '—'}</td>
+                            <td className="px-3 py-2">{dimTxt || '—'}</td>
+                          </tr>
+                        );
+                      })
+                    ) : (
+                      <tr>
+                        <td colSpan={5} className="px-3 py-6 text-center text-xs text-gray-500">No variations found</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
+
             <div className="mt-6 flex justify-end gap-3">
               <button className="px-3 py-2 text-sm font-medium text-gray-600 hover:text-gray-800" onClick={() => setPreview(null)}>Close</button>
             </div>

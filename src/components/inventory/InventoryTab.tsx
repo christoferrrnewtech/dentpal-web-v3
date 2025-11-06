@@ -110,7 +110,9 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
   const [selectedSellerId, setSelectedSellerId] = useState<string | null>(null);
 
   // Compute effective sellerId for data ops
-  const effectiveSellerId = sellerId ?? (isSeller ? uid : selectedSellerId);
+  // For sub-accounts, always use parentId so they see owner inventory
+  const { isSubAccount, parentId } = useAuth();
+  const effectiveSellerId = sellerId ?? (isSeller ? (isSubAccount ? (parentId || uid) : uid) : selectedSellerId);
 
   // New: low-stock only filter
   const [lowOnly, setLowOnly] = useState<boolean>(false);

@@ -146,15 +146,7 @@ const CategoryManager: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      {/* Hero/Header */}
-      <div className="bg-gradient-to-r from-green-600 to-teal-600 rounded-2xl p-6 text-white shadow">
-        <div className="flex items-center justify-between">
-          
-          <Button onClick={openAddCategory} className="bg-white text-green-700 hover:bg-green-50">
-            New Category
-          </Button>
-        </div>
-      </div>
+     
 
       {/* Main content: two tables */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -165,6 +157,11 @@ const CategoryManager: React.FC = () => {
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
               <Input value={filter} onChange={(e)=> setFilter(e.target.value)} placeholder="Search category..." className="pl-9" />
             </div>
+            <Button
+        onClick={openAddCategory}
+        className="bg-green-600 hover:bg-green-700 text-white"> New Category
+            </Button>
+
           </div>
           <div className="overflow-auto">
             <table className="w-full text-sm">
