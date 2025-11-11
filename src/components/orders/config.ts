@@ -16,6 +16,8 @@ export const mapOrderToStage = (o: Order): LifecycleStage => {
     case 'pending': return 'unpaid';
     case 'to-ship': return 'to-ship';
     case 'processing': return 'shipping';
+    case 'shipping': return 'shipping';
+    case 'shipped': return 'shipping';
     case 'completed': return 'delivered';
     case 'failed-delivery': return 'failed-delivery';
     case 'cancelled': return 'cancellation';

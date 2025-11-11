@@ -54,9 +54,15 @@ export interface Order {
   };
   priority: 'normal' | 'priority' | 'urgent';
   // Extended to support additional lifecycle stages in Seller Orders
-  status: 'pending' | 'to-ship' | 'processing' | 'completed' | 'cancelled' | 'returned' | 'refunded' | 'return_refund' | 'failed-delivery';
+  status: 'pending' | 'to-ship' | 'processing' | 'shipped' | 'shipping' | 'completed' | 'cancelled' | 'returned' | 'refunded' | 'return_refund' | 'failed-delivery';
   // New: fulfillment stage for to-ship sub-tabs
   fulfillmentStage?: 'to-pack' | 'to-arrangement' | 'to-hand-over';
+  // New: status history tracking
+  statusHistory?: Array<{
+    status: string;
+    note: string;
+    timestamp: Date;
+  }>;
   // New: full line items for invoices/exports
   items?: Array<{
     name: string;

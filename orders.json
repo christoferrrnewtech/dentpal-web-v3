@@ -1,0 +1,221 @@
+{
+  "order": {
+      "id": "QRIZxyy31vtQbsGOH7Gk",
+      "data": {
+        "userId": "cixRRzmjf3d68C8mYRldrxAYJHU2",
+        "sellerIds": [
+          "fNEIry9W7lRWizOmb2ZC0tZoOGu2"
+        ],
+        "items": [
+          {
+            "productId": "8wr1KvOXrgzTm7rElATj",
+            "productName": "Composite Resin Kit – A2 Shade - A2 Shade",
+            "productImage": "https://firebasestorage.googleapis.com/v0/b/dentpal-161e5.firebasestorage.app/o/ProductImages%2F1762236765415%2F0eba776b226345e968acb533a01418a2.png_720x720q80.png?alt=media&token=29ff3ad0-91bf-4d40-9e70-950a44c87ac5",
+            "price": 3500,
+            "quantity": 2,
+            "variationId": "lzyethpwlnss3ccFWE0J",
+            "sellerId": "fNEIry9W7lRWizOmb2ZC0tZoOGu2",
+            "sellerName": "Unknown Seller"
+          }
+        ],
+        "summary": {
+          "subtotal": 7000,
+          "shippingCost": 50,
+          "taxAmount": 0,
+          "discountAmount": 0,
+          "total": 7050,
+          "totalItems": 2
+        },
+        "metadata": {
+          "cart_item_ids": [
+            "6wxXDRr89ODxfdMmeQ6U"
+          ]
+        },
+        "createdAt": {
+          "_seconds": 1762738012,
+          "_nanoseconds": 256000000
+        },
+        "checkoutSessionId": "cs_aVYtFxeAAjjZqHdRtwptzRxi",
+        "paymentInfo": {
+          "checkoutSessionId": "cs_aVYtFxeAAjjZqHdRtwptzRxi",
+          "checkoutUrl": "https://checkout.paymongo.com/cs_aVYtFxeAAjjZqHdRtwptzRxi_client_hgCs3HiysrPKaYaaeS5fAdQY#cGtfdGVzdF9UVG9KTFpldVhyR1dUVHc0N0U0enBhVkg=",
+          "amount": 7050,
+          "currency": "PHP",
+          "paymentIntentId": "pi_zUA7TQbGiDzneP7t3MXjDoT3",
+          "method": "gcash",
+          "paidAt": {
+            "_seconds": 1762738076,
+            "_nanoseconds": 2000000
+          },
+          "status": "paid"
+        },
+        "statusHistory": [
+          {
+            "status": "pending",
+            "note": "Order created",
+            "timestamp": {
+              "_seconds": 1762738011,
+              "_nanoseconds": 364000000
+            }
+          },
+          {
+            "timestamp": {
+              "_seconds": 1762738075,
+              "_nanoseconds": 871000000
+            },
+            "note": "Payment paid via gcash",
+            "status": "confirmed"
+          },
+          {
+            "note": "Preparing to pack",
+            "status": "to-pack",
+            "timestamp": {
+              "_seconds": 1762739040,
+              "_nanoseconds": 546000000
+            }
+          },
+          {
+            "note": "Order moved to arrangement stage",
+            "timestamp": {
+              "_seconds": 1762842096,
+              "_nanoseconds": 164000000
+            },
+            "status": "to-arrangement"
+          },
+          {
+            "status": "to-hand-over",
+            "note": "Order moved to hand over stage",
+            "timestamp": {
+              "_seconds": 1762842104,
+              "_nanoseconds": 22000000
+            }
+          },
+          {
+            "status": "processing",
+            "note": "Order is being shipped",
+            "timestamp": {
+              "_seconds": 1762842114,
+              "_nanoseconds": 892000000
+            }
+          },
+          {
+            "status": "shipping",
+            "note": "Order shipped via JRS Express. Reference: DPAL-QRIZxyy31vtQbsGOH7Gk-1762842120428, Tracking: 1762842122595877",
+            "timestamp": {
+              "_seconds": 1762842122,
+              "_nanoseconds": 740000000
+            }
+          }
+        ],
+        "shippingInfo": {
+          "addressId": "ZQW8hssSep750HMWnWZx",
+          "fullName": "Rain Angelo Morcozo",
+          "addressLine1": "5A Sunrise Street, Corner Mola, Brgy. La Paz",
+          "addressLine2": null,
+          "city": "Makati",
+          "state": "Metro Manila",
+          "postalCode": "1704",
+          "country": "Philippines",
+          "phoneNumber": "+639226537982",
+          "notes": null,
+          "jrs": {
+            "response": {
+              "HTMLLabel": null,
+              "ShippingRequestEntityDto": {
+                "Id": "63c5c393-90b4-4149-a8c2-db790a7e1e56",
+                "RequestId": null,
+                "DateRequested": "2025-11-11T06:22:02.5957758Z",
+                "DateCreated": "2025-11-11T06:22:02.5957297Z",
+                "CreatedByUserEmail": "christofer.rrnewtech@gmail.com",
+                "ApimId": "rain.rrnewtech@gmail.com",
+                "CustomerId": null,
+                "ShipperFirstName": "tofer",
+                "ShipperMiddleName": "",
+                "ShipperLastName": "Support",
+                "ShipperFullName": "tofer  ",
+                "ShipperEmail": "christofer.rrnewtech@gmail.com",
+                "ShipperPhone": "09120732452",
+                "ShipperProvince": "Batangas",
+                "ShipperMunicipality": "San Pascual",
+                "ShipperDistrict": "Barangay Kamuning",
+                "ShipperAddressLine1": "blk 11 lot 19 desert rose street",
+                "ShipperCountry": "Philippines",
+                "RecipientFirstName": "Rain",
+                "RecipientMiddleName": "",
+                "RecipientLastName": "Angelo Morcozo",
+                "RecipientFullName": "Rain   Angelo Morcozo",
+                "RecipientEmail": "customer@dentpal.ph",
+                "RecipientPhone": "+639226537982",
+                "RecipientProvince": "Metro Manila",
+                "RecipientMunicipality": "Makati",
+                "RecipientDistrict": "La Paz",
+                "RecipientAddressLine1": "5A Sunrise Street, Corner Mola",
+                "RecipientFullAddress": null,
+                "RecipientCountry": "Philippines",
+                "BookingSource": "Ecommerce api",
+                "ShipmentRequestStatus": "Shipment request granted",
+                "WayBill": null,
+                "TrackingId": "1762842122595877",
+                "OrNumber": null,
+                "ShipmentDescription": "Dental Supplies: Composite Resin Kit – A2 Shade - A2 Shade",
+                "ProductId": "2613b587-3ed7-463c-bf34-e97a41415658",
+                "ProductName": "Bulilit Box",
+                "SpecialInstruction": "",
+                "Remarks": "DentPal Order #QRIZxyy31vtQbsGOH7Gk - Pickup scheduled for 2025-11-12 at 09:00",
+                "Length": 20,
+                "Width": 15,
+                "Height": 10,
+                "Weight": 0.5,
+                "VolumeWeight": null,
+                "DeclaredValue": 3500,
+                "Discount": null,
+                "CodAmountToCollect": 0,
+                "AmountToCollect": null,
+                "CODSelection": null,
+                "ClientGuid": null,
+                "SalesType": null,
+                "TotalShippingAmount": 345,
+                "ValuationAmount": null,
+                "InsuranceAmount": null,
+                "ServiceFee": null,
+                "WithHoldingAmount": null,
+                "ShippingReferenceNo": "DPAL-QRIZxyy31vtQbsGOH7Gk-1762842120428",
+                "RequestedPickupSchedule": "2025-11-12T01:00:00Z",
+                "PickupScheduleSetByBranch": null,
+                "PickupDate": null,
+                "PickupPin": null,
+                "AssignedPickupBranch": null,
+                "AssignedPickupMan": null,
+                "DeliveredByMessengerName": null,
+                "CurrentDeliveryStatus": null,
+                "CurrentDeliveryStatusDate": null,
+                "CancellationDetails": null,
+                "CanceledByUserEmail": null,
+                "DateCanceled": null
+              },
+              "ShippingRequestEntityDtoList": null,
+              "FailedShippingRequestEntityDtoList": null,
+              "ClientTransactions": null,
+              "Success": true,
+              "ErrorMessage": null,
+              "MissingProperties": null
+            },
+            "shippingReferenceNo": "DPAL-QRIZxyy31vtQbsGOH7Gk-1762842120428",
+            "trackingId": "1762842122595877",
+            "requestedAt": {
+              "_seconds": 1762842122,
+              "_nanoseconds": 740000000
+            },
+            "totalShippingAmount": 345,
+            "pickupSchedule": "2025-11-12T01:00:00.000Z"
+          }
+        },
+        "status": "shipping",
+        "updatedAt": {
+          "_seconds": 1762842122,
+          "_nanoseconds": 740000000
+        }
+      },
+      "subcollections": {}
+    }
+}

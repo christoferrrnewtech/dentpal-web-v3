@@ -11,6 +11,8 @@ import FailedDeliveryOrdersView from './views/FailedDeliveryOrdersView';
 import CancellationOrdersView from './views/CancellationOrdersView';
 import ReturnRefundOrdersView from './views/ReturnRefundOrdersView';
 import OrdersService from '@/services/orders';
+import JRSShippingService from '@/services/jrsShipping';
+import { useAuth } from '@/hooks/useAuth';
 
 /**
  * OrderTab
@@ -60,6 +62,20 @@ export const OrderTab: React.FC<OrderTabProps> = ({
   const [copied, setCopied] = useState<null | 'id' | 'barcode'>(null);
   // New: to-ship sub-tab state
   const [toShipSubTab, setToShipSubTab] = useState<ToShipStage>('to-pack');
+  // JRS shipping state
+  const [shippingLoading, setShippingLoading] = useState<string | null>(null);
+  const [pickupScheduleDialog, setPickupScheduleDialog] = useState<{
+    open: boolean;
+    order: Order | null;
+    pickupDate: string;
+    pickupTime: string;
+  }>({
+    open: false,
+    order: null,
+    pickupDate: '',
+    pickupTime: '09:00',
+  });
+  const { user } = useAuth();
 
   // Reset to first page when filters or tab change
   useEffect(() => { setPage(1); }, [activeSubTab, dateFrom, dateTo]);
@@ -163,7 +179,120 @@ export const OrderTab: React.FC<OrderTabProps> = ({
     }
   };
 
-  // Handle confirming handover -> move to Shipping (processing)
+  // Handle moving order back to pack (from arrangement)
+  const handleMoveToPack = async (order: Order) => {
+    try {
+      await OrdersService.moveOrderToPreviousStage(order.id, 'to-arrangement', 'to-pack');
+      onRefresh?.();
+    } catch (error) {
+      console.error('Failed to move order back to pack:', error);
+      alert('Failed to move order. Please try again.');
+    }
+  };
+
+  // Handle moving order to shipping (from hand-over) with JRS integration
+  const handleMoveToShipping = async (order: Order) => {
+    // Show pickup schedule dialog first
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    
+    setPickupScheduleDialog({
+      open: true,
+      order,
+      pickupDate: tomorrow.toISOString().split('T')[0], // Default to tomorrow
+      pickupTime: '09:00', // Default to 9 AM
+    });
+  };
+
+  // Handle confirming the pickup schedule and proceeding with shipping
+  const handleConfirmPickupSchedule = async () => {
+    const { order, pickupDate, pickupTime } = pickupScheduleDialog;
+    
+    if (!order || !pickupDate || !pickupTime) {
+      alert('Please select a pickup date and time.');
+      return;
+    }
+
+    // Validate pickup date is not in the past
+    const selectedDateTime = new Date(`${pickupDate}T${pickupTime}`);
+    const now = new Date();
+    if (selectedDateTime < now) {
+      alert('Pickup date and time must be in the future.');
+      return;
+    }
+
+    setPickupScheduleDialog(prev => ({ ...prev, open: false }));
+    setShippingLoading(order.id);
+    
+    try {
+      // First update the order status locally
+      await OrdersService.updateOrderStatus(order.id, 'processing');
+      
+      // Create JRS shipping request with pickup schedule
+      const userEmail = user?.email || 'admin@dentpal.ph';
+      const requestedPickupSchedule = selectedDateTime.toISOString();
+      
+      // Call improved Firebase Function with minimal payload
+      const response = await fetch('https://us-central1-dentpal-161e5.cloudfunctions.net/createJRSShipping', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          orderId: order.id,
+          requestedPickupSchedule,
+          createdByUserEmail: userEmail,
+          remarks: `DentPal Order #${order.id} - Pickup scheduled for ${pickupDate} at ${pickupTime}`,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const jrsResponse = await response.json();
+      
+      console.log('Creating JRS shipping request for order:', order.id, 'Pickup:', requestedPickupSchedule);
+      
+      if (jrsResponse.success) {
+        console.log('JRS shipping created successfully:', jrsResponse);
+        // Extract tracking ID - improved function returns it directly
+        const trackingId = jrsResponse.trackingId || 
+                          jrsResponse.jrsResponse?.ShippingRequestEntityDto?.TrackingId || 
+                          '';
+        const trackingInfo = trackingId ? `, Tracking ID: ${trackingId}` : '';
+        alert(`Order shipped successfully!\n\nReference: ${jrsResponse.shippingReferenceNo}${trackingInfo}\n\nPickup scheduled: ${pickupDate} at ${pickupTime}`);
+      } else {
+        console.error('JRS shipping failed:', jrsResponse);
+        alert(`Shipping request created but JRS returned error: ${jrsResponse.error || 'Unknown error'}`);
+      }
+      
+      // Navigate to Shipping tab regardless of JRS success/failure
+      setActiveSubTab('shipping');
+      setPage(1);
+      onRefresh?.();
+      
+    } catch (error) {
+      console.error('Failed to move order to shipping:', error);
+      
+      // Show user-friendly error message
+      const errorMessage = error instanceof Error 
+        ? error.message 
+        : 'Failed to process shipping request';
+        
+      alert(`Error: ${errorMessage}. The order status has been updated but shipping integration may have failed.`);
+      
+      // Still navigate to shipping tab and refresh
+      setActiveSubTab('shipping');
+      setPage(1);
+      onRefresh?.();
+    } finally {
+      setShippingLoading(null);
+    }
+  };
+
+  // Handle confirming handover -> move to Shipping (processing) - deprecated, use handleMoveToShipping instead
   const handleConfirmHandover = async (order: Order) => {
     try {
       await OrdersService.updateOrderStatus(order.id, 'processing');
@@ -341,6 +470,9 @@ export const OrderTab: React.FC<OrderTabProps> = ({
             onMoveToArrangement={handleMoveToArrangement}
             onMoveToHandOver={handleMoveToHandOver}
             onConfirmHandover={handleConfirmHandover}
+            onMoveToPack={handleMoveToPack}
+            onMoveToShipping={handleMoveToShipping}
+            shippingLoading={shippingLoading}
           />
         )
         : (!loading && pagedOrders.length === 0
@@ -389,6 +521,101 @@ export const OrderTab: React.FC<OrderTabProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Pickup Schedule Dialog */}
+      {pickupScheduleDialog.open && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-[1px]" onClick={() => setPickupScheduleDialog(prev => ({ ...prev, open: false }))} />
+          <div role="dialog" aria-modal="true" className="relative z-10 w-[95vw] max-w-md bg-white rounded-2xl shadow-xl border border-gray-200 overflow-hidden">
+            {/* Header */}
+            <div className="px-5 py-4 border-b border-gray-100 bg-gradient-to-r from-blue-50 to-teal-50">
+              <h3 className="text-lg font-semibold text-gray-900">Schedule Pickup</h3>
+              <p className="text-sm text-gray-600 mt-1">Select pickup date and time for JRS Express</p>
+            </div>
+
+            {/* Body */}
+            <div className="p-5 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Order Details
+                </label>
+                <div className="bg-gray-50 rounded-lg p-3 text-sm">
+                  <div className="font-medium text-gray-900">Order #{pickupScheduleDialog.order?.id}</div>
+                  <div className="text-gray-600">{pickupScheduleDialog.order?.customer?.name}</div>
+                  <div className="text-gray-600">{pickupScheduleDialog.order?.itemsBrief}</div>
+                </div>
+              </div>
+
+              <div>
+                <label htmlFor="pickupDate" className="block text-sm font-medium text-gray-700 mb-2">
+                  Pickup Date
+                </label>
+                <input
+                  id="pickupDate"
+                  type="date"
+                  value={pickupScheduleDialog.pickupDate}
+                  min={new Date().toISOString().split('T')[0]}
+                  onChange={(e) => setPickupScheduleDialog(prev => ({ ...prev, pickupDate: e.target.value }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+                />
+              </div>
+
+              <div>
+                <label htmlFor="pickupTime" className="block text-sm font-medium text-gray-700 mb-2">
+                  Pickup Time
+                </label>
+                <select
+                  id="pickupTime"
+                  value={pickupScheduleDialog.pickupTime}
+                  onChange={(e) => setPickupScheduleDialog(prev => ({ ...prev, pickupTime: e.target.value }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+                >
+                  <option value="08:00">8:00 AM</option>
+                  <option value="09:00">9:00 AM</option>
+                  <option value="10:00">10:00 AM</option>
+                  <option value="11:00">11:00 AM</option>
+                  <option value="13:00">1:00 PM</option>
+                  <option value="14:00">2:00 PM</option>
+                  <option value="15:00">3:00 PM</option>
+                  <option value="16:00">4:00 PM</option>
+                  <option value="17:00">5:00 PM</option>
+                </select>
+              </div>
+
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                <div className="flex items-start gap-2">
+                  <div className="text-blue-600 text-sm font-medium">
+                    <b>Note: </b>
+                  </div>
+                  <div className="text-blue-600 text-sm">
+                    JRS Express will pick up the package at the scheduled date and time. <br />
+                    Make sure the items are properly packed and ready for pickup.
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="px-5 pb-5 flex items-center justify-end gap-3 border-t border-gray-100 pt-4">
+              <button
+                type="button"
+                onClick={() => setPickupScheduleDialog(prev => ({ ...prev, open: false }))}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmPickupSchedule}
+                disabled={!pickupScheduleDialog.pickupDate || !pickupScheduleDialog.pickupTime}
+                className="px-4 py-2 text-sm font-medium text-white bg-teal-600 border border-transparent rounded-lg hover:bg-teal-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-teal-500 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Confirm & Ship
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {detailsOpen && selectedOrder && (() => {
         const stg = mapOrderToStage(selectedOrder);
