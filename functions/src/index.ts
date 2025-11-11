@@ -3,6 +3,7 @@ import * as logger from "firebase-functions/logger";
 import {initializeApp} from "firebase-admin/app";
 import {getFirestore, FieldValue} from "firebase-admin/firestore";
 import {defineString} from "firebase-functions/params";
+import axios from "axios";
 
 // Initialize Firebase Admin
 initializeApp();
@@ -379,36 +380,50 @@ export const createJRSShipping = onRequest({
     logger.info("Making JRS API request", {
       orderId: payload.orderId,
       shippingReferenceNo,
-      recipientInfo: {
-        name: `${recipientInfo.firstName} ${recipientInfo.lastName}`,
-        address: `${recipientInfo.addressLine1}, ${recipientInfo.district}, ${recipientInfo.municipality}`,
-      },
-      shipperInfo: {
-        name: `${shipperInfo.firstName} ${shipperInfo.lastName}`,
-        address: `${shipperInfo.addressLine1}, ${shipperInfo.district}, ${shipperInfo.municipality}`,
-      },
+      itemCount: shipmentItems.length,
+      codAmount: codAmount > 0,
+      hasPickupSchedule: !!payload.requestedPickupSchedule,
     });
 
     // Make API call to JRS
-    const response = await fetch(JRS_API_URL.value(), {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Cache-Control": "no-cache",
-        "Ocp-Apim-Subscription-Key": JRS_API_KEY.value(),
-      },
-      body: JSON.stringify(jrsRequest),
-    });
-
-    const responseData = await response.json();
-
-    if (!response.ok) {
+    let response;
+    let responseData;
+    try {
+      response = await axios.post(JRS_API_URL.value(), jrsRequest, {
+        headers: {
+          "Content-Type": "application/json",
+          "Cache-Control": "no-cache",
+          "Ocp-Apim-Subscription-Key": JRS_API_KEY.value(),
+        },
+      });
+      responseData = response.data;
+    } catch (axiosError: any) {
       logger.error("JRS API error", {
-        status: response.status,
-        statusText: response.statusText,
-        responseData,
+        status: axiosError.response?.status,
+        statusText: axiosError.response?.statusText,
         orderId: payload.orderId,
-        jrsRequest: jrsRequest, // Log the request for debugging
+        shippingReferenceNo,
+        errorCode: axiosError.response?.data?.ErrorCode || axiosError.code,
+        errorMessage: axiosError.response?.data?.ErrorMessage || "Network error",
+      });
+      
+      res.status(400).json({
+        error: "JRS API request failed",
+        details: axiosError.response?.data || axiosError.message,
+        shippingReferenceNo,
+      });
+      return;
+    }
+
+    // Axios throws errors for non-2xx status codes, so if we reach here, the request was successful
+    // But we can still check for JRS-specific error indicators in the response
+    if (!responseData.Success && responseData.Success !== undefined) {
+      logger.error("JRS API business logic error", {
+        orderId: payload.orderId,
+        shippingReferenceNo,
+        success: responseData.Success,
+        errorMessage: responseData.ErrorMessage,
+        errorCode: responseData.ErrorCode,
       });
       
       res.status(400).json({

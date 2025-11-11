@@ -11,7 +11,6 @@ import FailedDeliveryOrdersView from './views/FailedDeliveryOrdersView';
 import CancellationOrdersView from './views/CancellationOrdersView';
 import ReturnRefundOrdersView from './views/ReturnRefundOrdersView';
 import OrdersService from '@/services/orders';
-import JRSShippingService from '@/services/jrsShipping';
 import { useAuth } from '@/hooks/useAuth';
 
 /**

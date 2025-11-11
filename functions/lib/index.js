@@ -6,6 +6,7 @@ const logger = require("firebase-functions/logger");
 const app_1 = require("firebase-admin/app");
 const firestore_1 = require("firebase-admin/firestore");
 const params_1 = require("firebase-functions/params");
+const axios_1 = require("axios");
 // Initialize Firebase Admin
 (0, app_1.initializeApp)();
 const db = (0, firestore_1.getFirestore)();
@@ -134,7 +135,7 @@ exports.trackJRSShipment = (0, https_1.onRequest)({
 exports.createJRSShipping = (0, https_1.onRequest)({
     cors: true,
 }, async (req, res) => {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _0, _1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12, _13, _14, _15, _16, _17, _18, _19, _20, _21;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _0, _1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12, _13, _14, _15, _16, _17, _18, _19, _20, _21, _22, _23, _24, _25, _26, _27, _28;
     try {
         // Check for POST method
         if (req.method !== "POST") {
@@ -266,33 +267,48 @@ exports.createJRSShipping = (0, https_1.onRequest)({
         logger.info("Making JRS API request", {
             orderId: payload.orderId,
             shippingReferenceNo,
-            recipientInfo: {
-                name: `${recipientInfo.firstName} ${recipientInfo.lastName}`,
-                address: `${recipientInfo.addressLine1}, ${recipientInfo.district}, ${recipientInfo.municipality}`,
-            },
-            shipperInfo: {
-                name: `${shipperInfo.firstName} ${shipperInfo.lastName}`,
-                address: `${shipperInfo.addressLine1}, ${shipperInfo.district}, ${shipperInfo.municipality}`,
-            },
+            itemCount: shipmentItems.length,
+            codAmount: codAmount > 0,
+            hasPickupSchedule: !!payload.requestedPickupSchedule,
         });
         // Make API call to JRS
-        const response = await fetch(JRS_API_URL.value(), {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                "Cache-Control": "no-cache",
-                "Ocp-Apim-Subscription-Key": JRS_API_KEY.value(),
-            },
-            body: JSON.stringify(jrsRequest),
-        });
-        const responseData = await response.json();
-        if (!response.ok) {
+        let response;
+        let responseData;
+        try {
+            response = await axios_1.default.post(JRS_API_URL.value(), jrsRequest, {
+                headers: {
+                    "Content-Type": "application/json",
+                    "Cache-Control": "no-cache",
+                    "Ocp-Apim-Subscription-Key": JRS_API_KEY.value(),
+                },
+            });
+            responseData = response.data;
+        }
+        catch (axiosError) {
             logger.error("JRS API error", {
-                status: response.status,
-                statusText: response.statusText,
-                responseData,
+                status: (_12 = axiosError.response) === null || _12 === void 0 ? void 0 : _12.status,
+                statusText: (_13 = axiosError.response) === null || _13 === void 0 ? void 0 : _13.statusText,
                 orderId: payload.orderId,
-                jrsRequest: jrsRequest, // Log the request for debugging
+                shippingReferenceNo,
+                errorCode: ((_15 = (_14 = axiosError.response) === null || _14 === void 0 ? void 0 : _14.data) === null || _15 === void 0 ? void 0 : _15.ErrorCode) || axiosError.code,
+                errorMessage: ((_17 = (_16 = axiosError.response) === null || _16 === void 0 ? void 0 : _16.data) === null || _17 === void 0 ? void 0 : _17.ErrorMessage) || "Network error",
+            });
+            res.status(400).json({
+                error: "JRS API request failed",
+                details: ((_18 = axiosError.response) === null || _18 === void 0 ? void 0 : _18.data) || axiosError.message,
+                shippingReferenceNo,
+            });
+            return;
+        }
+        // Axios throws errors for non-2xx status codes, so if we reach here, the request was successful
+        // But we can still check for JRS-specific error indicators in the response
+        if (!responseData.Success && responseData.Success !== undefined) {
+            logger.error("JRS API business logic error", {
+                orderId: payload.orderId,
+                shippingReferenceNo,
+                success: responseData.Success,
+                errorMessage: responseData.ErrorMessage,
+                errorCode: responseData.ErrorCode,
             });
             res.status(400).json({
                 error: "JRS API request failed",
@@ -304,8 +320,8 @@ exports.createJRSShipping = (0, https_1.onRequest)({
         logger.info("JRS API success", {
             orderId: payload.orderId,
             shippingReferenceNo,
-            trackingId: (_12 = responseData.ShippingRequestEntityDto) === null || _12 === void 0 ? void 0 : _12.TrackingId,
-            totalShippingAmount: (_13 = responseData.ShippingRequestEntityDto) === null || _13 === void 0 ? void 0 : _13.TotalShippingAmount,
+            trackingId: (_19 = responseData.ShippingRequestEntityDto) === null || _19 === void 0 ? void 0 : _19.TrackingId,
+            totalShippingAmount: (_20 = responseData.ShippingRequestEntityDto) === null || _20 === void 0 ? void 0 : _20.TotalShippingAmount,
         });
         // Update order in Firestore with JRS response
         try {
@@ -317,9 +333,9 @@ exports.createJRSShipping = (0, https_1.onRequest)({
                     jrs: {
                         response: responseData,
                         shippingReferenceNo: shippingReferenceNo,
-                        trackingId: (_14 = responseData.ShippingRequestEntityDto) === null || _14 === void 0 ? void 0 : _14.TrackingId,
+                        trackingId: (_21 = responseData.ShippingRequestEntityDto) === null || _21 === void 0 ? void 0 : _21.TrackingId,
                         requestedAt: new Date(),
-                        totalShippingAmount: (_15 = responseData.ShippingRequestEntityDto) === null || _15 === void 0 ? void 0 : _15.TotalShippingAmount,
+                        totalShippingAmount: (_22 = responseData.ShippingRequestEntityDto) === null || _22 === void 0 ? void 0 : _22.TotalShippingAmount,
                         pickupSchedule: jrsRequest.apiShippingRequest.requestedPickupSchedule,
                     }
                 },
@@ -329,7 +345,7 @@ exports.createJRSShipping = (0, https_1.onRequest)({
                     ...currentHistory,
                     {
                         status: "shipping",
-                        note: `Order shipped via JRS Express. Reference: ${shippingReferenceNo}, Tracking: ${(_16 = responseData.ShippingRequestEntityDto) === null || _16 === void 0 ? void 0 : _16.TrackingId}`,
+                        note: `Order shipped via JRS Express. Reference: ${shippingReferenceNo}, Tracking: ${(_23 = responseData.ShippingRequestEntityDto) === null || _23 === void 0 ? void 0 : _23.TrackingId}`,
                         timestamp: new Date(),
                     },
                 ],
@@ -339,7 +355,7 @@ exports.createJRSShipping = (0, https_1.onRequest)({
             logger.info("Order updated in Firestore", {
                 orderId: payload.orderId,
                 collection: orderResult.collection,
-                trackingId: (_17 = responseData.ShippingRequestEntityDto) === null || _17 === void 0 ? void 0 : _17.TrackingId,
+                trackingId: (_24 = responseData.ShippingRequestEntityDto) === null || _24 === void 0 ? void 0 : _24.TrackingId,
             });
         }
         catch (firestoreError) {
@@ -353,22 +369,22 @@ exports.createJRSShipping = (0, https_1.onRequest)({
         res.status(200).json({
             success: true,
             shippingReferenceNo,
-            trackingId: (_18 = responseData.ShippingRequestEntityDto) === null || _18 === void 0 ? void 0 : _18.TrackingId,
-            totalShippingAmount: (_19 = responseData.ShippingRequestEntityDto) === null || _19 === void 0 ? void 0 : _19.TotalShippingAmount,
+            trackingId: (_25 = responseData.ShippingRequestEntityDto) === null || _25 === void 0 ? void 0 : _25.TrackingId,
+            totalShippingAmount: (_26 = responseData.ShippingRequestEntityDto) === null || _26 === void 0 ? void 0 : _26.TotalShippingAmount,
             jrsResponse: responseData,
             message: "Shipping request created successfully",
             orderData: {
                 orderId: payload.orderId,
                 recipient: `${recipientInfo.firstName} ${recipientInfo.lastName}`,
                 shipper: `${shipperInfo.firstName} ${shipperInfo.lastName}`,
-                items: ((_20 = orderData.items) === null || _20 === void 0 ? void 0 : _20.length) || 0,
+                items: ((_27 = orderData.items) === null || _27 === void 0 ? void 0 : _27.length) || 0,
             },
         });
     }
     catch (error) {
         logger.error("Error in createJRSShipping", {
             error: error instanceof Error ? error.message : "Unknown error",
-            orderId: (_21 = req.body) === null || _21 === void 0 ? void 0 : _21.orderId,
+            orderId: (_28 = req.body) === null || _28 === void 0 ? void 0 : _28.orderId,
             stack: error instanceof Error ? error.stack : undefined,
         });
         res.status(500).json({
