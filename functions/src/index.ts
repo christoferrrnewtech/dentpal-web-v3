@@ -162,13 +162,22 @@ const calculateShipmentItems = (orderItems: any[]): ShipmentItem[] => {
     weight: 0.5, // kg
   };
 
-  return orderItems.map((item) => ({
-    length: item.dimensions?.length || defaultDimensions.length,
-    width: item.dimensions?.width || defaultDimensions.width,
-    height: item.dimensions?.height || defaultDimensions.height,
-    weight: item.dimensions?.weight || defaultDimensions.weight,
-    declaredValue: item.price || 100,
-  }));
+  return orderItems.map((item) => {
+    const quantity = typeof item.quantity === "number" && item.quantity > 0 ? item.quantity : 1;
+    const length = item.dimensions?.length || defaultDimensions.length;
+    const width = item.dimensions?.width || defaultDimensions.width;
+    const height = item.dimensions?.height || defaultDimensions.height;
+    const unitWeight = item.dimensions?.weight || defaultDimensions.weight;
+    const unitDeclaredValue = item.price || 100;
+
+    return {
+      length,
+      width,
+      height,
+      weight: unitWeight * quantity,
+      declaredValue: unitDeclaredValue * quantity,
+    };
+  });
 };
 
 const generateShipmentDescription = (items: any[]): string => {
