@@ -444,7 +444,8 @@ export const createJRSShipping = onRequest({
     }
 
     // Generate shipping reference number
-    const shippingReferenceNo = `DPAL-${payload.orderId}-${Date.now()}`;
+    const randomSuffix = Math.random().toString(36).substring(2, 15);
+    const shippingReferenceNo = `DPAL-${payload.orderId}-${Date.now()}-${randomSuffix}`;
 
     // Parse recipient address
     const recipientAddress = parseAddress(orderData.shippingInfo || {});
@@ -452,15 +453,16 @@ export const createJRSShipping = onRequest({
     // Prepare recipient info (buyer/user)
     const recipientInfo = {
       email: payload.recipientInfo?.email || userData?.email || orderData.shippingInfo?.email || "customer@dentpal.ph",
-      firstName: payload.recipientInfo?.firstName || userData?.firstName || orderData.shippingInfo?.fullName?.split(' ')[0] || "Customer",
-      lastName: payload.recipientInfo?.lastName || userData?.lastName || orderData.shippingInfo?.fullName?.split(' ').slice(1).join(' ') || "N/A",
+      firstName: payload.recipientInfo?.firstName || userData?.firstName || 
+                 orderData.shippingInfo?.fullName || "Customer",
+      lastName: payload.recipientInfo?.lastName || userData?.lastName || "N/A",
       middleName: payload.recipientInfo?.middleName || userData?.middleName || "",
       country: payload.recipientInfo?.country || recipientAddress.country,
       province: payload.recipientInfo?.province || recipientAddress.state,
       municipality: payload.recipientInfo?.municipality || recipientAddress.city,
       district: payload.recipientInfo?.district || recipientAddress.district,
       addressLine1: payload.recipientInfo?.addressLine1 || recipientAddress.addressLine1,
-      phone: payload.recipientInfo?.phone || orderData.shippingInfo?.phoneNumber || userData?.contactNumber || "+639123456789",
+      phone: payload.recipientInfo?.phone || orderData.shippingInfo?.phoneNumber || userData?.contactNumber,
     };
 
     // Prepare shipper info (seller)
