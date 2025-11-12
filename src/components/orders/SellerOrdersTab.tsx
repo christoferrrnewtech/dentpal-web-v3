@@ -224,7 +224,7 @@ export const OrderTab: React.FC<OrderTabProps> = ({
     setShippingLoading(order.id);
     
     try {
-      // First update the order status locally
+    // First update the order status locally
       await OrdersService.updateOrderStatus(order.id, 'processing');
       
       // Create JRS shipping request with pickup schedule
@@ -232,10 +232,18 @@ export const OrderTab: React.FC<OrderTabProps> = ({
       const requestedPickupSchedule = selectedDateTime.toISOString();
       
       // Call improved Firebase Function with minimal payload
+      const idToken = await auth.currentUser?.getIdToken();
+      if (!idToken) {
+        alert('Unable to authenticate your shipping request. Please sign in again.');
+        setShippingLoading(null);
+        return;
+      }
+
       const response = await fetch('https://us-central1-dentpal-161e5.cloudfunctions.net/createJRSShipping', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          Authorization: `Bearer ${idToken}`,
         },
         body: JSON.stringify({
           orderId: order.id,
@@ -244,12 +252,11 @@ export const OrderTab: React.FC<OrderTabProps> = ({
           remarks: `DentPal Order #${order.id} - Pickup scheduled for ${pickupDate} at ${pickupTime}`,
         }),
       });
-
+      
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
         throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`);
       }
-
       const jrsResponse = await response.json();
       
       console.log('Creating JRS shipping request for order:', order.id, 'Pickup:', requestedPickupSchedule);
@@ -280,10 +287,15 @@ export const OrderTab: React.FC<OrderTabProps> = ({
         ? error.message 
         : 'Failed to process shipping request';
         
-      alert(`Error: ${errorMessage}. The order status has been updated but shipping integration may have failed.`);
-      
-      // Still navigate to shipping tab and refresh
-      setActiveSubTab('shipping');
+      alert(`Error: ${errorMessage}. Shipping was not completed; the order has been returned to To Ship.`);
+      if (order) {
+        try {
+          await OrdersService.updateOrderStatus(order.id, 'to-ship');
+        } catch (rollbackError) {
+          console.error('Failed to roll back order status after shipping error:', rollbackError);
+        }
+      }
+      setActiveSubTab('to-ship');
       setPage(1);
       onRefresh?.();
     } finally {
