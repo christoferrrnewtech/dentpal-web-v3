@@ -1,6 +1,6 @@
 import React from 'react';
 import { Order } from '@/types/order';
-import { ChevronDown, ChevronUp, Printer, FileText, Download, Eye } from 'lucide-react';
+import { ChevronDown, ChevronUp, Printer, FileText, Download, Eye, Loader2 } from 'lucide-react';
 
 interface OrderRowProps {
   order: Order;
@@ -9,7 +9,10 @@ interface OrderRowProps {
   isToShip?: boolean;    
   onMoveToArrangement?: (order: Order) => void; 
   onMoveToHandOver?: (order: Order) => void; 
-  onConfirmHandover?: (order: Order) => void; 
+  onConfirmHandover?: (order: Order) => void;
+  onMoveToPack?: (order: Order) => void; // Move back from arrangement to pack
+  onMoveToShipping?: (order: Order) => void; // Move from hand-over to shipping
+  isShippingLoading?: boolean; // Loading state for shipping requests
 }
 
 const buildInvoiceHTML = (order: Order) => {
@@ -158,7 +161,7 @@ const moveToArrangement = (order: Order, onMove?: (order: Order) => void) => {
   }
 };
 
-const OrderRow: React.FC<OrderRowProps> = ({ order, onDetails, onClick, isToShip = false, onMoveToArrangement, onMoveToHandOver, onConfirmHandover }) => {
+const OrderRow: React.FC<OrderRowProps> = ({ order, onDetails, onClick, isToShip = false, onMoveToArrangement, onMoveToHandOver, onConfirmHandover, onMoveToPack, onMoveToShipping, isShippingLoading = false }) => {
   const [open, setOpen] = React.useState(false);
   const [menuOpen, setMenuOpen] = React.useState(false);
   const [itemsOpen, setItemsOpen] = React.useState(false);
@@ -261,49 +264,74 @@ const OrderRow: React.FC<OrderRowProps> = ({ order, onDetails, onClick, isToShip
             <div className="flex items-center gap-2">
               <button
                 type="button"
+                className="text-xs px-3 py-1 border border-gray-400 text-gray-600 rounded-md font-medium hover:bg-gray-50"
+                onClick={() => onMoveToPack?.(order)}
+              >
+                ← To Pack
+              </button>
+              <button
+                type="button"
                 className="text-xs px-3 py-1 border border-orange-600 text-orange-700 rounded-md font-medium hover:bg-orange-50"
                 onClick={() => onMoveToHandOver?.(order)}
               >
-                To Hand Over
+                To Hand Over →
               </button>
             </div>
           ) : order.fulfillmentStage === 'to-hand-over' ? (
             <div className="flex items-center gap-2">
               <button
                 type="button"
-                className="text-xs px-3 py-1 border border-teal-600 text-teal-700 rounded-md font-medium hover:bg-teal-50"
-                onClick={() => onConfirmHandover?.(order)}
+                className="text-xs px-3 py-1 border border-gray-400 text-gray-600 rounded-md font-medium hover:bg-gray-50"
+                onClick={() => onMoveToArrangement?.(order)}
               >
-                Confirm
+                ← To Arrangement
+              </button>
+              <button
+                type="button"
+                className="text-xs px-3 py-1 border border-teal-600 text-teal-700 rounded-md font-medium hover:bg-teal-50 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                onClick={() => onMoveToShipping?.(order)}
+                disabled={isShippingLoading}
+              >
+                {isShippingLoading && <Loader2 className="w-3 h-3 animate-spin" />}
+                {isShippingLoading ? 'Shipping...' : 'Ship →'}
               </button>
             </div>
           ) : (
-            // Default (to-pack): keep existing dropdown with details/actions
-            <div className="relative" data-actions-menu>
+            // Default (to-pack): show move to arrangement button + details dropdown
+            <div className="flex items-center gap-2">
               <button
                 type="button"
-                className="text-xs px-3 py-1 border border-teal-600 text-teal-700 rounded-md font-medium hover:bg-teal-50 flex items-center gap-1"
-                onClick={(e) => { e.stopPropagation(); setMenuOpen(v => !v); }}
-                title="Options"
+                className="text-xs px-3 py-1 border border-blue-600 text-blue-700 rounded-md font-medium hover:bg-blue-50"
+                onClick={() => onMoveToArrangement?.(order)}
               >
-                Details <ChevronDown className="w-3 h-3" />
+                To Arrangement →
               </button>
-              {menuOpen && (
-                <div className="absolute right-0 mt-2 w-48 bg-white border border-gray-200 rounded-lg shadow-lg overflow-hidden z-10">
-                  <button type="button" className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 flex items-center gap-2" onClick={() => { setMenuOpen(false); handleDetails(); }}>
-                    <Eye className="w-4 h-4" /> Details
-                  </button>
-                  <button type="button" className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 flex items-center gap-2" onClick={() => { setMenuOpen(false); printInvoice(order); }}>
-                    <Printer className="w-4 h-4" /> Print invoice
-                  </button>
-                  <button type="button" className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 flex items-center gap-2" onClick={() => { setMenuOpen(false); exportCSV(order); }}>
-                    <Download className="w-4 h-4" /> Export CSV
-                  </button>
-                  <button type="button" className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 flex items-center gap-2" onClick={() => { setMenuOpen(false); exportPDF(order); }}>
-                    <FileText className="w-4 h-4" /> Export PDF
-                  </button>
-                </div>
-              )}
+              <div className="relative" data-actions-menu>
+                <button
+                  type="button"
+                  className="text-xs px-3 py-1 border border-teal-600 text-teal-700 rounded-md font-medium hover:bg-teal-50 flex items-center gap-1"
+                  onClick={(e) => { e.stopPropagation(); setMenuOpen(v => !v); }}
+                  title="Options"
+                >
+                  Details <ChevronDown className="w-3 h-3" />
+                </button>
+                {menuOpen && (
+                  <div className="absolute right-0 mt-2 w-48 bg-white border border-gray-200 rounded-lg shadow-lg overflow-hidden z-10">
+                    <button type="button" className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 flex items-center gap-2" onClick={() => { setMenuOpen(false); handleDetails(); }}>
+                      <Eye className="w-4 h-4" /> Details
+                    </button>
+                    <button type="button" className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 flex items-center gap-2" onClick={() => { setMenuOpen(false); printInvoice(order); }}>
+                      <Printer className="w-4 h-4" /> Print invoice
+                    </button>
+                    <button type="button" className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 flex items-center gap-2" onClick={() => { setMenuOpen(false); exportCSV(order); }}>
+                      <Download className="w-4 h-4" /> Export CSV
+                    </button>
+                    <button type="button" className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 flex items-center gap-2" onClick={() => { setMenuOpen(false); exportPDF(order); }}>
+                      <FileText className="w-4 h-4" /> Export PDF
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
           )
         ) : (
@@ -417,11 +445,24 @@ const OrderRow: React.FC<OrderRowProps> = ({ order, onDetails, onClick, isToShip
               <button className="text-sm px-3 py-2 rounded border border-gray-200 hover:bg-gray-50" onClick={() => setOpen(false)}>Close</button>
               {isToShip ? (
                 order.fulfillmentStage === 'to-arrangement' ? (
-                  <button className="text-sm px-3 py-2 rounded bg-orange-600 text-white hover:bg-orange-700" onClick={() => { onMoveToHandOver?.(order); setOpen(false); }}>To Hand Over</button>
+                  <>
+                    <button className="text-sm px-3 py-2 rounded border border-gray-400 text-gray-600 hover:bg-gray-50" onClick={() => { onMoveToPack?.(order); setOpen(false); }}>← To Pack</button>
+                    <button className="text-sm px-3 py-2 rounded bg-orange-600 text-white hover:bg-orange-700" onClick={() => { onMoveToHandOver?.(order); setOpen(false); }}>To Hand Over →</button>
+                  </>
                 ) : order.fulfillmentStage === 'to-hand-over' ? (
-                  <button className="text-sm px-3 py-2 rounded bg-teal-600 text-white hover:bg-teal-700" onClick={() => { onConfirmHandover?.(order); setOpen(false); }}>Confirm</button>
+                  <>
+                    <button className="text-sm px-3 py-2 rounded border border-gray-400 text-gray-600 hover:bg-gray-50" onClick={() => { onMoveToArrangement?.(order); setOpen(false); }}>← To Arrangement</button>
+                    <button 
+                      className="text-sm px-3 py-2 rounded bg-teal-600 text-white hover:bg-teal-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2" 
+                      onClick={() => { onMoveToShipping?.(order); setOpen(false); }}
+                      disabled={isShippingLoading}
+                    >
+                      {isShippingLoading && <Loader2 className="w-4 h-4 animate-spin" />}
+                      {isShippingLoading ? 'Shipping...' : 'Ship →'}
+                    </button>
+                  </>
                 ) : (
-                  <button className="text-sm px-3 py-2 rounded bg-teal-600 text-white hover:bg-teal-700" onClick={() => { moveToArrangement(order, onMoveToArrangement); setOpen(false); }}>Move to Arrangement</button>
+                  <button className="text-sm px-3 py-2 rounded bg-blue-600 text-white hover:bg-blue-700" onClick={() => { onMoveToArrangement?.(order); setOpen(false); }}>To Arrangement →</button>
                 )
               ) : (
                 <button className="text-sm px-3 py-2 rounded bg-teal-600 text-white hover:bg-teal-700" onClick={() => { printInvoice(order); setOpen(false); }}>Print Invoice</button>
