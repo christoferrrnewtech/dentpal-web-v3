@@ -1,5 +1,5 @@
 import { db } from '@/lib/firebase';
-import { collection, onSnapshot, query, where, DocumentData, QuerySnapshot, doc, getDoc, updateDoc } from 'firebase/firestore';
+import { collection, onSnapshot, query, where, DocumentData, QuerySnapshot, doc, getDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { getStorage, ref, getDownloadURL } from 'firebase/storage';
 import type { Order } from '@/types/order';
 
@@ -406,7 +406,7 @@ const OrdersService = {
           const newHistoryEntry = {
             status: stage,
             note: statusNotes[stage],
-            timestamp: new Date()
+            timestamp: serverTimestamp()
           };
 
           await updateDoc(docRef, { 
@@ -452,7 +452,7 @@ const OrdersService = {
           const newHistoryEntry = {
             status: status,
             note: statusNotes[status],
-            timestamp: new Date()
+            timestamp: serverTimestamp()
           };
 
           await updateDoc(docRef, { 
@@ -477,6 +477,12 @@ const OrdersService = {
         const docSnap = await getDoc(docRef);
         if (docSnap.exists()) {
           const currentData = docSnap.data();
+          
+          // Validate current fulfillment stage matches expected fromStage
+          if (currentData.fulfillmentStage !== fromStage) {
+            throw new Error(`Order not in expected stage. Current: ${currentData.fulfillmentStage}, Expected: ${fromStage}`);
+          }
+          
           const currentHistory = Array.isArray(currentData.statusHistory) ? currentData.statusHistory : [];
           
           const reverseNotes = {
@@ -487,7 +493,7 @@ const OrdersService = {
           const newHistoryEntry = {
             status: toStage,
             note: reverseNotes[toStage],
-            timestamp: new Date()
+            timestamp: serverTimestamp()
           };
 
           await updateDoc(docRef, { 

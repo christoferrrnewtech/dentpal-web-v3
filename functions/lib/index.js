@@ -5,14 +5,35 @@ const https_1 = require("firebase-functions/v2/https");
 const logger = require("firebase-functions/logger");
 const app_1 = require("firebase-admin/app");
 const firestore_1 = require("firebase-admin/firestore");
+const auth_1 = require("firebase-admin/auth");
 const params_1 = require("firebase-functions/params");
 const axios_1 = require("axios");
 // Initialize Firebase Admin
 (0, app_1.initializeApp)();
 const db = (0, firestore_1.getFirestore)();
+const auth = (0, auth_1.getAuth)();
 // Define parameters for JRS API
 const JRS_API_KEY = (0, params_1.defineString)("JRS_API_KEY");
 const JRS_API_URL = (0, params_1.defineString)("JRS_API_URL", { default: "https://jrs-express.azure-api.net/qa-online-shipping-ship/ShippingRequestFunction" });
+const verifyAuthToken = async (authorizationHeader) => {
+    if (!authorizationHeader) {
+        throw new Error("Missing Authorization header");
+    }
+    const token = authorizationHeader.startsWith("Bearer ")
+        ? authorizationHeader.substring(7)
+        : authorizationHeader;
+    if (!token) {
+        throw new Error("Invalid Authorization header format");
+    }
+    try {
+        const decodedToken = await auth.verifyIdToken(token);
+        return decodedToken;
+    }
+    catch (error) {
+        logger.error("Token verification failed", { error });
+        throw new Error("Invalid or expired authentication token");
+    }
+};
 // Helper functions
 const fetchOrderData = async (orderId) => {
     const collections = ["Order", "orders"];
@@ -90,6 +111,26 @@ exports.trackJRSShipment = (0, https_1.onRequest)({
             res.status(405).json({ error: "Method not allowed" });
             return;
         }
+        // Verify authentication token
+        let decodedToken;
+        try {
+            decodedToken = await verifyAuthToken(req.headers.authorization);
+            logger.info("Authenticated tracking request", {
+                uid: decodedToken.uid,
+                email: decodedToken.email
+            });
+        }
+        catch (authError) {
+            logger.warn("Unauthenticated tracking request attempt", {
+                ip: req.ip,
+                userAgent: req.headers["user-agent"]
+            });
+            res.status(401).json({
+                error: "Authentication required",
+                message: authError instanceof Error ? authError.message : "Invalid authentication"
+            });
+            return;
+        }
         const { orderId, trackingId, shippingReferenceNo } = req.method === "GET" ? req.query : req.body;
         if (!orderId && !trackingId && !shippingReferenceNo) {
             res.status(400).json({ error: "Missing orderId, trackingId, or shippingReferenceNo" });
@@ -98,8 +139,35 @@ exports.trackJRSShipment = (0, https_1.onRequest)({
         // If orderId is provided, fetch tracking info from order data
         if (orderId) {
             const orderResult = await fetchOrderData(orderId);
-            if ((_b = (_a = orderResult === null || orderResult === void 0 ? void 0 : orderResult.data) === null || _a === void 0 ? void 0 : _a.shippingInfo) === null || _b === void 0 ? void 0 : _b.jrs) {
-                const jrsData = orderResult.data.shippingInfo.jrs;
+            if (!(orderResult === null || orderResult === void 0 ? void 0 : orderResult.data)) {
+                res.status(404).json({ error: "Order not found" });
+                return;
+            }
+            const orderData = orderResult.data;
+            // Authorization check for tracking - same logic as shipping
+            const isOrderOwner = orderData.userId === decodedToken.uid;
+            const isAdmin = decodedToken.role === 'admin' ||
+                ((_a = decodedToken.customClaims) === null || _a === void 0 ? void 0 : _a.role) === 'admin';
+            let isSeller = false;
+            if (orderData.sellerIds && Array.isArray(orderData.sellerIds)) {
+                const sellerPromises = orderData.sellerIds.map((sellerId) => db.collection("Seller").doc(sellerId).get());
+                const sellerDocs = await Promise.all(sellerPromises);
+                isSeller = sellerDocs.some(doc => { var _a, _b; return doc.exists && (((_a = doc.data()) === null || _a === void 0 ? void 0 : _a.userId) === decodedToken.uid || ((_b = doc.data()) === null || _b === void 0 ? void 0 : _b.email) === decodedToken.email); });
+            }
+            if (!isOrderOwner && !isAdmin && !isSeller) {
+                logger.warn("Unauthorized tracking request", {
+                    orderId: orderId,
+                    authenticatedUser: decodedToken.uid,
+                    orderOwner: orderData.userId
+                });
+                res.status(403).json({
+                    error: "Access denied",
+                    message: "You are not authorized to view tracking for this order"
+                });
+                return;
+            }
+            if ((_b = orderData.shippingInfo) === null || _b === void 0 ? void 0 : _b.jrs) {
+                const jrsData = orderData.shippingInfo.jrs;
                 res.status(200).json({
                     success: true,
                     orderId: orderId,
@@ -135,11 +203,31 @@ exports.trackJRSShipment = (0, https_1.onRequest)({
 exports.createJRSShipping = (0, https_1.onRequest)({
     cors: true,
 }, async (req, res) => {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _0, _1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12, _13, _14, _15, _16, _17, _18, _19, _20, _21, _22, _23, _24, _25, _26, _27, _28;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _0, _1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12, _13, _14, _15, _16, _17, _18, _19, _20, _21, _22, _23, _24, _25, _26, _27, _28, _29, _30, _31;
     try {
         // Check for POST method
         if (req.method !== "POST") {
             res.status(405).json({ error: "Method not allowed" });
+            return;
+        }
+        // Verify authentication token
+        let decodedToken;
+        try {
+            decodedToken = await verifyAuthToken(req.headers.authorization);
+            logger.info("Authenticated shipping request", {
+                uid: decodedToken.uid,
+                email: decodedToken.email
+            });
+        }
+        catch (authError) {
+            logger.warn("Unauthenticated shipping request attempt", {
+                ip: req.ip,
+                userAgent: req.headers["user-agent"]
+            });
+            res.status(401).json({
+                error: "Authentication required",
+                message: authError instanceof Error ? authError.message : "Invalid authentication"
+            });
             return;
         }
         const payload = req.body;
@@ -148,7 +236,10 @@ exports.createJRSShipping = (0, https_1.onRequest)({
             res.status(400).json({ error: "Missing orderId" });
             return;
         }
-        logger.info("Processing JRS shipping request", { orderId: payload.orderId });
+        logger.info("Processing JRS shipping request", {
+            orderId: payload.orderId,
+            authenticatedUser: decodedToken.uid
+        });
         // Fetch order data from Firestore
         const orderResult = await fetchOrderData(payload.orderId);
         if (!orderResult) {
@@ -158,6 +249,55 @@ exports.createJRSShipping = (0, https_1.onRequest)({
         const orderData = orderResult.data;
         if (!orderData) {
             res.status(404).json({ error: "Order data not found" });
+            return;
+        }
+        // Authorization check - ensure user can access this order
+        // Allow if user is the order owner, a seller involved, or an admin
+        const isOrderOwner = orderData.userId === decodedToken.uid;
+        const isAdmin = decodedToken.role === 'admin' ||
+            ((_a = decodedToken.customClaims) === null || _a === void 0 ? void 0 : _a.role) === 'admin';
+        let isSeller = false;
+        if (orderData.sellerIds && Array.isArray(orderData.sellerIds)) {
+            // Check if authenticated user is one of the sellers for this order
+            const sellerPromises = orderData.sellerIds.map((sellerId) => db.collection("Seller").doc(sellerId).get());
+            const sellerDocs = await Promise.all(sellerPromises);
+            isSeller = sellerDocs.some(doc => { var _a, _b; return doc.exists && (((_a = doc.data()) === null || _a === void 0 ? void 0 : _a.userId) === decodedToken.uid || ((_b = doc.data()) === null || _b === void 0 ? void 0 : _b.email) === decodedToken.email); });
+        }
+        if (!isOrderOwner && !isAdmin && !isSeller) {
+            logger.warn("Unauthorized shipping request", {
+                orderId: payload.orderId,
+                authenticatedUser: decodedToken.uid,
+                orderOwner: orderData.userId,
+                sellerIds: orderData.sellerIds
+            });
+            res.status(403).json({
+                error: "Access denied",
+                message: "You are not authorized to create shipping for this order"
+            });
+            return;
+        }
+        // Prevent duplicate shipping requests
+        if ((_c = (_b = orderData.shippingInfo) === null || _b === void 0 ? void 0 : _b.jrs) === null || _c === void 0 ? void 0 : _c.trackingId) {
+            logger.warn("Duplicate shipping request attempted", {
+                orderId: payload.orderId,
+                existingTrackingId: orderData.shippingInfo.jrs.trackingId,
+                authenticatedUser: decodedToken.uid
+            });
+            res.status(409).json({
+                error: "Order already shipped",
+                message: `This order has already been shipped with tracking ID: ${orderData.shippingInfo.jrs.trackingId}`,
+                existingTrackingId: orderData.shippingInfo.jrs.trackingId
+            });
+            return;
+        }
+        // Validate order status - only allow shipping for confirmed/paid orders
+        const allowedStatuses = ['confirmed', 'paid', 'processing', 'ready_to_ship'];
+        if (orderData.status && !allowedStatuses.includes(orderData.status)) {
+            res.status(400).json({
+                error: "Invalid order status",
+                message: `Cannot create shipping for order with status: ${orderData.status}`,
+                currentStatus: orderData.status
+            });
             return;
         }
         // Fetch user (recipient) data
@@ -176,16 +316,16 @@ exports.createJRSShipping = (0, https_1.onRequest)({
         const recipientAddress = parseAddress(orderData.shippingInfo || {});
         // Prepare recipient info (buyer/user)
         const recipientInfo = {
-            email: ((_a = payload.recipientInfo) === null || _a === void 0 ? void 0 : _a.email) || (userData === null || userData === void 0 ? void 0 : userData.email) || ((_b = orderData.shippingInfo) === null || _b === void 0 ? void 0 : _b.email) || "customer@dentpal.ph",
-            firstName: ((_c = payload.recipientInfo) === null || _c === void 0 ? void 0 : _c.firstName) || (userData === null || userData === void 0 ? void 0 : userData.firstName) || ((_e = (_d = orderData.shippingInfo) === null || _d === void 0 ? void 0 : _d.fullName) === null || _e === void 0 ? void 0 : _e.split(' ')[0]) || "Customer",
-            lastName: ((_f = payload.recipientInfo) === null || _f === void 0 ? void 0 : _f.lastName) || (userData === null || userData === void 0 ? void 0 : userData.lastName) || ((_h = (_g = orderData.shippingInfo) === null || _g === void 0 ? void 0 : _g.fullName) === null || _h === void 0 ? void 0 : _h.split(' ').slice(1).join(' ')) || "N/A",
-            middleName: ((_j = payload.recipientInfo) === null || _j === void 0 ? void 0 : _j.middleName) || (userData === null || userData === void 0 ? void 0 : userData.middleName) || "",
-            country: ((_k = payload.recipientInfo) === null || _k === void 0 ? void 0 : _k.country) || recipientAddress.country,
-            province: ((_l = payload.recipientInfo) === null || _l === void 0 ? void 0 : _l.province) || recipientAddress.state,
-            municipality: ((_m = payload.recipientInfo) === null || _m === void 0 ? void 0 : _m.municipality) || recipientAddress.city,
-            district: ((_o = payload.recipientInfo) === null || _o === void 0 ? void 0 : _o.district) || recipientAddress.district,
-            addressLine1: ((_p = payload.recipientInfo) === null || _p === void 0 ? void 0 : _p.addressLine1) || recipientAddress.addressLine1,
-            phone: ((_q = payload.recipientInfo) === null || _q === void 0 ? void 0 : _q.phone) || ((_r = orderData.shippingInfo) === null || _r === void 0 ? void 0 : _r.phoneNumber) || (userData === null || userData === void 0 ? void 0 : userData.contactNumber) || "+639123456789",
+            email: ((_d = payload.recipientInfo) === null || _d === void 0 ? void 0 : _d.email) || (userData === null || userData === void 0 ? void 0 : userData.email) || ((_e = orderData.shippingInfo) === null || _e === void 0 ? void 0 : _e.email) || "customer@dentpal.ph",
+            firstName: ((_f = payload.recipientInfo) === null || _f === void 0 ? void 0 : _f.firstName) || (userData === null || userData === void 0 ? void 0 : userData.firstName) || ((_h = (_g = orderData.shippingInfo) === null || _g === void 0 ? void 0 : _g.fullName) === null || _h === void 0 ? void 0 : _h.split(' ')[0]) || "Customer",
+            lastName: ((_j = payload.recipientInfo) === null || _j === void 0 ? void 0 : _j.lastName) || (userData === null || userData === void 0 ? void 0 : userData.lastName) || ((_l = (_k = orderData.shippingInfo) === null || _k === void 0 ? void 0 : _k.fullName) === null || _l === void 0 ? void 0 : _l.split(' ').slice(1).join(' ')) || "N/A",
+            middleName: ((_m = payload.recipientInfo) === null || _m === void 0 ? void 0 : _m.middleName) || (userData === null || userData === void 0 ? void 0 : userData.middleName) || "",
+            country: ((_o = payload.recipientInfo) === null || _o === void 0 ? void 0 : _o.country) || recipientAddress.country,
+            province: ((_p = payload.recipientInfo) === null || _p === void 0 ? void 0 : _p.province) || recipientAddress.state,
+            municipality: ((_q = payload.recipientInfo) === null || _q === void 0 ? void 0 : _q.municipality) || recipientAddress.city,
+            district: ((_r = payload.recipientInfo) === null || _r === void 0 ? void 0 : _r.district) || recipientAddress.district,
+            addressLine1: ((_s = payload.recipientInfo) === null || _s === void 0 ? void 0 : _s.addressLine1) || recipientAddress.addressLine1,
+            phone: ((_t = payload.recipientInfo) === null || _t === void 0 ? void 0 : _t.phone) || ((_u = orderData.shippingInfo) === null || _u === void 0 ? void 0 : _u.phoneNumber) || (userData === null || userData === void 0 ? void 0 : userData.contactNumber) || "+639123456789",
         };
         // Prepare shipper info (seller)
         const defaultShipperAddress = {
@@ -197,7 +337,7 @@ exports.createJRSShipping = (0, https_1.onRequest)({
             phone: "+639123456789",
         };
         let shipperAddress = defaultShipperAddress;
-        if ((_t = (_s = sellerData === null || sellerData === void 0 ? void 0 : sellerData.vendor) === null || _s === void 0 ? void 0 : _s.company) === null || _t === void 0 ? void 0 : _t.address) {
+        if ((_w = (_v = sellerData === null || sellerData === void 0 ? void 0 : sellerData.vendor) === null || _v === void 0 ? void 0 : _v.company) === null || _w === void 0 ? void 0 : _w.address) {
             const sellerAddr = sellerData.vendor.company.address;
             shipperAddress = {
                 country: "Philippines",
@@ -205,20 +345,20 @@ exports.createJRSShipping = (0, https_1.onRequest)({
                 municipality: sellerAddr.city || defaultShipperAddress.municipality,
                 district: sellerAddr.line2 || defaultShipperAddress.district,
                 addressLine1: sellerAddr.line1 || defaultShipperAddress.addressLine1,
-                phone: ((_u = sellerData.vendor.contacts) === null || _u === void 0 ? void 0 : _u.phone) || defaultShipperAddress.phone,
+                phone: ((_x = sellerData.vendor.contacts) === null || _x === void 0 ? void 0 : _x.phone) || defaultShipperAddress.phone,
             };
         }
         const shipperInfo = {
-            email: ((_v = payload.shipperInfo) === null || _v === void 0 ? void 0 : _v.email) || (sellerData === null || sellerData === void 0 ? void 0 : sellerData.email) || "support@dentpal.ph",
-            firstName: ((_w = payload.shipperInfo) === null || _w === void 0 ? void 0 : _w.firstName) || ((_x = sellerData === null || sellerData === void 0 ? void 0 : sellerData.name) === null || _x === void 0 ? void 0 : _x.split(' ')[0]) || ((_z = (_y = sellerData === null || sellerData === void 0 ? void 0 : sellerData.vendor) === null || _y === void 0 ? void 0 : _y.company) === null || _z === void 0 ? void 0 : _z.storeName) || "DentPal",
-            lastName: ((_0 = payload.shipperInfo) === null || _0 === void 0 ? void 0 : _0.lastName) || ((_1 = sellerData === null || sellerData === void 0 ? void 0 : sellerData.name) === null || _1 === void 0 ? void 0 : _1.split(' ').slice(1).join(' ')) || "Support",
-            middleName: ((_2 = payload.shipperInfo) === null || _2 === void 0 ? void 0 : _2.middleName) || "",
-            country: ((_3 = payload.shipperInfo) === null || _3 === void 0 ? void 0 : _3.country) || shipperAddress.country,
-            province: ((_4 = payload.shipperInfo) === null || _4 === void 0 ? void 0 : _4.province) || shipperAddress.province,
-            municipality: ((_5 = payload.shipperInfo) === null || _5 === void 0 ? void 0 : _5.municipality) || shipperAddress.municipality,
-            district: ((_6 = payload.shipperInfo) === null || _6 === void 0 ? void 0 : _6.district) || shipperAddress.district,
-            addressLine1: ((_7 = payload.shipperInfo) === null || _7 === void 0 ? void 0 : _7.addressLine1) || shipperAddress.addressLine1,
-            phone: ((_8 = payload.shipperInfo) === null || _8 === void 0 ? void 0 : _8.phone) || shipperAddress.phone,
+            email: ((_y = payload.shipperInfo) === null || _y === void 0 ? void 0 : _y.email) || (sellerData === null || sellerData === void 0 ? void 0 : sellerData.email) || "support@dentpal.ph",
+            firstName: ((_z = payload.shipperInfo) === null || _z === void 0 ? void 0 : _z.firstName) || ((_0 = sellerData === null || sellerData === void 0 ? void 0 : sellerData.name) === null || _0 === void 0 ? void 0 : _0.split(' ')[0]) || ((_2 = (_1 = sellerData === null || sellerData === void 0 ? void 0 : sellerData.vendor) === null || _1 === void 0 ? void 0 : _1.company) === null || _2 === void 0 ? void 0 : _2.storeName) || "DentPal",
+            lastName: ((_3 = payload.shipperInfo) === null || _3 === void 0 ? void 0 : _3.lastName) || ((_4 = sellerData === null || sellerData === void 0 ? void 0 : sellerData.name) === null || _4 === void 0 ? void 0 : _4.split(' ').slice(1).join(' ')) || "Support",
+            middleName: ((_5 = payload.shipperInfo) === null || _5 === void 0 ? void 0 : _5.middleName) || "",
+            country: ((_6 = payload.shipperInfo) === null || _6 === void 0 ? void 0 : _6.country) || shipperAddress.country,
+            province: ((_7 = payload.shipperInfo) === null || _7 === void 0 ? void 0 : _7.province) || shipperAddress.province,
+            municipality: ((_8 = payload.shipperInfo) === null || _8 === void 0 ? void 0 : _8.municipality) || shipperAddress.municipality,
+            district: ((_9 = payload.shipperInfo) === null || _9 === void 0 ? void 0 : _9.district) || shipperAddress.district,
+            addressLine1: ((_10 = payload.shipperInfo) === null || _10 === void 0 ? void 0 : _10.addressLine1) || shipperAddress.addressLine1,
+            phone: ((_11 = payload.shipperInfo) === null || _11 === void 0 ? void 0 : _11.phone) || shipperAddress.phone,
         };
         // Calculate shipment items from order
         const shipmentItems = payload.shipmentItems || calculateShipmentItems(orderData.items || []);
@@ -226,7 +366,7 @@ exports.createJRSShipping = (0, https_1.onRequest)({
         const shipmentDescription = payload.shipmentDescription || generateShipmentDescription(orderData.items || []);
         // COD amount - use order total if cash on delivery
         const codAmount = payload.codAmountToCollect ||
-            (((_9 = orderData.paymentInfo) === null || _9 === void 0 ? void 0 : _9.method) === 'cod' ? ((_10 = orderData.summary) === null || _10 === void 0 ? void 0 : _10.total) || 0 : 0);
+            (((_12 = orderData.paymentInfo) === null || _12 === void 0 ? void 0 : _12.method) === 'cod' ? ((_13 = orderData.summary) === null || _13 === void 0 ? void 0 : _13.total) || 0 : 0);
         // Prepare JRS API request
         const jrsRequest = {
             requestType: "shipfromecom",
@@ -258,7 +398,7 @@ exports.createJRSShipping = (0, https_1.onRequest)({
                 shipperPhone: shipperInfo.phone,
                 requestedPickupSchedule: payload.requestedPickupSchedule || new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
                 shipmentDescription: shipmentDescription,
-                remarks: payload.remarks || ((_11 = orderData.shippingInfo) === null || _11 === void 0 ? void 0 : _11.notes) || "",
+                remarks: payload.remarks || ((_14 = orderData.shippingInfo) === null || _14 === void 0 ? void 0 : _14.notes) || "",
                 specialInstruction: payload.specialInstruction || "",
                 codAmountToCollect: codAmount,
                 shippingReferenceNo: shippingReferenceNo,
@@ -286,16 +426,16 @@ exports.createJRSShipping = (0, https_1.onRequest)({
         }
         catch (axiosError) {
             logger.error("JRS API error", {
-                status: (_12 = axiosError.response) === null || _12 === void 0 ? void 0 : _12.status,
-                statusText: (_13 = axiosError.response) === null || _13 === void 0 ? void 0 : _13.statusText,
+                status: (_15 = axiosError.response) === null || _15 === void 0 ? void 0 : _15.status,
+                statusText: (_16 = axiosError.response) === null || _16 === void 0 ? void 0 : _16.statusText,
                 orderId: payload.orderId,
                 shippingReferenceNo,
-                errorCode: ((_15 = (_14 = axiosError.response) === null || _14 === void 0 ? void 0 : _14.data) === null || _15 === void 0 ? void 0 : _15.ErrorCode) || axiosError.code,
-                errorMessage: ((_17 = (_16 = axiosError.response) === null || _16 === void 0 ? void 0 : _16.data) === null || _17 === void 0 ? void 0 : _17.ErrorMessage) || "Network error",
+                errorCode: ((_18 = (_17 = axiosError.response) === null || _17 === void 0 ? void 0 : _17.data) === null || _18 === void 0 ? void 0 : _18.ErrorCode) || axiosError.code,
+                errorMessage: ((_20 = (_19 = axiosError.response) === null || _19 === void 0 ? void 0 : _19.data) === null || _20 === void 0 ? void 0 : _20.ErrorMessage) || "Network error",
             });
             res.status(400).json({
                 error: "JRS API request failed",
-                details: ((_18 = axiosError.response) === null || _18 === void 0 ? void 0 : _18.data) || axiosError.message,
+                details: ((_21 = axiosError.response) === null || _21 === void 0 ? void 0 : _21.data) || axiosError.message,
                 shippingReferenceNo,
             });
             return;
@@ -320,8 +460,8 @@ exports.createJRSShipping = (0, https_1.onRequest)({
         logger.info("JRS API success", {
             orderId: payload.orderId,
             shippingReferenceNo,
-            trackingId: (_19 = responseData.ShippingRequestEntityDto) === null || _19 === void 0 ? void 0 : _19.TrackingId,
-            totalShippingAmount: (_20 = responseData.ShippingRequestEntityDto) === null || _20 === void 0 ? void 0 : _20.TotalShippingAmount,
+            trackingId: (_22 = responseData.ShippingRequestEntityDto) === null || _22 === void 0 ? void 0 : _22.TrackingId,
+            totalShippingAmount: (_23 = responseData.ShippingRequestEntityDto) === null || _23 === void 0 ? void 0 : _23.TotalShippingAmount,
         });
         // Update order in Firestore with JRS response
         try {
@@ -333,9 +473,9 @@ exports.createJRSShipping = (0, https_1.onRequest)({
                     jrs: {
                         response: responseData,
                         shippingReferenceNo: shippingReferenceNo,
-                        trackingId: (_21 = responseData.ShippingRequestEntityDto) === null || _21 === void 0 ? void 0 : _21.TrackingId,
+                        trackingId: (_24 = responseData.ShippingRequestEntityDto) === null || _24 === void 0 ? void 0 : _24.TrackingId,
                         requestedAt: new Date(),
-                        totalShippingAmount: (_22 = responseData.ShippingRequestEntityDto) === null || _22 === void 0 ? void 0 : _22.TotalShippingAmount,
+                        totalShippingAmount: (_25 = responseData.ShippingRequestEntityDto) === null || _25 === void 0 ? void 0 : _25.TotalShippingAmount,
                         pickupSchedule: jrsRequest.apiShippingRequest.requestedPickupSchedule,
                     }
                 },
@@ -345,8 +485,8 @@ exports.createJRSShipping = (0, https_1.onRequest)({
                     ...currentHistory,
                     {
                         status: "shipping",
-                        note: `Order shipped via JRS Express. Reference: ${shippingReferenceNo}, Tracking: ${(_23 = responseData.ShippingRequestEntityDto) === null || _23 === void 0 ? void 0 : _23.TrackingId}`,
-                        timestamp: new Date(),
+                        note: `Order shipped via JRS Express. Reference: ${shippingReferenceNo}, Tracking: ${(_26 = responseData.ShippingRequestEntityDto) === null || _26 === void 0 ? void 0 : _26.TrackingId}`,
+                        timestamp: firestore_1.FieldValue.serverTimestamp(),
                     },
                 ],
                 updatedAt: new Date(),
@@ -355,7 +495,7 @@ exports.createJRSShipping = (0, https_1.onRequest)({
             logger.info("Order updated in Firestore", {
                 orderId: payload.orderId,
                 collection: orderResult.collection,
-                trackingId: (_24 = responseData.ShippingRequestEntityDto) === null || _24 === void 0 ? void 0 : _24.TrackingId,
+                trackingId: (_27 = responseData.ShippingRequestEntityDto) === null || _27 === void 0 ? void 0 : _27.TrackingId,
             });
         }
         catch (firestoreError) {
@@ -369,22 +509,22 @@ exports.createJRSShipping = (0, https_1.onRequest)({
         res.status(200).json({
             success: true,
             shippingReferenceNo,
-            trackingId: (_25 = responseData.ShippingRequestEntityDto) === null || _25 === void 0 ? void 0 : _25.TrackingId,
-            totalShippingAmount: (_26 = responseData.ShippingRequestEntityDto) === null || _26 === void 0 ? void 0 : _26.TotalShippingAmount,
+            trackingId: (_28 = responseData.ShippingRequestEntityDto) === null || _28 === void 0 ? void 0 : _28.TrackingId,
+            totalShippingAmount: (_29 = responseData.ShippingRequestEntityDto) === null || _29 === void 0 ? void 0 : _29.TotalShippingAmount,
             jrsResponse: responseData,
             message: "Shipping request created successfully",
             orderData: {
                 orderId: payload.orderId,
                 recipient: `${recipientInfo.firstName} ${recipientInfo.lastName}`,
                 shipper: `${shipperInfo.firstName} ${shipperInfo.lastName}`,
-                items: ((_27 = orderData.items) === null || _27 === void 0 ? void 0 : _27.length) || 0,
+                items: ((_30 = orderData.items) === null || _30 === void 0 ? void 0 : _30.length) || 0,
             },
         });
     }
     catch (error) {
         logger.error("Error in createJRSShipping", {
             error: error instanceof Error ? error.message : "Unknown error",
-            orderId: (_28 = req.body) === null || _28 === void 0 ? void 0 : _28.orderId,
+            orderId: (_31 = req.body) === null || _31 === void 0 ? void 0 : _31.orderId,
             stack: error instanceof Error ? error.stack : undefined,
         });
         res.status(500).json({

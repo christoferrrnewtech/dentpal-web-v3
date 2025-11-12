@@ -2,16 +2,40 @@ import {onRequest} from "firebase-functions/v2/https";
 import * as logger from "firebase-functions/logger";
 import {initializeApp} from "firebase-admin/app";
 import {getFirestore, FieldValue} from "firebase-admin/firestore";
+import {getAuth, DecodedIdToken} from "firebase-admin/auth";
 import {defineString} from "firebase-functions/params";
 import axios from "axios";
 
 // Initialize Firebase Admin
 initializeApp();
 const db = getFirestore();
+const auth = getAuth();
 
 // Define parameters for JRS API
 const JRS_API_KEY = defineString("JRS_API_KEY");
 const JRS_API_URL = defineString("JRS_API_URL", {default: "https://jrs-express.azure-api.net/qa-online-shipping-ship/ShippingRequestFunction"});
+
+const verifyAuthToken = async (authorizationHeader: string | undefined): Promise<DecodedIdToken> => {
+  if (!authorizationHeader) {
+    throw new Error("Missing Authorization header");
+  }
+
+  const token = authorizationHeader.startsWith("Bearer ") 
+    ? authorizationHeader.substring(7) 
+    : authorizationHeader;
+
+  if (!token) {
+    throw new Error("Invalid Authorization header format");
+  }
+
+  try {
+    const decodedToken = await auth.verifyIdToken(token);
+    return decodedToken;
+  } catch (error) {
+    logger.error("Token verification failed", { error });
+    throw new Error("Invalid or expired authentication token");
+  }
+};
 
 // Types for JRS API
 interface ShipmentItem {
@@ -184,6 +208,26 @@ export const trackJRSShipment = onRequest({
       return;
     }
 
+    // Verify authentication token
+    let decodedToken: DecodedIdToken;
+    try {
+      decodedToken = await verifyAuthToken(req.headers.authorization);
+      logger.info("Authenticated tracking request", { 
+        uid: decodedToken.uid, 
+        email: decodedToken.email 
+      });
+    } catch (authError) {
+      logger.warn("Unauthenticated tracking request attempt", { 
+        ip: req.ip,
+        userAgent: req.headers["user-agent"] 
+      });
+      res.status(401).json({
+        error: "Authentication required",
+        message: authError instanceof Error ? authError.message : "Invalid authentication"
+      });
+      return;
+    }
+
     const { orderId, trackingId, shippingReferenceNo } = req.method === "GET" ? req.query : req.body;
 
     if (!orderId && !trackingId && !shippingReferenceNo) {
@@ -194,8 +238,44 @@ export const trackJRSShipment = onRequest({
     // If orderId is provided, fetch tracking info from order data
     if (orderId) {
       const orderResult = await fetchOrderData(orderId as string);
-      if (orderResult?.data?.shippingInfo?.jrs) {
-        const jrsData = orderResult.data.shippingInfo.jrs;
+      if (!orderResult?.data) {
+        res.status(404).json({error: "Order not found"});
+        return;
+      }
+
+      const orderData = orderResult.data;
+      
+      // Authorization check for tracking - same logic as shipping
+      const isOrderOwner = orderData.userId === decodedToken.uid;
+      const isAdmin = decodedToken.role === 'admin' || 
+                     decodedToken.customClaims?.role === 'admin';
+      
+      let isSeller = false;
+      if (orderData.sellerIds && Array.isArray(orderData.sellerIds)) {
+        const sellerPromises = orderData.sellerIds.map((sellerId: string) => 
+          db.collection("Seller").doc(sellerId).get()
+        );
+        const sellerDocs = await Promise.all(sellerPromises);
+        isSeller = sellerDocs.some(doc => 
+          doc.exists && (doc.data()?.userId === decodedToken.uid || doc.data()?.email === decodedToken.email)
+        );
+      }
+
+      if (!isOrderOwner && !isAdmin && !isSeller) {
+        logger.warn("Unauthorized tracking request", {
+          orderId: orderId,
+          authenticatedUser: decodedToken.uid,
+          orderOwner: orderData.userId
+        });
+        res.status(403).json({
+          error: "Access denied",
+          message: "You are not authorized to view tracking for this order"
+        });
+        return;
+      }
+
+      if (orderData.shippingInfo?.jrs) {
+        const jrsData = orderData.shippingInfo.jrs;
         res.status(200).json({
           success: true,
           orderId: orderId,
@@ -238,6 +318,26 @@ export const createJRSShipping = onRequest({
       return;
     }
 
+    // Verify authentication token
+    let decodedToken: DecodedIdToken;
+    try {
+      decodedToken = await verifyAuthToken(req.headers.authorization);
+      logger.info("Authenticated shipping request", { 
+        uid: decodedToken.uid, 
+        email: decodedToken.email 
+      });
+    } catch (authError) {
+      logger.warn("Unauthenticated shipping request attempt", { 
+        ip: req.ip,
+        userAgent: req.headers["user-agent"] 
+      });
+      res.status(401).json({
+        error: "Authentication required",
+        message: authError instanceof Error ? authError.message : "Invalid authentication"
+      });
+      return;
+    }
+
     const payload = req.body as ShippingRequestPayload;
 
     // Validate required orderId
@@ -246,7 +346,10 @@ export const createJRSShipping = onRequest({
       return;
     }
 
-    logger.info("Processing JRS shipping request", {orderId: payload.orderId});
+    logger.info("Processing JRS shipping request", {
+      orderId: payload.orderId,
+      authenticatedUser: decodedToken.uid
+    });
 
     // Fetch order data from Firestore
     const orderResult = await fetchOrderData(payload.orderId);
@@ -258,6 +361,64 @@ export const createJRSShipping = onRequest({
     const orderData = orderResult.data;
     if (!orderData) {
       res.status(404).json({error: "Order data not found"});
+      return;
+    }
+
+    // Authorization check - ensure user can access this order
+    // Allow if user is the order owner, a seller involved, or an admin
+    const isOrderOwner = orderData.userId === decodedToken.uid;
+    const isAdmin = decodedToken.role === 'admin' || 
+                   decodedToken.customClaims?.role === 'admin';
+    
+    let isSeller = false;
+    if (orderData.sellerIds && Array.isArray(orderData.sellerIds)) {
+      // Check if authenticated user is one of the sellers for this order
+      const sellerPromises = orderData.sellerIds.map((sellerId: string) => 
+        db.collection("Seller").doc(sellerId).get()
+      );
+      const sellerDocs = await Promise.all(sellerPromises);
+      isSeller = sellerDocs.some(doc => 
+        doc.exists && (doc.data()?.userId === decodedToken.uid || doc.data()?.email === decodedToken.email)
+      );
+    }
+
+    if (!isOrderOwner && !isAdmin && !isSeller) {
+      logger.warn("Unauthorized shipping request", {
+        orderId: payload.orderId,
+        authenticatedUser: decodedToken.uid,
+        orderOwner: orderData.userId,
+        sellerIds: orderData.sellerIds
+      });
+      res.status(403).json({
+        error: "Access denied",
+        message: "You are not authorized to create shipping for this order"
+      });
+      return;
+    }
+
+    // Prevent duplicate shipping requests
+    if (orderData.shippingInfo?.jrs?.trackingId) {
+      logger.warn("Duplicate shipping request attempted", {
+        orderId: payload.orderId,
+        existingTrackingId: orderData.shippingInfo.jrs.trackingId,
+        authenticatedUser: decodedToken.uid
+      });
+      res.status(409).json({
+        error: "Order already shipped",
+        message: `This order has already been shipped with tracking ID: ${orderData.shippingInfo.jrs.trackingId}`,
+        existingTrackingId: orderData.shippingInfo.jrs.trackingId
+      });
+      return;
+    }
+
+    // Validate order status - only allow shipping for confirmed/paid orders
+    const allowedStatuses = ['confirmed', 'paid', 'processing', 'ready_to_ship'];
+    if (orderData.status && !allowedStatuses.includes(orderData.status)) {
+      res.status(400).json({
+        error: "Invalid order status",
+        message: `Cannot create shipping for order with status: ${orderData.status}`,
+        currentStatus: orderData.status
+      });
       return;
     }
     
@@ -465,7 +626,7 @@ export const createJRSShipping = onRequest({
           {
             status: "shipping", 
             note: `Order shipped via JRS Express. Reference: ${shippingReferenceNo}, Tracking: ${responseData.ShippingRequestEntityDto?.TrackingId}`,
-            timestamp: new Date(),
+            timestamp: FieldValue.serverTimestamp(),
           },
         ],
         updatedAt: new Date(),

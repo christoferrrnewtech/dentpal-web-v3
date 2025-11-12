@@ -1,3 +1,5 @@
+import { Timestamp } from 'firebase/firestore';
+
 // Interface for order data structure
 export interface Order {
   id: string;
@@ -61,7 +63,7 @@ export interface Order {
   statusHistory?: Array<{
     status: string;
     note: string;
-    timestamp: Date;
+    timestamp: Timestamp | Date;
   }>;
   // New: full line items for invoices/exports
   items?: Array<{
