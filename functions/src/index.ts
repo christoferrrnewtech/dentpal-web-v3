@@ -181,7 +181,7 @@ const calculateShipmentItems = (orderItems: any[]): ShipmentItem[] => {
 };
 
 const generateShipmentDescription = (items: any[]): string => {
-  const productNames = items.map(item => item.productName || "Dental Supply").join(", ");
+  const productNames = items.map(item => item.name || item.productName || "Dental Supply").join(", ");
   return `Dental Supplies: ${productNames}`.substring(0, 100); // Limit length
 };
 
@@ -201,7 +201,7 @@ const parseAddress = (shippingInfo: any) => {
     addressLine1: addressLine1 || shippingInfo.addressLine1 || "N/A",
     district: district,
     city: shippingInfo.city || "N/A",
-    state: shippingInfo.state || "Metro Manila",
+    state: shippingInfo.state || shippingInfo.province || "Metro Manila",
     country: shippingInfo.country || "Philippines",
     postalCode: shippingInfo.postalCode || "",
   };
