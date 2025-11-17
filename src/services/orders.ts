@@ -1,5 +1,5 @@
 import { db } from '@/lib/firebase';
-import { collection, onSnapshot, query, where, DocumentData, QuerySnapshot, doc, getDoc, updateDoc } from 'firebase/firestore';
+import { collection, onSnapshot, query, where, DocumentData, QuerySnapshot, doc, getDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { getStorage, ref, getDownloadURL } from 'firebase/storage';
 import type { Order } from '@/types/order';
 
@@ -242,7 +242,7 @@ const mapDocToOrder = (id: string, data: any): Order => {
       const topLevelStatus = String(data.status || '').toLowerCase();
       if (['delivered', 'completed', 'success', 'succeeded'].includes(shippingStatus) || ['delivered', 'completed', 'success', 'succeeded'].includes(topLevelStatus)) return 'completed';
       if (['failed-delivery', 'delivery_failed', 'failed_delivery'].includes(shippingStatus) || ['failed-delivery', 'delivery_failed', 'failed_delivery'].includes(topLevelStatus)) return 'failed-delivery';
-      if (['shipping', 'in_transit', 'in-transit', 'dispatched', 'out_for_delivery', 'out-for-delivery'].includes(shippingStatus)) return 'processing';
+      if (['shipping', 'in_transit', 'in-transit', 'dispatched', 'out_for_delivery', 'out-for-delivery'].includes(shippingStatus) || ['shipping', 'processing'].includes(topLevelStatus)) return 'shipping';
       if (['confirmed', 'to_ship', 'to-ship', 'packed', 'ready_to_ship'].includes(shippingStatus) || ['confirmed', 'to_ship', 'to-ship', 'packed', 'ready_to_ship'].includes(topLevelStatus) || ['paid', 'success', 'succeeded'].includes(paymentStatus)) return 'to-ship';
       if (['cancelled', 'canceled'].includes(topLevelStatus) || ['failed', 'payment_failed', 'refused'].includes(paymentStatus)) return 'cancelled';
       if (['pending', 'unpaid'].includes(paymentStatus) || ['pending', 'unpaid'].includes(topLevelStatus)) return 'pending';
@@ -385,7 +385,7 @@ const OrdersService = {
     });
     return () => { unsubs.forEach(u => { try { u(); } catch {} }); };
   },
-  // Update order fulfillment stage
+  // Update order fulfillment stage with statusHistory
   updateFulfillmentStage: async (orderId: string, stage: 'to-pack' | 'to-arrangement' | 'to-hand-over'): Promise<void> => {
     try {
       // Try both collection names
@@ -393,7 +393,26 @@ const OrdersService = {
         const docRef = doc(db, coll, orderId);
         const docSnap = await getDoc(docRef);
         if (docSnap.exists()) {
-          await updateDoc(docRef, { fulfillmentStage: stage });
+          const currentData = docSnap.data();
+          const currentHistory = Array.isArray(currentData.statusHistory) ? currentData.statusHistory : [];
+          
+          // Create status history entry
+          const statusNotes = {
+            'to-pack': 'Order moved to packing stage',
+            'to-arrangement': 'Order moved to arrangement stage', 
+            'to-hand-over': 'Order moved to hand over stage'
+          };
+
+          const newHistoryEntry = {
+            status: stage,
+            note: statusNotes[stage],
+            timestamp: serverTimestamp()
+          };
+
+          await updateDoc(docRef, { 
+            fulfillmentStage: stage,
+            statusHistory: [...currentHistory, newHistoryEntry]
+          });
           return;
         }
       }
@@ -403,23 +422,90 @@ const OrdersService = {
       throw error;
     }
   },
-  // New: update high-level order status (e.g., move to Shipping)
+  // Update high-level order status with statusHistory (e.g., move to Shipping)
   updateOrderStatus: async (
     orderId: string,
-    status: 'pending' | 'to-ship' | 'processing' | 'completed' | 'cancelled' | 'returned' | 'refunded' | 'return_refund' | 'failed-delivery'
+    status: 'pending' | 'to-ship' | 'processing' | 'shipping' | 'completed' | 'cancelled' | 'returned' | 'refunded' | 'return_refund' | 'failed-delivery'
   ): Promise<void> => {
     try {
       for (const coll of ORDER_COLLECTIONS) {
         const docRef = doc(db, coll, orderId);
         const docSnap = await getDoc(docRef);
         if (docSnap.exists()) {
-          await updateDoc(docRef, { status });
+          const currentData = docSnap.data();
+          const currentHistory = Array.isArray(currentData.statusHistory) ? currentData.statusHistory : [];
+          
+          // Create status history entry
+          const statusNotes = {
+            'pending': 'Order pending payment',
+            'to-ship': 'Order confirmed and ready to ship',
+            'processing': 'Order is being shipped',
+            'shipping': 'Order is currently shipping',
+            'completed': 'Order delivered successfully', 
+            'cancelled': 'Order cancelled',
+            'returned': 'Order returned',
+            'refunded': 'Order refunded',
+            'return_refund': 'Order return/refund processed',
+            'failed-delivery': 'Delivery failed'
+          };
+
+          const newHistoryEntry = {
+            status: status,
+            note: statusNotes[status],
+            timestamp: serverTimestamp()
+          };
+
+          await updateDoc(docRef, { 
+            status,
+            statusHistory: [...currentHistory, newHistoryEntry]
+          });
           return;
         }
       }
       throw new Error(`Order ${orderId} not found`);
     } catch (error) {
       console.error('Error updating order status:', error);
+      throw error;
+    }
+  },
+
+  // New: Move order back to previous fulfillment stage with statusHistory
+  moveOrderToPreviousStage: async (orderId: string, fromStage: 'to-arrangement' | 'to-hand-over', toStage: 'to-pack' | 'to-arrangement'): Promise<void> => {
+    try {
+      for (const coll of ORDER_COLLECTIONS) {
+        const docRef = doc(db, coll, orderId);
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists()) {
+          const currentData = docSnap.data();
+          
+          // Validate current fulfillment stage matches expected fromStage
+          if (currentData.fulfillmentStage !== fromStage) {
+            throw new Error(`Order not in expected stage. Current: ${currentData.fulfillmentStage}, Expected: ${fromStage}`);
+          }
+          
+          const currentHistory = Array.isArray(currentData.statusHistory) ? currentData.statusHistory : [];
+          
+          const reverseNotes = {
+            'to-pack': 'Order moved back to packing stage',
+            'to-arrangement': 'Order moved back to arrangement stage'
+          };
+
+          const newHistoryEntry = {
+            status: toStage,
+            note: reverseNotes[toStage],
+            timestamp: serverTimestamp()
+          };
+
+          await updateDoc(docRef, { 
+            fulfillmentStage: toStage,
+            statusHistory: [...currentHistory, newHistoryEntry]
+          });
+          return;
+        }
+      }
+      throw new Error(`Order ${orderId} not found`);
+    } catch (error) {
+      console.error('Error moving order to previous stage:', error);
       throw error;
     }
   },
