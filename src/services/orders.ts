@@ -1,5 +1,5 @@
 import { db } from '@/lib/firebase';
-import { collection, onSnapshot, query, where, DocumentData, QuerySnapshot, doc, getDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, onSnapshot, query, where, DocumentData, QuerySnapshot, doc, getDoc, updateDoc } from 'firebase/firestore';
 import { getStorage, ref, getDownloadURL } from 'firebase/storage';
 import type { Order } from '@/types/order';
 
@@ -243,7 +243,9 @@ const mapDocToOrder = (id: string, data: any): Order => {
       if (['delivered', 'completed', 'success', 'succeeded'].includes(shippingStatus) || ['delivered', 'completed', 'success', 'succeeded'].includes(topLevelStatus)) return 'completed';
       if (['failed-delivery', 'delivery_failed', 'failed_delivery'].includes(shippingStatus) || ['failed-delivery', 'delivery_failed', 'failed_delivery'].includes(topLevelStatus)) return 'failed-delivery';
       if (['shipping', 'in_transit', 'in-transit', 'dispatched', 'out_for_delivery', 'out-for-delivery'].includes(shippingStatus) || ['shipping', 'processing'].includes(topLevelStatus)) return 'shipping';
-      if (['confirmed', 'to_ship', 'to-ship', 'packed', 'ready_to_ship'].includes(shippingStatus) || ['confirmed', 'to_ship', 'to-ship', 'packed', 'ready_to_ship'].includes(topLevelStatus) || ['paid', 'success', 'succeeded'].includes(paymentStatus)) return 'to-ship';
+      // Check for confirmed status first, before to_ship
+      if (topLevelStatus === 'confirmed') return 'confirmed';
+      if (['to_ship', 'to-ship', 'packed', 'ready_to_ship'].includes(shippingStatus) || ['to_ship', 'to-ship', 'packed', 'ready_to_ship'].includes(topLevelStatus) || ['paid', 'success', 'succeeded'].includes(paymentStatus)) return 'to_ship';
       if (['cancelled', 'canceled'].includes(topLevelStatus) || ['failed', 'payment_failed', 'refused'].includes(paymentStatus)) return 'cancelled';
       if (['pending', 'unpaid'].includes(paymentStatus) || ['pending', 'unpaid'].includes(topLevelStatus)) return 'pending';
       return 'pending';
@@ -398,15 +400,15 @@ const OrdersService = {
           
           // Create status history entry
           const statusNotes = {
-            'to-pack': 'Order moved to packing stage',
-            'to-arrangement': 'Order moved to arrangement stage', 
-            'to-hand-over': 'Order moved to hand over stage'
+            'to-pack': 'Order is ready to be packed',
+            'to-arrangement': 'Order is being prepared for arrangement',
+            'to-hand-over': 'Order is ready to be handed over'
           };
 
           const newHistoryEntry = {
             status: stage,
             note: statusNotes[stage],
-            timestamp: serverTimestamp()
+            timestamp: new Date()
           };
 
           await updateDoc(docRef, { 
@@ -425,7 +427,7 @@ const OrdersService = {
   // Update high-level order status with statusHistory (e.g., move to Shipping)
   updateOrderStatus: async (
     orderId: string,
-    status: 'pending' | 'to-ship' | 'processing' | 'shipping' | 'completed' | 'cancelled' | 'returned' | 'refunded' | 'return_refund' | 'failed-delivery'
+    status: 'pending' | 'confirmed' | 'to_ship' | 'processing' | 'shipping' | 'completed' | 'cancelled' | 'returned' | 'refunded' | 'return_refund' | 'failed-delivery'
   ): Promise<void> => {
     try {
       for (const coll of ORDER_COLLECTIONS) {
@@ -438,7 +440,8 @@ const OrdersService = {
           // Create status history entry
           const statusNotes = {
             'pending': 'Order pending payment',
-            'to-ship': 'Order confirmed and ready to ship',
+            'confirmed': 'Order payment confirmed',
+            'to_ship': 'Order confirmed and ready to be processed',
             'processing': 'Order is being shipped',
             'shipping': 'Order is currently shipping',
             'completed': 'Order delivered successfully', 
@@ -452,13 +455,32 @@ const OrdersService = {
           const newHistoryEntry = {
             status: status,
             note: statusNotes[status],
-            timestamp: serverTimestamp()
+            timestamp: new Date()
           };
 
-          await updateDoc(docRef, { 
+          const updateData: any = { 
             status,
             statusHistory: [...currentHistory, newHistoryEntry]
-          });
+          };
+
+          // If moving to 'to_ship' status, also set fulfillmentStage and add to-pack history entry
+          if (status === 'to_ship') {
+            // Only set fulfillmentStage if it doesn't already exist
+            if (!currentData.fulfillmentStage) {
+              updateData.fulfillmentStage = 'to-pack';
+              
+              // Add to-pack fulfillment stage history entry
+              const packHistoryEntry = {
+                status: 'to-pack',
+                note: 'Order is ready to be packed',
+                timestamp: new Date()
+              };
+              
+              updateData.statusHistory = [...currentHistory, newHistoryEntry, packHistoryEntry];
+            }
+          }
+
+          await updateDoc(docRef, updateData);
           return;
         }
       }
@@ -486,14 +508,14 @@ const OrdersService = {
           const currentHistory = Array.isArray(currentData.statusHistory) ? currentData.statusHistory : [];
           
           const reverseNotes = {
-            'to-pack': 'Order moved back to packing stage',
+            'to-pack': ' Order moved back to packing stage',
             'to-arrangement': 'Order moved back to arrangement stage'
           };
 
           const newHistoryEntry = {
             status: toStage,
             note: reverseNotes[toStage],
-            timestamp: serverTimestamp()
+            timestamp: new Date()
           };
 
           await updateDoc(docRef, { 
@@ -507,6 +529,52 @@ const OrdersService = {
     } catch (error) {
       console.error('Error moving order to previous stage:', error);
       throw error;
+    }
+  },
+
+  // Helper function to fix orders missing to-pack status history
+  backfillMissingToPackHistory: async (orderId?: string): Promise<void> => {
+    try {
+      for (const coll of ORDER_COLLECTIONS) {
+        let query;
+        if (orderId) {
+          // Fix specific order
+          const docRef = doc(db, coll, orderId);
+          const docSnap = await getDoc(docRef);
+          if (docSnap.exists()) {
+            const data = docSnap.data();
+            await fixOrderToPackHistory(docRef, data);
+          }
+        } else {
+          // Fix all to_ship orders that might be missing to-pack history
+          // This is a batch operation, so we'll limit it for safety
+          console.warn('Backfilling to-pack history for all orders - use with caution in production');
+          // Implementation would go here if needed for bulk fixing
+        }
+      }
+    } catch (error) {
+      console.error('Error backfilling to-pack history:', error);
+      throw error;
+    }
+
+    async function fixOrderToPackHistory(docRef: any, data: any) {
+      // Check if order is in to_ship status with fulfillmentStage but missing to-pack in history
+      if (data.status === 'to_ship' && data.fulfillmentStage && Array.isArray(data.statusHistory)) {
+        const hasToPackHistory = data.statusHistory.some((entry: any) => entry.status === 'to-pack');
+        
+        if (!hasToPackHistory) {
+          // Add missing to-pack history entry
+          const toPackEntry = {
+            status: 'to-pack',
+            note: 'Order is ready to be packed',
+            timestamp: new Date()
+          };
+          
+          const updatedHistory = [...data.statusHistory, toPackEntry];
+          await updateDoc(docRef, { statusHistory: updatedHistory });
+          console.log(`Fixed missing to-pack history for order ${docRef.id}`);
+        }
+      }
     }
   },
 };

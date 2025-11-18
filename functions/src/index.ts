@@ -207,119 +207,21 @@ const parseAddress = (shippingInfo: any) => {
   };
 };
 
-// JRS Tracking function
-export const trackJRSShipment = onRequest({
-  cors: true,
-}, async (req, res) => {
-  try {
-    if (req.method !== "GET" && req.method !== "POST") {
-      res.status(405).json({error: "Method not allowed"});
-      return;
-    }
-
-    // Verify authentication token
-    let decodedToken: DecodedIdToken;
-    try {
-      decodedToken = await verifyAuthToken(req.headers.authorization);
-      logger.info("Authenticated tracking request", { 
-        uid: decodedToken.uid, 
-        email: decodedToken.email 
-      });
-    } catch (authError) {
-      logger.warn("Unauthenticated tracking request attempt", { 
-        ip: req.ip,
-        userAgent: req.headers["user-agent"] 
-      });
-      res.status(401).json({
-        error: "Authentication required",
-        message: authError instanceof Error ? authError.message : "Invalid authentication"
-      });
-      return;
-    }
-
-    const { orderId, trackingId, shippingReferenceNo } = req.method === "GET" ? req.query : req.body;
-
-    if (!orderId && !trackingId && !shippingReferenceNo) {
-      res.status(400).json({error: "Missing orderId, trackingId, or shippingReferenceNo"});
-      return;
-    }
-
-    // If orderId is provided, fetch tracking info from order data
-    if (orderId) {
-      const orderResult = await fetchOrderData(orderId as string);
-      if (!orderResult?.data) {
-        res.status(404).json({error: "Order not found"});
-        return;
-      }
-
-      const orderData = orderResult.data;
-      
-      // Authorization check for tracking - same logic as shipping
-      const isOrderOwner = orderData.userId === decodedToken.uid;
-      const isAdmin = decodedToken.role === 'admin' || 
-                     decodedToken.customClaims?.role === 'admin';
-      
-      let isSeller = false;
-      if (orderData.sellerIds && Array.isArray(orderData.sellerIds)) {
-        const sellerPromises = orderData.sellerIds.map((sellerId: string) => 
-          db.collection("Seller").doc(sellerId).get()
-        );
-        const sellerDocs = await Promise.all(sellerPromises);
-        isSeller = sellerDocs.some(doc => 
-          doc.exists && (doc.data()?.userId === decodedToken.uid || doc.data()?.email === decodedToken.email)
-        );
-      }
-
-      if (!isOrderOwner && !isAdmin && !isSeller) {
-        logger.warn("Unauthorized tracking request", {
-          orderId: orderId,
-          authenticatedUser: decodedToken.uid,
-          orderOwner: orderData.userId
-        });
-        res.status(403).json({
-          error: "Access denied",
-          message: "You are not authorized to view tracking for this order"
-        });
-        return;
-      }
-
-      if (orderData.shippingInfo?.jrs) {
-        const jrsData = orderData.shippingInfo.jrs;
-        res.status(200).json({
-          success: true,
-          orderId: orderId,
-          trackingId: jrsData.trackingId,
-          shippingReferenceNo: jrsData.shippingReferenceNo,
-          totalShippingAmount: jrsData.totalShippingAmount,
-          requestedAt: jrsData.requestedAt,
-          pickupSchedule: jrsData.pickupSchedule,
-          jrsResponse: jrsData.response,
-        });
-        return;
-      } else {
-        res.status(404).json({error: "JRS tracking information not found for this order"});
-        return;
-      }
-    }
-
-    // For direct tracking queries, you would implement JRS tracking API call here
-    // This would depend on JRS providing a tracking API endpoint
-    res.status(501).json({
-      error: "Direct tracking not implemented",
-      message: "Use orderId to get tracking information from order data",
-    });
-  } catch (error) {
-    logger.error("Error in trackJRSShipment", {error});
-    res.status(500).json({
-      error: "Internal server error",
-      message: error instanceof Error ? error.message : "Unknown error",
-    });
-  }
-});
-
 export const createJRSShipping = onRequest({
   cors: true,
 }, async (req, res) => {
+  // Add explicit CORS headers
+  res.set('Access-Control-Allow-Origin', '*');
+  res.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.set('Access-Control-Max-Age', '86400');
+
+  // Handle preflight OPTIONS request
+  if (req.method === 'OPTIONS') {
+    res.status(200).end();
+    return;
+  }
+
   try {
     // Check for POST method
     if (req.method !== "POST") {
@@ -421,12 +323,26 @@ export const createJRSShipping = onRequest({
     }
 
     // Validate order status - only allow shipping for confirmed/paid orders
-    const allowedStatuses = ['confirmed', 'paid', 'processing', 'ready_to_ship'];
-    if (orderData.status && !allowedStatuses.includes(orderData.status)) {
+    const allowedStatuses = ['confirmed', 'paid', 'processing', 'ready_to_ship', 'to_ship'];
+    const orderStatus = String(orderData.status || '').toLowerCase().trim();
+    const isValidStatus = orderStatus && allowedStatuses.some(status => status.toLowerCase() === orderStatus);
+    
+    if (!isValidStatus) {
+      logger.warn("Invalid order status for shipping", {
+        orderId: payload.orderId,
+        currentStatus: orderData.status,
+        currentStatusType: typeof orderData.status,
+        normalizedStatus: orderStatus,
+        allowedStatuses: allowedStatuses
+      });
+      
       res.status(400).json({
         error: "Invalid order status",
-        message: `Cannot create shipping for order with status: ${orderData.status}`,
-        currentStatus: orderData.status
+        message: `Cannot create shipping for order with status: "${orderData.status}" (normalized: "${orderStatus}"). Allowed statuses: ${allowedStatuses.join(', ')}`,
+        currentStatus: orderData.status,
+        currentStatusType: typeof orderData.status,
+        normalizedStatus: orderStatus,
+        allowedStatuses: allowedStatuses
       });
       return;
     }
@@ -616,9 +532,14 @@ export const createJRSShipping = onRequest({
     // Update order in Firestore with JRS response
     try {
       const orderRef = db.collection(orderResult.collection).doc(payload.orderId);
-      const currentHistory = Array.isArray(orderData.statusHistory) ? orderData.statusHistory : [];
 
-      const updateData = {
+      const newHistoryEntry = {
+        status: "shipping", 
+        note: `Order shipped via JRS Express. Reference: ${shippingReferenceNo}, Tracking: ${responseData.ShippingRequestEntityDto?.TrackingId}`,
+        timestamp: new Date(),
+      };
+
+      const updateData: any = {
         shippingInfo: {
           ...(orderData.shippingInfo || {}),
           jrs: {
@@ -630,22 +551,25 @@ export const createJRSShipping = onRequest({
             pickupSchedule: jrsRequest.apiShippingRequest.requestedPickupSchedule,
           }
         },
-        fulfillmentStage: FieldValue.delete(),
         status: "shipping",
-        statusHistory: [
-          ...currentHistory,
-          {
-            status: "shipping", 
-            note: `Order shipped via JRS Express. Reference: ${shippingReferenceNo}, Tracking: ${responseData.ShippingRequestEntityDto?.TrackingId}`,
-            timestamp: FieldValue.serverTimestamp(),
-          },
-        ],
+        statusHistory: FieldValue.arrayUnion(newHistoryEntry),
         updatedAt: new Date(),
       };
 
+      // Remove fulfillmentStage field if it exists
+      if (orderData.fulfillmentStage !== undefined) {
+        updateData.fulfillmentStage = FieldValue.delete();
+      }
+
+      logger.info("Attempting to update order in Firestore", {
+        orderId: payload.orderId,
+        collection: orderResult.collection,
+        updateData: JSON.stringify(updateData, null, 2)
+      });
+
       await orderRef.update(updateData);
 
-      logger.info("Order updated in Firestore", {
+      logger.info("Order updated successfully in Firestore", {
         orderId: payload.orderId,
         collection: orderResult.collection,
         trackingId: responseData.ShippingRequestEntityDto?.TrackingId,
@@ -653,9 +577,21 @@ export const createJRSShipping = onRequest({
     } catch (firestoreError) {
       logger.error("Failed to update order in Firestore", {
         orderId: payload.orderId,
+        collection: orderResult.collection,
         error: firestoreError,
+        errorMessage: firestoreError instanceof Error ? firestoreError.message : 'Unknown error',
+        errorStack: firestoreError instanceof Error ? firestoreError.stack : undefined
       });
-      // Don't fail the entire request if Firestore update fails
+      
+      // Fail the request if Firestore update fails
+      res.status(500).json({
+        error: "Order shipping succeeded but failed to update order status",
+        message: "JRS shipping request was successful, but we couldn't update the order in our database. Please contact support.",
+        shippingReferenceNo,
+        trackingId: responseData.ShippingRequestEntityDto?.TrackingId,
+        firestoreError: firestoreError instanceof Error ? firestoreError.message : 'Unknown error'
+      });
+      return;
     }
 
     // Return success response
