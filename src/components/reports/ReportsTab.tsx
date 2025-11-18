@@ -86,7 +86,8 @@ const getPaymentBucket = (o: Order): string => {
 };
 
 const ReportsTab: React.FC = () => {
-  const { isAdmin, uid } = useAuth();
+  // Use auth once at component scope (Rules of Hooks)
+  const { isAdmin, uid, isSubAccount, parentId } = useAuth();
   const [orders, setOrders] = useState<Order[]>([]);
   const [active, setActive] = useState<SubTab>('item');
   const [basis, setBasis] = useState<Basis>('accrual');
@@ -118,12 +119,11 @@ const ReportsTab: React.FC = () => {
   // Subscribe to orders based on role
   useEffect(() => {
     let unsub = () => {};
-    const { isSubAccount, parentId } = useAuth();
     if (isAdmin) unsub = OrdersService.listenAll(setOrders);
     else if (isSubAccount && parentId) unsub = OrdersService.listenBySeller(parentId, setOrders);
     else if (uid) unsub = OrdersService.listenBySeller(uid, setOrders);
     return () => unsub();
-  }, [isAdmin, uid]);
+  }, [isAdmin, uid, isSubAccount, parentId]);
 
   // Load Categories and their Subcategories from Firestore (subcollection 'subCategory')
   useEffect(() => {
