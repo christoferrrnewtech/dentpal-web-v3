@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.createJRSShipping = void 0;
+exports.createJRSShipping = exports.processSellerPayoutAdjustments = exports.getSellerPayoutAdjustments = void 0;
 const https_1 = require("firebase-functions/v2/https");
 const logger = require("firebase-functions/logger");
 const app_1 = require("firebase-admin/app");
@@ -88,6 +88,56 @@ const generateShipmentDescription = (items) => {
     const productNames = items.map(item => item.name || item.productName || "Dental Supply").join(", ");
     return `Dental Supplies: ${productNames}`.substring(0, 100); // Limit length
 };
+// Function to create seller payout adjustment for shipping charges
+const createSellerPayoutAdjustment = async (params) => {
+    try {
+        const adjustmentData = {
+            orderId: params.orderId,
+            sellerId: params.sellerId,
+            type: 'shipping_charge',
+            amount: -params.shippingCharge,
+            description: `Shipping charge deduction for order ${params.orderId}`,
+            shippingReference: params.shippingReferenceNo,
+            trackingId: params.trackingId || null,
+            status: 'pending_deduction',
+            createdAt: firestore_1.FieldValue.serverTimestamp(),
+            updatedAt: firestore_1.FieldValue.serverTimestamp(),
+            metadata: {
+                originalShippingCharge: params.shippingCharge,
+                appliedAt: new Date().toISOString(),
+                reason: 'seller_portion_shipping_fee',
+            }
+        };
+        // Create adjustment record in SellerPayoutAdjustments collection
+        const adjustmentRef = await db.collection('SellerPayoutAdjustments').add(adjustmentData);
+        logger.info("Created seller payout adjustment", {
+            adjustmentId: adjustmentRef.id,
+            orderId: params.orderId,
+            sellerId: params.sellerId,
+            shippingCharge: params.shippingCharge,
+            trackingId: params.trackingId,
+        });
+        // Update seller's total adjustments
+        const sellerRef = db.collection('Seller').doc(params.sellerId);
+        await sellerRef.update({
+            payoutAdjustments: {
+                totalShippingCharges: firestore_1.FieldValue.increment(params.shippingCharge),
+                pendingDeductions: firestore_1.FieldValue.increment(params.shippingCharge),
+                lastUpdated: firestore_1.FieldValue.serverTimestamp(),
+            }
+        });
+        return adjustmentRef.id;
+    }
+    catch (error) {
+        logger.error("Failed to create seller payout adjustment", {
+            orderId: params.orderId,
+            sellerId: params.sellerId,
+            shippingCharge: params.shippingCharge,
+            error: error instanceof Error ? error.message : 'Unknown error',
+        });
+        throw error;
+    }
+};
 const parseAddress = (shippingInfo) => {
     // Extract district/barangay from addressLine1 if it contains "Brgy." or "Barangay"
     let district = "N/A";
@@ -107,10 +157,203 @@ const parseAddress = (shippingInfo) => {
         postalCode: shippingInfo.postalCode || "",
     };
 };
+// Function to process seller payout adjustments (can be called manually or on schedule)
+// Function to get seller payout adjustments (for sellers to view their charges)
+exports.getSellerPayoutAdjustments = (0, https_1.onRequest)({
+    cors: true,
+}, async (req, res) => {
+    var _a, _b, _c, _d, _e, _f, _g;
+    try {
+        // Verify authentication
+        let decodedToken;
+        try {
+            decodedToken = await verifyAuthToken(req.headers.authorization);
+        }
+        catch (authError) {
+            res.status(401).json({
+                error: "Authentication required",
+                message: authError instanceof Error ? authError.message : "Invalid authentication"
+            });
+            return;
+        }
+        const { sellerId } = req.query;
+        let targetSellerId = sellerId;
+        // If no sellerId provided, try to find seller record for authenticated user
+        if (!targetSellerId) {
+            const sellerQuery = await db.collection('Seller')
+                .where('userId', '==', decodedToken.uid)
+                .limit(1)
+                .get();
+            if (sellerQuery.empty) {
+                res.status(404).json({
+                    error: "Seller not found",
+                    message: "No seller record found for authenticated user"
+                });
+                return;
+            }
+            targetSellerId = sellerQuery.docs[0].id;
+        }
+        // Verify authorization - user must be the seller owner or admin
+        const sellerDoc = await db.collection('Seller').doc(targetSellerId).get();
+        if (!sellerDoc.exists) {
+            res.status(404).json({ error: "Seller not found" });
+            return;
+        }
+        const sellerData = sellerDoc.data();
+        const isSellerOwner = (sellerData === null || sellerData === void 0 ? void 0 : sellerData.userId) === decodedToken.uid || (sellerData === null || sellerData === void 0 ? void 0 : sellerData.email) === decodedToken.email;
+        const isAdmin = decodedToken.role === 'admin' || ((_a = decodedToken.customClaims) === null || _a === void 0 ? void 0 : _a.role) === 'admin';
+        if (!isSellerOwner && !isAdmin) {
+            res.status(403).json({
+                error: "Access denied",
+                message: "You can only view your own payout adjustments"
+            });
+            return;
+        }
+        // Get payout adjustments for seller
+        const adjustmentsQuery = await db.collection('SellerPayoutAdjustments')
+            .where('sellerId', '==', targetSellerId)
+            .where('type', '==', 'shipping_charge')
+            .orderBy('createdAt', 'desc')
+            .limit(50)
+            .get();
+        const adjustments = adjustmentsQuery.docs.map(doc => {
+            var _a, _b, _c, _d, _e, _f, _g, _h, _j;
+            return ({
+                id: doc.id,
+                ...doc.data(),
+                createdAt: ((_c = (_b = (_a = doc.data().createdAt) === null || _a === void 0 ? void 0 : _a.toDate) === null || _b === void 0 ? void 0 : _b.call(_a)) === null || _c === void 0 ? void 0 : _c.toISOString()) || doc.data().createdAt,
+                updatedAt: ((_f = (_e = (_d = doc.data().updatedAt) === null || _d === void 0 ? void 0 : _d.toDate) === null || _e === void 0 ? void 0 : _e.call(_d)) === null || _f === void 0 ? void 0 : _f.toISOString()) || doc.data().updatedAt,
+                processedAt: ((_j = (_h = (_g = doc.data().processedAt) === null || _g === void 0 ? void 0 : _g.toDate) === null || _h === void 0 ? void 0 : _h.call(_g)) === null || _j === void 0 ? void 0 : _j.toISOString()) || doc.data().processedAt,
+            });
+        });
+        // Get seller summary
+        const sellerSummary = (sellerData === null || sellerData === void 0 ? void 0 : sellerData.payoutAdjustments) || {};
+        res.status(200).json({
+            success: true,
+            sellerId: targetSellerId,
+            adjustments,
+            summary: {
+                totalShippingCharges: sellerSummary.totalShippingCharges || 0,
+                pendingDeductions: sellerSummary.pendingDeductions || 0,
+                processedDeductions: sellerSummary.processedDeductions || 0,
+                lastUpdated: ((_d = (_c = (_b = sellerSummary.lastUpdated) === null || _b === void 0 ? void 0 : _b.toDate) === null || _c === void 0 ? void 0 : _c.call(_b)) === null || _d === void 0 ? void 0 : _d.toISOString()) || sellerSummary.lastUpdated,
+                lastProcessed: ((_g = (_f = (_e = sellerSummary.lastProcessed) === null || _e === void 0 ? void 0 : _e.toDate) === null || _f === void 0 ? void 0 : _f.call(_e)) === null || _g === void 0 ? void 0 : _g.toISOString()) || sellerSummary.lastProcessed,
+            },
+            count: adjustments.length,
+        });
+    }
+    catch (error) {
+        logger.error("Error in getSellerPayoutAdjustments", {
+            error: error instanceof Error ? error.message : "Unknown error",
+        });
+        res.status(500).json({
+            error: "Internal server error",
+            message: error instanceof Error ? error.message : "Unknown error",
+        });
+    }
+});
+exports.processSellerPayoutAdjustments = (0, https_1.onRequest)({
+    cors: true,
+}, async (req, res) => {
+    var _a;
+    try {
+        // Verify authentication
+        let decodedToken;
+        try {
+            decodedToken = await verifyAuthToken(req.headers.authorization);
+            // Only allow admin users to process payouts
+            const isAdmin = decodedToken.role === 'admin' ||
+                ((_a = decodedToken.customClaims) === null || _a === void 0 ? void 0 : _a.role) === 'admin';
+            if (!isAdmin) {
+                res.status(403).json({
+                    error: "Access denied",
+                    message: "Only administrators can process seller payout adjustments"
+                });
+                return;
+            }
+        }
+        catch (authError) {
+            res.status(401).json({
+                error: "Authentication required",
+                message: authError instanceof Error ? authError.message : "Invalid authentication"
+            });
+            return;
+        }
+        // Query pending shipping charge adjustments
+        const pendingAdjustments = await db.collection('SellerPayoutAdjustments')
+            .where('type', '==', 'shipping_charge')
+            .where('status', '==', 'pending_deduction')
+            .get();
+        const processed = [];
+        const errors = [];
+        for (const doc of pendingAdjustments.docs) {
+            const adjustment = doc.data();
+            try {
+                // Update adjustment status to processed
+                await doc.ref.update({
+                    status: 'processed',
+                    processedAt: firestore_1.FieldValue.serverTimestamp(),
+                    processedBy: decodedToken.uid,
+                });
+                // Update seller's pending deductions
+                const sellerRef = db.collection('Seller').doc(adjustment.sellerId);
+                await sellerRef.update({
+                    'payoutAdjustments.pendingDeductions': firestore_1.FieldValue.increment(-adjustment.originalShippingCharge || -adjustment.amount),
+                    'payoutAdjustments.processedDeductions': firestore_1.FieldValue.increment(adjustment.originalShippingCharge || -adjustment.amount),
+                    'payoutAdjustments.lastProcessed': firestore_1.FieldValue.serverTimestamp(),
+                });
+                processed.push({
+                    adjustmentId: doc.id,
+                    orderId: adjustment.orderId,
+                    sellerId: adjustment.sellerId,
+                    amount: adjustment.amount,
+                });
+                logger.info("Processed seller payout adjustment", {
+                    adjustmentId: doc.id,
+                    sellerId: adjustment.sellerId,
+                    orderId: adjustment.orderId,
+                    amount: adjustment.amount,
+                });
+            }
+            catch (error) {
+                logger.error("Failed to process adjustment", {
+                    adjustmentId: doc.id,
+                    sellerId: adjustment.sellerId,
+                    error: error instanceof Error ? error.message : 'Unknown error',
+                });
+                errors.push({
+                    adjustmentId: doc.id,
+                    sellerId: adjustment.sellerId,
+                    error: error instanceof Error ? error.message : 'Unknown error',
+                });
+            }
+        }
+        res.status(200).json({
+            success: true,
+            message: `Processed ${processed.length} shipping charge adjustments`,
+            processed,
+            errors,
+            summary: {
+                totalProcessed: processed.length,
+                totalErrors: errors.length,
+                totalAmount: processed.reduce((sum, item) => sum + Math.abs(item.amount), 0),
+            },
+        });
+    }
+    catch (error) {
+        logger.error("Error in processSellerPayoutAdjustments", {
+            error: error instanceof Error ? error.message : "Unknown error",
+        });
+        res.status(500).json({
+            error: "Internal server error",
+            message: error instanceof Error ? error.message : "Unknown error",
+        });
+    }
+});
 exports.createJRSShipping = (0, https_1.onRequest)({
     cors: true,
 }, async (req, res) => {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _0, _1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12, _13, _14, _15, _16, _17, _18, _19, _20, _21, _22, _23, _24, _25, _26, _27, _28, _29;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _0, _1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12, _13, _14, _15, _16, _17, _18, _19, _20, _21, _22, _23, _24, _25, _26, _27, _28, _29, _30, _31;
     // Add explicit CORS headers
     res.set('Access-Control-Allow-Origin', '*');
     res.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -388,18 +631,69 @@ exports.createJRSShipping = (0, https_1.onRequest)({
             });
             return;
         }
-        logger.info("JRS API success", {
+        // Extract and validate shipping charge allocation from order summary
+        const orderSummary = orderData.summary || {};
+        const sellerShippingCharge = Math.max(0, orderSummary.sellerShippingCharge || 0);
+        const buyerShippingCharge = Math.max(0, orderSummary.buyerShippingCharge || 0);
+        const totalShippingCost = Math.max(0, orderSummary.shippingCost || 0);
+        // Validate shipping charge allocation
+        const calculatedTotal = sellerShippingCharge + buyerShippingCharge;
+        if (totalShippingCost > 0 && Math.abs(calculatedTotal - totalShippingCost) > 0.01) {
+            logger.warn("Shipping charge allocation mismatch", {
+                orderId: payload.orderId,
+                totalShippingCost,
+                sellerShippingCharge,
+                buyerShippingCharge,
+                calculatedTotal,
+                difference: Math.abs(calculatedTotal - totalShippingCost),
+            });
+        }
+        logger.info("JRS API success with shipping charges", {
             orderId: payload.orderId,
             shippingReferenceNo,
             trackingId: (_19 = responseData.ShippingRequestEntityDto) === null || _19 === void 0 ? void 0 : _19.TrackingId,
             totalShippingAmount: (_20 = responseData.ShippingRequestEntityDto) === null || _20 === void 0 ? void 0 : _20.TotalShippingAmount,
+            sellerShippingCharge,
+            buyerShippingCharge,
+            totalShippingCost,
         });
-        // Update order in Firestore with JRS response
+        // Update order in Firestore with JRS response and handle seller shipping charges
         try {
             const orderRef = db.collection(orderResult.collection).doc(payload.orderId);
+            // Create seller payout adjustment if seller has shipping charges
+            let payoutAdjustmentId = null;
+            if (sellerShippingCharge > 0 && orderData.sellerIds && orderData.sellerIds.length > 0) {
+                try {
+                    payoutAdjustmentId = await createSellerPayoutAdjustment({
+                        orderId: payload.orderId,
+                        sellerId: orderData.sellerIds[0],
+                        shippingCharge: sellerShippingCharge,
+                        shippingReferenceNo,
+                        trackingId: (_21 = responseData.ShippingRequestEntityDto) === null || _21 === void 0 ? void 0 : _21.TrackingId,
+                    });
+                    logger.info("Successfully created seller payout adjustment", {
+                        orderId: payload.orderId,
+                        sellerId: orderData.sellerIds[0],
+                        adjustmentId: payoutAdjustmentId,
+                        shippingCharge: sellerShippingCharge,
+                    });
+                }
+                catch (adjustmentError) {
+                    logger.error("Failed to create seller payout adjustment, but continuing with shipping", {
+                        orderId: payload.orderId,
+                        sellerId: orderData.sellerIds[0],
+                        shippingCharge: sellerShippingCharge,
+                        error: adjustmentError instanceof Error ? adjustmentError.message : 'Unknown error',
+                    });
+                    // Don't fail the entire shipping process if payout adjustment fails
+                }
+            }
+            const shippingNote = sellerShippingCharge > 0
+                ? `Order shipped via JRS Express. Reference: ${shippingReferenceNo}, Tracking: ${(_22 = responseData.ShippingRequestEntityDto) === null || _22 === void 0 ? void 0 : _22.TrackingId}. Seller shipping charge: ₱${sellerShippingCharge.toFixed(2)}`
+                : `Order shipped via JRS Express. Reference: ${shippingReferenceNo}, Tracking: ${(_23 = responseData.ShippingRequestEntityDto) === null || _23 === void 0 ? void 0 : _23.TrackingId}`;
             const newHistoryEntry = {
                 status: "shipping",
-                note: `Order shipped via JRS Express. Reference: ${shippingReferenceNo}, Tracking: ${(_21 = responseData.ShippingRequestEntityDto) === null || _21 === void 0 ? void 0 : _21.TrackingId}`,
+                note: shippingNote,
                 timestamp: new Date(),
             };
             const updateData = {
@@ -408,10 +702,19 @@ exports.createJRSShipping = (0, https_1.onRequest)({
                     jrs: {
                         response: responseData,
                         shippingReferenceNo: shippingReferenceNo,
-                        trackingId: (_22 = responseData.ShippingRequestEntityDto) === null || _22 === void 0 ? void 0 : _22.TrackingId,
+                        trackingId: (_24 = responseData.ShippingRequestEntityDto) === null || _24 === void 0 ? void 0 : _24.TrackingId,
                         requestedAt: new Date(),
-                        totalShippingAmount: (_23 = responseData.ShippingRequestEntityDto) === null || _23 === void 0 ? void 0 : _23.TotalShippingAmount,
+                        totalShippingAmount: (_25 = responseData.ShippingRequestEntityDto) === null || _25 === void 0 ? void 0 : _25.TotalShippingAmount,
                         pickupSchedule: jrsRequest.apiShippingRequest.requestedPickupSchedule,
+                        // Include shipping charge allocation info
+                        shippingCharges: {
+                            sellerCharge: sellerShippingCharge,
+                            buyerCharge: buyerShippingCharge,
+                            totalCharge: totalShippingCost,
+                            chargeApplied: sellerShippingCharge > 0,
+                            chargeAppliedAt: sellerShippingCharge > 0 ? new Date() : null,
+                            payoutAdjustmentId: payoutAdjustmentId,
+                        }
                     }
                 },
                 status: "shipping",
@@ -431,7 +734,7 @@ exports.createJRSShipping = (0, https_1.onRequest)({
             logger.info("Order updated successfully in Firestore", {
                 orderId: payload.orderId,
                 collection: orderResult.collection,
-                trackingId: (_24 = responseData.ShippingRequestEntityDto) === null || _24 === void 0 ? void 0 : _24.TrackingId,
+                trackingId: (_26 = responseData.ShippingRequestEntityDto) === null || _26 === void 0 ? void 0 : _26.TrackingId,
             });
         }
         catch (firestoreError) {
@@ -447,31 +750,39 @@ exports.createJRSShipping = (0, https_1.onRequest)({
                 error: "Order shipping succeeded but failed to update order status",
                 message: "JRS shipping request was successful, but we couldn't update the order in our database. Please contact support.",
                 shippingReferenceNo,
-                trackingId: (_25 = responseData.ShippingRequestEntityDto) === null || _25 === void 0 ? void 0 : _25.TrackingId,
+                trackingId: (_27 = responseData.ShippingRequestEntityDto) === null || _27 === void 0 ? void 0 : _27.TrackingId,
                 firestoreError: firestoreError instanceof Error ? firestoreError.message : 'Unknown error'
             });
             return;
         }
-        // Return success response
+        // Return success response with shipping charge details
         res.status(200).json({
             success: true,
             shippingReferenceNo,
-            trackingId: (_26 = responseData.ShippingRequestEntityDto) === null || _26 === void 0 ? void 0 : _26.TrackingId,
-            totalShippingAmount: (_27 = responseData.ShippingRequestEntityDto) === null || _27 === void 0 ? void 0 : _27.TotalShippingAmount,
+            trackingId: (_28 = responseData.ShippingRequestEntityDto) === null || _28 === void 0 ? void 0 : _28.TrackingId,
+            totalShippingAmount: (_29 = responseData.ShippingRequestEntityDto) === null || _29 === void 0 ? void 0 : _29.TotalShippingAmount,
+            shippingCharges: {
+                sellerCharge: sellerShippingCharge,
+                buyerCharge: buyerShippingCharge,
+                totalCharge: totalShippingCost,
+                sellerChargeApplied: sellerShippingCharge > 0,
+            },
             jrsResponse: responseData,
-            message: "Shipping request created successfully",
+            message: sellerShippingCharge > 0
+                ? `Shipping request created successfully. Seller shipping charge of ₱${sellerShippingCharge.toFixed(2)} will be deducted from payout.`
+                : "Shipping request created successfully",
             orderData: {
                 orderId: payload.orderId,
                 recipient: `${recipientInfo.firstName} ${recipientInfo.lastName}`,
                 shipper: `${shipperInfo.firstName} ${shipperInfo.lastName}`,
-                items: ((_28 = orderData.items) === null || _28 === void 0 ? void 0 : _28.length) || 0,
+                items: ((_30 = orderData.items) === null || _30 === void 0 ? void 0 : _30.length) || 0,
             },
         });
     }
     catch (error) {
         logger.error("Error in createJRSShipping", {
             error: error instanceof Error ? error.message : "Unknown error",
-            orderId: (_29 = req.body) === null || _29 === void 0 ? void 0 : _29.orderId,
+            orderId: (_31 = req.body) === null || _31 === void 0 ? void 0 : _31.orderId,
             stack: error instanceof Error ? error.stack : undefined,
         });
         res.status(500).json({
