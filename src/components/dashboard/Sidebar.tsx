@@ -92,6 +92,8 @@ const Sidebar = ({ activeItem, onItemClick, onLogout }: SidebarProps) => {
           if (item.id === 'categories' && !isAdmin) return false;
           // TEMP: hide seller tabs from admin panel
           if (isAdmin && ['seller-orders','inventory','add-product','sub-accounts'].includes(item.id)) return false;
+          // NEW: hide reports & booking for admin
+          if (isAdmin && ['reports','booking'].includes(item.id)) return false;
           const key = permissionByMenuId[item.id];
 
           // For sub-accounts: only show items that have an explicit permission flag and it's true
