@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { 
   Image as ImageIcon, 
   Upload, 
@@ -22,6 +22,72 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+// Storage integration for BannerImages uploads
+import { storage } from "@/lib/firebase";
+import { ref as storageRef, uploadBytes, getDownloadURL, deleteObject } from "firebase/storage";
+import { listAll, getMetadata, updateMetadata } from 'firebase/storage';
+
+// Helper: load image and compress to WebP/JPEG using Canvas
+const loadImageFromFile = (file: File): Promise<HTMLImageElement> => {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
+    img.onerror = (e) => { URL.revokeObjectURL(url); reject(e); };
+    img.src = url;
+  });
+};
+
+const canvasToBlob = (canvas: HTMLCanvasElement, type: string, quality: number): Promise<Blob> => {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((b) => b ? resolve(b) : reject(new Error('toBlob failed')), type, quality);
+  });
+};
+
+const replaceExt = (name: string, newExt: string) => name.replace(/\.[^/.]+$/, '') + '.' + newExt;
+
+async function compressImage(
+  file: File,
+  opts: { maxWidth?: number; maxHeight?: number; quality?: number; thresholdKB?: number } = {}
+): Promise<{ blob: Blob; width: number; height: number; mime: string; ext: 'webp' | 'jpeg'; name: string }> {
+  const { maxWidth = 1200, maxHeight = 1200, quality = 0.8, thresholdKB = 200 } = opts;
+
+  // Skip compression for GIFs or very small files
+  if (file.type.includes('gif') || file.size <= thresholdKB * 1024) {
+    return { blob: file, width: 0, height: 0, mime: file.type || 'image/jpeg', ext: 'jpeg', name: file.name };
+  }
+
+  const img = await loadImageFromFile(file);
+  // Compute target size preserving aspect ratio
+  let { width, height } = img;
+  const ratio = Math.min(maxWidth / width, maxHeight / height, 1);
+  const targetW = Math.max(1, Math.round(width * ratio));
+  const targetH = Math.max(1, Math.round(height * ratio));
+
+  const canvas = document.createElement('canvas');
+  canvas.width = targetW; canvas.height = targetH;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('Canvas 2D not available');
+  ctx.drawImage(img, 0, 0, targetW, targetH);
+
+  // Prefer WebP for better compression, fallback to JPEG
+  let mime = 'image/webp';
+  let ext: 'webp' | 'jpeg' = 'webp';
+  let q = quality;
+  let blob = await canvasToBlob(canvas, mime, q).catch(async () => {
+    mime = 'image/jpeg';
+    ext = 'jpeg';
+    return canvasToBlob(canvas, mime, q);
+  });
+
+  // Simple second pass if still big
+  if (blob.size > 350 * 1024) {
+    q = 0.65;
+    blob = await canvasToBlob(canvas, mime, q);
+  }
+
+  return { blob, width: targetW, height: targetH, mime, ext, name: replaceExt(file.name, ext) };
+}
 
 interface ImageAsset {
   id: string;
@@ -39,6 +105,7 @@ interface ImageAsset {
   tags: string[];
   isActive: boolean;
   usageCount: number;
+  path?: string; // storage path for delete/management
 }
 
 interface ImagesTabProps {
@@ -49,61 +116,11 @@ interface ImagesTabProps {
 }
 
 const ImagesTab = ({ loading = false, error, setError, onTabChange }: ImagesTabProps) => {
-  const [images, setImages] = useState<ImageAsset[]>([
-    {
-      id: "1",
-      name: "dental-promotion-banner.jpg",
-      category: "banners",
-      type: "image",
-      size: 245760,
-      dimensions: { width: 1200, height: 400 },
-      format: "JPEG",
-      url: "/images/dental-promotion-banner.jpg",
-      thumbnail: "/images/thumbnails/dental-promotion-banner.jpg",
-      uploadDate: "2024-09-08T10:00:00Z",
-      lastModified: "2024-09-08T10:00:00Z",
-      uploadedBy: "admin@dentpal.com",
-      tags: ["promotion", "dental", "banner"],
-      isActive: true,
-      usageCount: 15
-    },
-    {
-      id: "2",
-      name: "login-welcome-popup.png",
-      category: "login-popup",
-      type: "image",
-      size: 156432,
-      dimensions: { width: 600, height: 400 },
-      format: "PNG",
-      url: "/images/login-welcome-popup.png",
-      thumbnail: "/images/thumbnails/login-welcome-popup.png",
-      uploadDate: "2024-09-07T14:30:00Z",
-      lastModified: "2024-09-07T14:30:00Z",
-      uploadedBy: "designer@dentpal.com",
-      tags: ["login", "welcome", "popup"],
-      isActive: true,
-      usageCount: 8
-    },
-    {
-      id: "3",
-      name: "cart-discount-offer.gif",
-      category: "cart-popup",
-      type: "gif",
-      size: 512000,
-      dimensions: { width: 500, height: 300 },
-      format: "GIF",
-      url: "/images/cart-discount-offer.gif",
-      thumbnail: "/images/thumbnails/cart-discount-offer.gif",
-      uploadDate: "2024-09-06T09:15:00Z",
-      lastModified: "2024-09-06T09:15:00Z",
-      uploadedBy: "marketing@dentpal.com",
-      tags: ["cart", "discount", "animated"],
-      isActive: false,
-      usageCount: 23
-    }
-  ]);
-
-  const [activeCategory, setActiveCategory] = useState<string>("all");
+  const [images, setImages] = useState<ImageAsset[]>([]); // start empty, fetch from storage
+  // NEW: loading & dimension tracking state
+  const [bannerLoading, setBannerLoading] = useState<boolean>(false);
+  const [dimensionProgress, setDimensionProgress] = useState<{ total: number; done: number }>({ total: 0, done: 0 });
+  const [activeCategory, setActiveCategory] = useState<string>("banners");
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedImages, setSelectedImages] = useState<string[]>([]);
@@ -116,17 +133,13 @@ const ImagesTab = ({ loading = false, error, setError, onTabChange }: ImagesTabP
   const [uploadCategory, setUploadCategory] = useState<string>("general");
   const [uploadTags, setUploadTags] = useState<string>("");
 
+  // Only show Banners category
   const categories = [
-    { id: "all", name: "All Images", count: images.length },
-    { id: "login-popup", name: "Log In Pop-up Ads", count: images.filter(img => img.category === 'login-popup').length },
-    { id: "banners", name: "Banners", count: images.filter(img => img.category === 'banners').length },
-    { id: "cart-popup", name: "Cart Page Pop-up", count: images.filter(img => img.category === 'cart-popup').length },
-    { id: "home-popup", name: "Home Page Pop-up", count: images.filter(img => img.category === 'home-popup').length },
-    { id: "general", name: "General", count: images.filter(img => img.category === 'general').length }
+    { id: "banners", name: "Banners", count: images.length },
   ];
 
   const filteredImages = images.filter(image => {
-    const matchesCategory = activeCategory === "all" || image.category === activeCategory;
+    const matchesCategory = image.category === "banners"; // banner-only
     const matchesSearch = image.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          image.tags.some(tag => tag.toLowerCase().includes(searchTerm.toLowerCase()));
     return matchesCategory && matchesSearch;
@@ -186,76 +199,218 @@ const ImagesTab = ({ loading = false, error, setError, onTabChange }: ImagesTabP
     setDragActive(false);
 
     const files = Array.from(e.dataTransfer.files);
-    const imageFiles = files.filter(file => file.type.startsWith('image/') || file.type.startsWith('video/'));
+    const imageFiles = files.filter(file => file.type.startsWith('image/'));
     setUploadFiles(imageFiles);
     setShowUploadModal(true);
   };
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
-    setUploadFiles(files);
+    setUploadFiles(files.filter(f => f.type.startsWith('image/')));
     setShowUploadModal(true);
   };
+
+  // Helpers to validate banner size
+  const getImageDimensions = (file: File): Promise<{ width: number; height: number }> => {
+    return new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => {
+        const { width, height } = img as HTMLImageElement;
+        URL.revokeObjectURL(url);
+        resolve({ width, height });
+      };
+      img.onerror = (err) => {
+        URL.revokeObjectURL(url);
+        reject(err);
+      };
+      img.src = url;
+    });
+  };
+
+  const safeFileName = (name: string) => name.replace(/[^a-zA-Z0-9_.-]/g, '_');
+
+  // Load all banner images from Firebase Storage folder BannerImages (incremental for faster UX)
+  const loadBanners = async () => {
+    setBannerLoading(true);
+    try {
+      const folderRef = storageRef(storage, 'BannerImages');
+      const list = await listAll(folderRef);
+      const baseItems = await Promise.all(
+        list.items.map(async (item) => {
+          const [url, meta] = await Promise.all([
+            getDownloadURL(item),
+            getMetadata(item)
+          ]);
+          const custom = meta.customMetadata || {};
+          const tags = (custom.tags || '').split(',').map(t => t.trim()).filter(Boolean);
+          const isActive = custom.isActive === 'true';
+          // Dimensions deferred (set 0 initially for quick list render)
+          return {
+            id: meta.fullPath,
+            name: meta.name,
+            category: 'banners',
+            type: meta.contentType?.includes('image/gif') ? 'gif' : 'image',
+            size: Number(meta.size) || 0,
+            dimensions: { width: 0, height: 0 },
+            format: meta.name.split('.').pop()?.toUpperCase() || 'IMG',
+            url,
+            thumbnail: url,
+            uploadDate: meta.timeCreated || new Date().toISOString(),
+            lastModified: meta.updated || meta.timeCreated || new Date().toISOString(),
+            uploadedBy: custom.uploadedBy || 'unknown',
+            tags,
+            isActive,
+            usageCount: 0,
+            path: meta.fullPath,
+          } as ImageAsset;
+        })
+      );
+      setImages(baseItems);
+      // Progressive dimension resolution (non-blocking)
+      setDimensionProgress({ total: baseItems.length, done: 0 });
+      let cancelled = false;
+      const resolveDims = (asset: ImageAsset) => {
+        const img = new Image();
+        img.onload = () => {
+          if (cancelled) return;
+            setImages(prev => prev.map(it => it.id === asset.id ? { ...it, dimensions: { width: img.width, height: img.height } } : it));
+          setDimensionProgress(p => ({ total: p.total, done: Math.min(p.total, p.done + 1) }));
+        };
+        img.onerror = () => {
+          if (cancelled) return;
+          setDimensionProgress(p => ({ total: p.total, done: Math.min(p.total, p.done + 1) }));
+        };
+        // Defer loading to idle time for smoother UI
+        if (typeof (window as any).requestIdleCallback === 'function') {
+          (window as any).requestIdleCallback(() => { img.src = asset.url; });
+        } else {
+          setTimeout(() => { img.src = asset.url; }, 0);
+        }
+      };
+      // Concurrency throttle
+      const concurrency = 6;
+      for (let i = 0; i < baseItems.length; i += concurrency) {
+        baseItems.slice(i, i + concurrency).forEach(resolveDims);
+      }
+      // Cleanup
+      return () => { cancelled = true; };
+    } catch (err) {
+      console.error('Failed to load banner images', err);
+      setError?.('Failed to fetch banner images');
+    } finally {
+      setBannerLoading(false);
+    }
+  };
+
+  // Fetch on mount
+  useEffect(() => { loadBanners(); }, []);
 
   const handleUpload = async () => {
     if (uploadFiles.length === 0) return;
 
     setError?.(null);
     try {
-      // TODO: API call to upload images
-      const newImages: ImageAsset[] = uploadFiles.map((file, index) => ({
-        id: Date.now().toString() + index,
-        name: file.name,
-        category: uploadCategory as any,
-        type: file.type.startsWith('video/') ? 'video' : file.type === 'image/gif' ? 'gif' : 'image',
-        size: file.size,
-        dimensions: { width: 0, height: 0 }, // Would be calculated on upload
-        format: file.name.split('.').pop()?.toUpperCase() || 'UNKNOWN',
-        url: URL.createObjectURL(file),
-        thumbnail: URL.createObjectURL(file),
-        uploadDate: new Date().toISOString(),
-        lastModified: new Date().toISOString(),
-        uploadedBy: "current-user@dentpal.com",
-        tags: uploadTags.split(',').map(tag => tag.trim()).filter(Boolean),
-        isActive: true,
-        usageCount: 0
-      }));
+      const results: ImageAsset[] = [];
 
-      setImages(prev => [...prev, ...newImages]);
+      for (const file of uploadFiles) {
+        // Compress image before upload (to WebP by default)
+        let processed = await compressImage(file);
+
+        // If compression was skipped (e.g., small or GIF), read dimensions from original
+        let width = 0, height = 0;
+        if (processed.width && processed.height) {
+          width = processed.width; height = processed.height;
+        } else {
+          try { const dims = await getImageDimensions(file); width = dims.width; height = dims.height; } catch {}
+        }
+
+        const clean = safeFileName(processed.name);
+        const path = `BannerImages/${Date.now()}_${clean}`;
+        const ref = storageRef(storage, path);
+        await uploadBytes(ref, processed.blob, { contentType: processed.mime, customMetadata: { tags: uploadTags, isActive: 'false', uploadedBy: 'current-user@dentpal.com' } });
+        const url = await getDownloadURL(ref);
+
+        const format = processed.ext.toUpperCase();
+
+        results.push({
+          id: `${Date.now()}_${Math.random().toString(36).slice(2)}`,
+          name: clean,
+          category: 'banners',
+          type: 'image',
+          size: processed.blob.size,
+          dimensions: { width, height },
+          format,
+          url,
+          thumbnail: url,
+          uploadDate: new Date().toISOString(),
+          lastModified: new Date().toISOString(),
+          uploadedBy: "current-user@dentpal.com",
+          tags: uploadTags.split(',').map(t => t.trim()).filter(Boolean),
+          isActive: false,
+          usageCount: 0,
+          path,
+        });
+      }
+
+      if (results.length) {
+        setImages(prev => [...prev, ...results]);
+      }
+
       setShowUploadModal(false);
       setUploadFiles([]);
       setUploadTags("");
-      console.log(`Uploaded ${newImages.length} images`);
     } catch (err) {
+      console.error(err);
       setError?.("Failed to upload images. Please try again.");
     }
   };
 
-  const handleDeleteImage = (imageId: string) => {
+  const handleDeleteImage = async (imageId: string) => {
+    const img = images.find(i => i.id === imageId);
+    if (!img) return;
     if (window.confirm("Are you sure you want to delete this image?")) {
+      try {
+        if (img.path) {
+          await deleteObject(storageRef(storage, img.path));
+        }
+      } catch (e) {
+        console.warn('Failed to delete storage object, removing locally', e);
+      }
       setImages(prev => prev.filter(img => img.id !== imageId));
       setSelectedImages(prev => prev.filter(id => id !== imageId));
     }
   };
 
-  const handleBulkDelete = () => {
-    if (selectedImages.length === 0) return;
-    if (window.confirm(`Are you sure you want to delete ${selectedImages.length} selected images?`)) {
-      setImages(prev => prev.filter(img => !selectedImages.includes(img.id)));
-      setSelectedImages([]);
+  // Toggle active flag & persist to storage metadata (multiple active supported)
+  const toggleImageStatus = async (imageId: string) => {
+    const target = images.find(i => i.id === imageId);
+    if (!target) return;
+    const willBeActive = !target.isActive;
+
+    if (target.path) {
+      try {
+        await updateMetadata(
+          storageRef(storage, target.path),
+          { customMetadata: { tags: target.tags.join(','), isActive: willBeActive ? 'true' : 'false', uploadedBy: target.uploadedBy } }
+        );
+      } catch (e) {
+        console.warn('Failed to update active metadata', e);
+      }
     }
+
+    // Update only this image locally; leave others unchanged
+    setImages(prev => prev.map(img => (
+      img.id === imageId ? { ...img, isActive: willBeActive } : img
+    )));
   };
 
-  const handleClearAll = () => {
-    if (window.confirm("Are you sure you want to clear all images? This action cannot be undone.")) {
-      setImages([]);
-      setSelectedImages([]);
-    }
-  };
+  const activeBanner = images.find(i => i.isActive);
 
+  // Selection helpers
   const toggleImageSelection = (imageId: string) => {
-    setSelectedImages(prev => 
-      prev.includes(imageId) 
+    setSelectedImages(prev =>
+      prev.includes(imageId)
         ? prev.filter(id => id !== imageId)
         : [...prev, imageId]
     );
@@ -269,19 +424,46 @@ const ImagesTab = ({ loading = false, error, setError, onTabChange }: ImagesTabP
     }
   };
 
-  const toggleImageStatus = (imageId: string) => {
-    setImages(prev => prev.map(img => 
-      img.id === imageId ? { ...img, isActive: !img.isActive } : img
-    ));
+  const handleBulkDelete = async () => {
+    if (selectedImages.length === 0) return;
+    if (window.confirm(`Are you sure you want to delete ${selectedImages.length} selected images?`)) {
+      // Attempt to delete from storage; ignore errors to continue UX
+      await Promise.all(
+        selectedImages.map(id => {
+          const img = images.find(i => i.id === id);
+          if (img?.path) {
+            return deleteObject(storageRef(storage, img.path)).catch(() => {});
+          }
+          return Promise.resolve();
+        })
+      );
+      setImages(prev => prev.filter(img => !selectedImages.includes(img.id)));
+      setSelectedImages([]);
+    }
+  };
+
+  const handleClearAll = async () => {
+    if (images.length === 0) return;
+    if (window.confirm("Are you sure you want to clear all images? This action cannot be undone.")) {
+      await Promise.all(
+        images.map(img =>
+          img.path ? deleteObject(storageRef(storage, img.path)).catch(() => {}) : Promise.resolve()
+        )
+      );
+      setImages([]);
+      setSelectedImages([]);
+    }
   };
 
   const renderImageCard = (image: ImageAsset) => (
     <div 
       key={image.id}
       className={`group relative bg-white rounded-xl border-2 transition-all duration-200 hover:shadow-lg ${
-        selectedImages.includes(image.id) 
-          ? 'border-teal-500 shadow-md' 
-          : 'border-gray-200 hover:border-gray-300'
+        image.isActive
+          ? 'border-green-500 shadow-[0_0_0_3px_rgba(16,185,129,0.25)]'
+          : selectedImages.includes(image.id)
+            ? 'border-teal-500 shadow-md'
+            : 'border-gray-200 hover:border-gray-300'
       }`}
     >
       {/* Selection Checkbox */}
@@ -294,16 +476,19 @@ const ImagesTab = ({ loading = false, error, setError, onTabChange }: ImagesTabP
         />
       </div>
 
-      {/* Status Badge */}
-      <div className="absolute top-3 right-3 z-10">
-        <Badge 
-          className={`${image.isActive 
-            ? 'bg-green-100 text-green-800 border-green-200' 
-            : 'bg-gray-100 text-gray-800 border-gray-200'
-          } text-xs border`}
-        >
-          {image.isActive ? 'Active' : 'Inactive'}
-        </Badge>
+      {/* Active Toggle */}
+      <div className="absolute top-3 right-3 z-10 flex flex-col items-end gap-2">
+        <Button
+          variant="secondary"
+            size="sm"
+            onClick={() => toggleImageStatus(image.id)}
+            className={`text-xs px-2 py-1 rounded-full border ${image.isActive ? 'bg-green-100 text-green-800 border-green-200' : 'bg-gray-100 text-gray-700 border-gray-200 hover:bg-gray-200'}`}
+          >
+          <span className="flex items-center gap-1">
+            <Star className={`w-3 h-3 ${image.isActive ? 'text-green-600 fill-green-600' : 'text-gray-500'}`} />
+            {image.isActive ? 'Active' : 'Set Active'}
+          </span>
+        </Button>
       </div>
 
       {/* Image Preview */}
@@ -383,7 +568,7 @@ const ImagesTab = ({ loading = false, error, setError, onTabChange }: ImagesTabP
 
           <div className="flex items-center justify-between text-xs text-gray-500">
             <span>{formatFileSize(image.size)}</span>
-            <span>{image.dimensions.width} × {image.dimensions.height}</span>
+            <span>{image.dimensions.width > 0 ? `${image.dimensions.width} × ${image.dimensions.height}` : 'Loading…'}</span>
           </div>
 
           <div className="flex items-center justify-between text-xs text-gray-500">
@@ -411,7 +596,7 @@ const ImagesTab = ({ loading = false, error, setError, onTabChange }: ImagesTabP
   );
 
   const renderListView = (image: ImageAsset) => (
-    <tr key={image.id} className="hover:bg-gray-50">
+    <tr key={image.id} className={`hover:bg-gray-50 ${image.isActive ? 'bg-green-50/50' : ''}`}>
       <td className="px-6 py-4 whitespace-nowrap">
         <input
           type="checkbox"
@@ -443,15 +628,16 @@ const ImagesTab = ({ loading = false, error, setError, onTabChange }: ImagesTabP
         {formatFileSize(image.size)}
       </td>
       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-        {image.dimensions.width} × {image.dimensions.height}
+        {image.dimensions.width > 0 ? `${image.dimensions.width} × ${image.dimensions.height}` : 'Loading…'}
       </td>
       <td className="px-6 py-4 whitespace-nowrap">
         <Badge 
           className={`${image.isActive 
             ? 'bg-green-100 text-green-800 border-green-200' 
             : 'bg-gray-100 text-gray-800 border-gray-200'
-          } text-xs border`}
+          } text-xs border flex items-center gap-1`}
         >
+          <Star className={`w-3 h-3 ${image.isActive ? 'text-green-600 fill-green-600' : 'text-gray-400'}`} />
           {image.isActive ? 'Active' : 'Inactive'}
         </Badge>
       </td>
@@ -478,6 +664,15 @@ const ImagesTab = ({ loading = false, error, setError, onTabChange }: ImagesTabP
           <Button
             variant="ghost"
             size="sm"
+            onClick={() => toggleImageStatus(image.id)}
+            className={image.isActive ? 'text-green-600 hover:text-green-800' : 'text-gray-600 hover:text-gray-800'}
+            title={image.isActive ? 'Unset Active' : 'Set Active'}
+          >
+            <Star className="w-4 h-4" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
             onClick={() => handleDeleteImage(image.id)}
             className="text-red-600 hover:text-red-800"
           >
@@ -490,6 +685,18 @@ const ImagesTab = ({ loading = false, error, setError, onTabChange }: ImagesTabP
 
   return (
     <div className="space-y-8" onDragEnter={handleDrag} onDragLeave={handleDrag} onDragOver={handleDrag}>
+      {/* Loading banner indicator */}
+      {bannerLoading && images.length === 0 && (
+        <div className="bg-white border border-gray-200 rounded-2xl p-6 flex items-center gap-3 text-sm text-gray-600 shadow-sm">
+          <span className="animate-pulse inline-flex w-4 h-4 rounded-full bg-teal-500" /> Loading banner images…
+        </div>
+      )}
+      {!bannerLoading && dimensionProgress.total > 0 && dimensionProgress.done < dimensionProgress.total && (
+        <div className="bg-white border border-teal-200 rounded-xl px-4 py-2 text-xs text-teal-700 flex items-center gap-2">
+          <span className="w-2 h-2 rounded-full bg-teal-500 animate-ping" /> Resolving dimensions {dimensionProgress.done}/{dimensionProgress.total}
+        </div>
+      )}
+
       {/* Error Display */}
       {error && (
         <div className="bg-red-50 border border-red-200 rounded-xl p-4 flex items-center space-x-3">
@@ -680,7 +887,7 @@ const ImagesTab = ({ loading = false, error, setError, onTabChange }: ImagesTabP
         ref={fileInputRef}
         type="file"
         multiple
-        accept="image/*,video/*"
+        accept="image/*"
         onChange={handleFileSelect}
         className="hidden"
       />
@@ -704,7 +911,7 @@ const ImagesTab = ({ loading = false, error, setError, onTabChange }: ImagesTabP
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <div className="bg-white rounded-2xl p-8 max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-6">
-              <h3 className="text-xl font-semibold">Upload Images</h3>
+              <h3 className="text-xl font-semibold">Upload Banner Images</h3>
               <Button
                 variant="ghost"
                 size="sm"
@@ -741,19 +948,11 @@ const ImagesTab = ({ loading = false, error, setError, onTabChange }: ImagesTabP
                 </div>
               </div>
 
+              {/* Fixed category for Banners */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">Category</label>
-                <select
-                  value={uploadCategory}
-                  onChange={(e) => setUploadCategory(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
-                >
-                  <option value="general">General</option>
-                  <option value="login-popup">Log In Pop-up Ads</option>
-                  <option value="banners">Banners</option>
-                  <option value="cart-popup">Cart Page Pop-up</option>
-                  <option value="home-popup">Home Page Pop-up</option>
-                </select>
+                <div className="text-sm text-gray-700">Banners</div>
+                <p className="text-xs text-gray-500 mt-1">Uploads save to Firebase Storage folder "BannerImages" and are compressed to reduce file size.</p>
               </div>
 
               <div>

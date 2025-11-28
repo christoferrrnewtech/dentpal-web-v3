@@ -75,10 +75,10 @@ function normalizeTimestamp(value: any): number | null {
     bookings: true,
     confirmation: role === 'admin',
     withdrawal: role === 'admin',
-    access: role === 'admin',
+    access: true, // CHANGED: sellers also have access (sub-account creation)
     images: role === 'admin',
     users: role === 'admin',
-    inventory: role === 'admin',
+    inventory: true,
     'seller-orders': true,
     'add-product': true,
   });
@@ -886,25 +886,25 @@ const AccessTab = ({ loading = false, error, setError, onTabChange, onEditUser }
   };
 
   const handleExport = () => {
-    const list = activeSection === 'admin' 
-      ? filteredUsers.filter(u => u.role === 'admin') 
-      : activeSection === 'seller' 
-        ? filteredUsers.filter(u => u.role === 'seller') 
+    const list = activeSection === 'admin'
+      ? filteredUsers.filter(u => u.role === 'admin')
+      : activeSection === 'seller'
+        ? filteredUsers.filter(u => u.role === 'seller')
         : filteredUsers;
-    const title = activeSection === 'admin' ? 'Admin Users' : activeSection === 'seller' ? 'Seller Users' : 'Users';
+    const title = activeSection === 'admin' ? 'List of Access on Admin' : activeSection === 'seller' ? 'List of Access on Seller' : 'List of Access on Users';
     exportUsers(list, 'xlsx', title);
   };
 
   // New: handler that receives a type from dropdowns
   const handleExportAs = async (type: 'csv' | 'xlsx' | 'pdf', listOverride?: User[], titleOverride?: string) => {
     const list = listOverride || (
-      activeSection === 'admin' 
-        ? filteredUsers.filter(u => u.role === 'admin') 
-        : activeSection === 'seller' 
-          ? filteredUsers.filter(u => u.role === 'seller') 
+      activeSection === 'admin'
+        ? filteredUsers.filter(u => u.role === 'admin')
+        : activeSection === 'seller'
+          ? filteredUsers.filter(u => u.role === 'seller')
           : filteredUsers
     );
-    const title = titleOverride || (activeSection === 'admin' ? 'Admin Users' : activeSection === 'seller' ? 'Seller Users' : 'Users');
+    const title = titleOverride || (activeSection === 'admin' ? 'List of Access on Admin' : activeSection === 'seller' ? 'List of Access on Seller' : 'List of Access on Users');
     await exportUsers(list, type, title);
   };
 
@@ -986,49 +986,58 @@ const AccessTab = ({ loading = false, error, setError, onTabChange, onEditUser }
           </div>
 
           {/* Permissions */}
-          <div className="space-y-4">
-            <h4 className="text-lg font-medium text-gray-900">Manage Access</h4>
-            <div className="space-y-3">
-              {Object.entries(currentUser.permissions || {}).map(([permission, enabled]) => (
-                <div key={permission} className="flex items-center justify-between">
-                  <label className="text-sm font-medium text-gray-700 capitalize">
-                    {permission === 'seller-orders' ? 'orders' : permission.replace('-', ' ')}
-                  </label>
-                  <div className="flex items-center space-x-2">
-                    <input
-                      type="checkbox"
-                      checked={enabled}
-                      onChange={(e) => {
-                        if (isEditing) {
-                          setEditingUser(prev => prev ? {
-                            ...prev,
-                            permissions: {
-                              ...prev.permissions,
-                              [permission]: e.target.checked
-                            }
-                          } : null);
-                        } else {
-                          setNewUser(prev => ({
-                            ...prev,
-                            permissions: {
-                              ...prev.permissions,
-                              [permission]: e.target.checked
-                            }
-                          }));
-                        }
-                      }}
-                      className="w-4 h-4 text-green-600 rounded focus:ring-green-500"
-                    />
-                    {enabled ? (
-                      <Unlock className="w-4 h-4 text-green-500" />
-                    ) : (
-                      <Lock className="w-4 h-4 text-red-500" />
-                    )}
+          {currentUser.role === 'admin' ? (
+            <div className="space-y-4">
+              <h4 className="text-lg font-medium text-gray-900">Manage Access</h4>
+              <div className="space-y-3">
+                {Object.entries(currentUser.permissions || {}).map(([permission, enabled]) => (
+                  <div key={permission} className="flex items-center justify-between">
+                    <label className="text-sm font-medium text-gray-700 capitalize">
+                      {permission === 'seller-orders' ? 'orders' : permission.replace('-', ' ')}
+                    </label>
+                    <div className="flex items-center space-x-2">
+                      <input
+                        type="checkbox"
+                        checked={enabled}
+                        onChange={(e) => {
+                          if (isEditing) {
+                            setEditingUser(prev => prev ? {
+                              ...prev,
+                              permissions: {
+                                ...prev.permissions,
+                                [permission]: e.target.checked
+                              }
+                            } : null);
+                          } else {
+                            setNewUser(prev => ({
+                              ...prev,
+                              permissions: {
+                                ...prev.permissions,
+                                [permission]: e.target.checked
+                              }
+                            }));
+                          }
+                        }}
+                        className="w-4 h-4 text-green-600 rounded focus:ring-green-500"
+                      />
+                      {enabled ? (
+                        <Unlock className="w-4 h-4 text-green-500" />
+                      ) : (
+                        <Lock className="w-4 h-4 text-red-500" />
+                      )}
+                    </div>
                   </div>
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
-          </div>
+          ) : (
+            <div className="space-y-4">
+              <h4 className="text-lg font-medium text-gray-900">Access</h4>
+              <div className="text-xs text-gray-600 bg-gray-50 border border-gray-200 rounded-lg p-3">
+                Sellers automatically have access to: <span className="font-medium">Dashboard, Profile, Inventory, Orders, Add Product, Access (Sub Accounts)</span>.
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="flex items-center justify-between mt-8 pt-6 border-t border-gray-200">
@@ -1090,12 +1099,6 @@ const AccessTab = ({ loading = false, error, setError, onTabChange, onEditUser }
                     Access Level
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Status
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Last Login
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Actions
                   </th>
                 </tr>
@@ -1133,28 +1136,8 @@ const AccessTab = ({ loading = false, error, setError, onTabChange, onEditUser }
                         )}
                       </div>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="flex items-center space-x-2">
-                        <Badge className={`${getStatusColor(user.status)} text-xs border`}>
-                          <span className="flex items-center space-x-1">
-                            {getStatusIcon(user.status)}
-                            <span>{user.status}</span>
-                          </span>
-                        </Badge>
-                        <select
-                          className="text-xs border-0 bg-transparent focus:ring-0"
-                          value={user.status}
-                          onChange={(e) => handleStatusChange(user.id, e.target.value as any)}
-                        >
-                          <option value="active">Active</option>
-                          <option value="inactive">Inactive</option>
-                          <option value="pending">Pending</option>
-                        </select>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {user.lastLogin ? formatDate(user.lastLogin) : 'Never'}
-                    </td>
+                  
+                   
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
                       <div className="flex items-center space-x-1">
                         <Button
@@ -1602,17 +1585,14 @@ const AccessTab = ({ loading = false, error, setError, onTabChange, onEditUser }
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
-                <DropdownMenuItem onClick={() => handleExportAs('csv')}>
-                  <FileText className="w-4 h-4 mr-2" />
-                  Export as CSV
+                <DropdownMenuItem onClick={() => handleExportAs('csv')} className="flex items-center gap-2">
+                  <File className="w-4 h-4" /> CSV
                 </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => handleExportAs('xlsx')}>
-                  <FileSpreadsheet className="w-4 h-4 mr-2" />
-                  Export as Excel (XLSX)
+                <DropdownMenuItem onClick={() => handleExportAs('xlsx')} className="flex items-center gap-2">
+                  <FileSpreadsheet className="w-4 h-4" /> Excel (.xlsx)
                 </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => handleExportAs('pdf')}>
-                  <File className="w-4 h-4 mr-2" />
-                  Export as PDF
+                <DropdownMenuItem onClick={() => handleExportAs('pdf')} className="flex items-center gap-2">
+                  <FileText className="w-4 h-4" /> PDF
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -1671,7 +1651,7 @@ const AccessTab = ({ loading = false, error, setError, onTabChange, onEditUser }
                   value={editingUser.role}
                   onChange={(e) => {
                     const role = e.target.value as 'admin' | 'seller';
-                    setEditingUser(prev => prev ? { ...prev, role, permissions: defaultPermissionsByRole(role) } : prev);
+                    setEditingUser(prev => prev ? { ...prev, role } : prev);
                   }}
                 >
                   <option value="seller">Seller</option>

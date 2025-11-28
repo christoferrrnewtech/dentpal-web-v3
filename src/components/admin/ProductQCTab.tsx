@@ -201,15 +201,6 @@ const ProductQCTab: React.FC = () => {
             className="w-64 max-w-full text-sm p-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
           />
         </div>
-        <div className="flex items-center gap-2">
-          <label className="text-xs text-gray-600">QC Time</label>
-          <input
-            type="datetime-local"
-            value={qcTime}
-            onChange={(e) => setQcTime(e.target.value)}
-            className="text-sm p-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
-          />
-        </div>
       </div>
 
       {/* Inner Tabs */}
@@ -285,6 +276,24 @@ const ProductQCTab: React.FC = () => {
                           <AlertTriangle className="w-3.5 h-3.5" /> Violation
                         </button>
                       </>
+                    )}
+                    {tab === 'approved' && (
+                      <button
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-red-600 text-white hover:bg-red-700 shadow-sm"
+                        onClick={() => setRejectId(r.id)}
+                        title="Mark as Violation"
+                      >
+                        <AlertTriangle className="w-3.5 h-3.5" /> Violation
+                      </button>
+                    )}
+                    {tab === 'violation' && (
+                      <button
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-teal-600 text-white hover:bg-teal-700 shadow-sm"
+                        onClick={() => approve(r.id)}
+                        title="Approve"
+                      >
+                        <CheckCircle2 className="w-3.5 h-3.5" /> Approved
+                      </button>
                     )}
                     <button
                       className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-white border border-gray-300 hover:bg-gray-50 shadow-sm"

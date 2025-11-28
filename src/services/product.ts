@@ -21,6 +21,8 @@ export type CreateProductInput = {
   dangerousGoods?: 'none' | 'dangerous';
   warrantyType?: string | null;
   warrantyDuration?: string | null;
+  // New: inquiry flag
+  allowInquiry?: boolean;
 };
 
 const PRODUCT_COLLECTION = 'Product';
@@ -57,6 +59,8 @@ export const ProductService = {
       dangerousGoods: input.dangerousGoods ?? 'none',
       warrantyType: input.warrantyType ?? null,
       warrantyDuration: input.warrantyDuration ?? null,
+      // Persist inquiry flag
+      allowInquiry: input.allowInquiry ?? false,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     } as const;
@@ -314,6 +318,7 @@ export const ProductService = {
     dangerousGoods: 'none' | 'dangerous';
     warrantyType: string | null;
     warrantyDuration: string | null;
+    allowInquiry: boolean; // new
   }>) {
     const pRef = doc(db, PRODUCT_COLLECTION, productId);
     const payload: any = {
@@ -329,6 +334,7 @@ export const ProductService = {
       ...(updates.dangerousGoods !== undefined ? { dangerousGoods: updates.dangerousGoods } : {}),
       ...(updates.warrantyType !== undefined ? { warrantyType: updates.warrantyType } : {}),
       ...(updates.warrantyDuration !== undefined ? { warrantyDuration: updates.warrantyDuration } : {}),
+      ...(updates.allowInquiry !== undefined ? { allowInquiry: !!updates.allowInquiry } : {}),
       updatedAt: serverTimestamp(),
     };
     await updateDoc(pRef, payload);

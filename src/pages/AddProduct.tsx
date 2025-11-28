@@ -132,6 +132,8 @@ const AddProduct: React.FC = () => {
     dangerousGoods?: 'none' | 'dangerous';
     warrantyType?: string;
     warrantyDuration?: string;
+    // New boolean: allow inquiry toggle
+    allowInquiry: boolean;
   }>({
     name: '',
     description: '',
@@ -156,12 +158,13 @@ const AddProduct: React.FC = () => {
     dangerousGoods: 'none',
     warrantyType: 'No warranty',
     warrantyDuration: '',
+    allowInquiry: false,
   });
 
   const resetNewItem = () => setNewItem({
     name: '', description: '', imageUrl: '', imageFile: null, imagePreview: null, category: '', subcategory: '', price: 0, specialPrice: 0, sku: '', weight: 0,
     dimensions: { length: 0, width: 0, height: 0 }, weightUnit: 'kg', dimensionUnit: 'cm', suggestedThreshold: 0, unit: '', inStock: 0, simpleVariantName: '',
-    dangerousGoods: 'none', warrantyType: 'No warranty', warrantyDuration: '',
+    dangerousGoods: 'none', warrantyType: 'No warranty', warrantyDuration: '', allowInquiry: false,
   });
 
   const variantFileInputs = useRef<Record<string, HTMLInputElement | null>>({});
@@ -333,6 +336,8 @@ const AddProduct: React.FC = () => {
         dangerousGoods: newItem.dangerousGoods || 'none',
         warrantyType: (newItem.warrantyType || '').trim() || null,
         warrantyDuration: (newItem.warrantyDuration || '').trim() || null,
+        // New inquiry flag
+        allowInquiry: newItem.allowInquiry,
       } as any);
 
       // Add variations (at least one)
@@ -415,10 +420,26 @@ const AddProduct: React.FC = () => {
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-8 space-y-6">{/* increased padding */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
+              {/* Inquiry toggle moved here above Product Name */}
+              <div className="flex items-center mb-2">
+                <label className="text-xs font-medium text-gray-600 mr-2">Inquiry</label>
+                <button
+                  type="button"
+                  onClick={() => setNewItem(s => ({...s, allowInquiry: !s.allowInquiry}))}
+                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${newItem.allowInquiry ? 'bg-teal-600' : 'bg-gray-300'}`}
+                  role="switch"
+                  aria-checked={newItem.allowInquiry}
+                >
+                  <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition ${newItem.allowInquiry ? 'translate-x-5' : 'translate-x-1'}`}></span>
+                </button>
+              <p className="mt-1 text-[11px] text-gray-500">. Allow Inquiry: <span className={newItem.allowInquiry ? 'text-teal-600 font-medium' : 'text-gray-600'}>{newItem.allowInquiry ? 'Enabled' : 'Disabled'}</span></p>
+
+              </div>
               <label className="block text-xs font-medium text-gray-600 mb-1">Product Name</label>
               <input value={newItem.name} onChange={(e)=> setNewItem(s=> ({...s, name: e.target.value}))} className="w-full text-sm p-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent" placeholder="e.g. Alginate Powder" />
             </div>
             <div>
+              {/* SKU on the right */}
               <label className="block text-xs font-medium text-gray-600 mb-1">SKU</label>
               <input value={newItem.sku} onChange={(e)=> setNewItem(s=> ({...s, sku: e.target.value}))} className="w-full text-sm p-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent" placeholder="e.g. SKU-ALG-001" />
             </div>
@@ -434,7 +455,7 @@ const AddProduct: React.FC = () => {
               <label className="block text-xs font-medium text-gray-600 mb-1">Product Image</label>
               <div className="flex items-center gap-3">
                 <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleFileChange} />
-                <button type="button" onClick={handlePickImage} className="px-3 py-2 text-sm font-medium bg-gray-100 rounded-lg hover:bg-gray-200" disabled={!effectiveSellerId}>
+                <button type="button" onClick={handlePickImage} className="px-3 py-2 text-sm font-medium bg-gray-100 rounded-lg hover:bg-gray-300" disabled={!effectiveSellerId}>
                   {(newItem.imagePreview || newItem.imageUrl) ? 'Replace Image' : 'Add Image'}
                 </button>
                 {(newItem.imagePreview || newItem.imageUrl) && (
