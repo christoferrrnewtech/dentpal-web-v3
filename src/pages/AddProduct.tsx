@@ -455,7 +455,7 @@ const AddProduct: React.FC = () => {
               <label className="block text-xs font-medium text-gray-600 mb-1">Product Image</label>
               <div className="flex items-center gap-3">
                 <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleFileChange} />
-                <button type="button" onClick={handlePickImage} className="px-3 py-2 text-sm font-medium bg-gray-100 rounded-lg hover:bg-gray-200" disabled={!effectiveSellerId}>
+                <button type="button" onClick={handlePickImage} className="px-3 py-2 text-sm font-medium bg-gray-100 rounded-lg hover:bg-gray-300" disabled={!effectiveSellerId}>
                   {(newItem.imagePreview || newItem.imageUrl) ? 'Replace Image' : 'Add Image'}
                 </button>
                 {(newItem.imagePreview || newItem.imageUrl) && (
