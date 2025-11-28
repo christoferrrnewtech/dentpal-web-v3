@@ -203,7 +203,7 @@ export default function UserTable({
                       </AvatarFallback>
                     </Avatar>
                     {viewUserData?.gender && (
-                      <span className="absolute -bottom-2 left-1/2 -translate-x-1/2 text-[10px] px-2 py-1 rounded-full bg-white/90 text-teal-700 shadow" title="Gender">
+                      <span className="absolute -bottom-2 left-1/2 -translate-x-1/2 text-[10px] px-2 py-1 rounded-full bg-white/90 text-teal-710 shadow" title="Gender">
                         {String(viewUserData.gender).toUpperCase()}
                       </span>
                     )}
