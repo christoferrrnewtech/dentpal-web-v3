@@ -89,7 +89,7 @@ export const OrderTab: React.FC<OrderTabProps> = ({
     }
   }, [activeSubTab]);
 
-  // Date-filter orders once for reuse (also powers counts)
+  // Date-filter orders once for reuse (reverted: no hour restriction, only date range)
   const dateFilteredOrders = useMemo(() => {
     const from = dateFrom ? new Date(`${dateFrom}T00:00:00`) : null;
     const to = dateTo ? new Date(`${dateTo}T23:59:59.999`) : null;
@@ -98,7 +98,7 @@ export const OrderTab: React.FC<OrderTabProps> = ({
       const ts = new Date(o.timestamp);
       if (from && ts < from) return false;
       if (to && ts > to) return false;
-      return true;
+      return true; // no hour filtering here
     });
   }, [orders, dateFrom, dateTo]);
 
@@ -238,6 +238,11 @@ export const OrderTab: React.FC<OrderTabProps> = ({
     const now = new Date();
     if (selectedDateTime < now) {
       alert('Pickup date and time must be in the future.');
+      return;
+    }
+    const hour = selectedDateTime.getHours();
+    if (hour < 9 || hour > 14) {
+      alert('Pickup time must be between 9:00 AM and 2:00 PM.');
       return;
     }
 
@@ -619,15 +624,12 @@ export const OrderTab: React.FC<OrderTabProps> = ({
                   onChange={(e) => setPickupScheduleDialog(prev => ({ ...prev, pickupTime: e.target.value }))}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
                 >
-                  <option value="08:00">8:00 AM</option>
                   <option value="09:00">9:00 AM</option>
                   <option value="10:00">10:00 AM</option>
                   <option value="11:00">11:00 AM</option>
+                  <option value="12:00">12:00 PM</option>
                   <option value="13:00">1:00 PM</option>
                   <option value="14:00">2:00 PM</option>
-                  <option value="15:00">3:00 PM</option>
-                  <option value="16:00">4:00 PM</option>
-                  <option value="17:00">5:00 PM</option>
                 </select>
               </div>
 

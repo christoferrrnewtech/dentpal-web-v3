@@ -304,6 +304,12 @@ export const ProductService = {
     await updateDoc(pRef, { updatedAt: serverTimestamp() });
   },
 
+  // New: Adjust overall product stock (fallback when no variationId)
+  async adjustProductStock(productId: string, delta: number) {
+    const pRef = doc(db, PRODUCT_COLLECTION, productId);
+    await updateDoc(pRef, { inStock: increment(Number(delta) || 0), updatedAt: serverTimestamp() });
+  },
+
   async updateProduct(productId: string, updates: Partial<{
     name: string;
     description: string;
