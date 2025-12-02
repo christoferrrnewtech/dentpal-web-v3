@@ -4,6 +4,7 @@ import { Search, RefreshCcw, ShoppingCart } from 'lucide-react';
 import { SUB_TABS, mapOrderToStage, LifecycleStage, TO_SHIP_SUB_TABS, ToShipStage } from './config';
 import AllOrdersView from './views/AllOrdersView';
 import UnpaidOrdersView from './views/UnpaidOrdersView';
+import ConfirmedOrdersView from './views/ConfirmedOrdersView';
 import ToShipOrdersView from './views/ToShipOrdersView';
 import ShippingOrdersView from './views/ShippingOrdersView';
 import DeliveredOrdersView from './views/DeliveredOrdersView';
@@ -30,6 +31,7 @@ interface OrderTabProps {
 const viewMap: Record<LifecycleStage, React.FC<{ orders: Order[]; onSelectOrder?: (o: Order) => void }>> = {
   'all': AllOrdersView,
   'unpaid': UnpaidOrdersView,
+  'confirmed': ConfirmedOrdersView,
   'to-ship': ToShipOrdersView,
   'shipping': ShippingOrdersView,
   'delivered': DeliveredOrdersView,
@@ -102,7 +104,7 @@ export const OrderTab: React.FC<OrderTabProps> = ({
 
   // Precompute counts per sub tab for badges (now respects date range)
   const countsBySubTab = useMemo(() => {
-    const base: Record<LifecycleStage, number> = { 'all': 0, 'unpaid': 0, 'to-ship': 0, 'shipping': 0, 'delivered': 0, 'failed-delivery': 0, 'cancellation': 0, 'return-refund': 0 };
+    const base: Record<LifecycleStage, number> = { 'all': 0, 'unpaid': 0, 'confirmed': 0, 'to-ship': 0, 'shipping': 0, 'delivered': 0, 'failed-delivery': 0, 'cancellation': 0, 'return-refund': 0 };
     dateFilteredOrders.forEach(o => { const stage = mapOrderToStage(o); base[stage] += 1; base.all += 1; });
     return base;
   }, [dateFilteredOrders]);
@@ -190,6 +192,24 @@ export const OrderTab: React.FC<OrderTabProps> = ({
     }
   };
 
+  // Handle moving order from confirmed to to_ship (starts fulfillment workflow)
+  const handleMoveToToShip = async (order: Order) => {
+    try {
+      // Update order status to 'to_ship' and set fulfillmentStage to 'to-pack'
+      await OrdersService.updateOrderStatus(order.id, 'to_ship');
+      
+      // The updateOrderStatus function now handles adding the to-pack fulfillment stage
+      onRefresh?.();
+      
+      // Switch to the to-ship tab to show the order in the fulfillment workflow
+      setActiveSubTab('to-ship');
+      setToShipSubTab('to-pack');
+    } catch (error) {
+      console.error('Failed to move order to to-ship:', error);
+      alert('Failed to move order to fulfillment. Please try again.');
+    }
+  };
+
   // Handle moving order to shipping (from hand-over) with JRS integration
   const handleMoveToShipping = async (order: Order) => {
     // Show pickup schedule dialog first
@@ -230,12 +250,17 @@ export const OrderTab: React.FC<OrderTabProps> = ({
     setShippingLoading(order.id);
     
     try {
-    // First update the order status locally
-      await OrdersService.updateOrderStatus(order.id, 'processing');
-      
       // Create JRS shipping request with pickup schedule
       const userEmail = user?.email || 'admin@dentpal.ph';
       const requestedPickupSchedule = selectedDateTime.toISOString();
+      
+      // Debug: Log order details before shipping request
+      console.log('Attempting to ship order:', {
+        orderId: order.id,
+        status: order.status,
+        fulfillmentStage: order.fulfillmentStage,
+        requestedPickupSchedule
+      });
       
       // Call improved Firebase Function with minimal payload
       const idToken = await auth.currentUser?.getIdToken();
@@ -245,7 +270,7 @@ export const OrderTab: React.FC<OrderTabProps> = ({
         return;
       }
 
-      const response = await fetch('https://us-central1-dentpal-161e5.cloudfunctions.net/createJRSShipping', {
+      const response = await fetch('https://createjrsshipping-atzweehnnq-uc.a.run.app', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -261,6 +286,14 @@ export const OrderTab: React.FC<OrderTabProps> = ({
       
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
+        console.error('JRS shipping request failed:', {
+          status: response.status,
+          statusText: response.statusText,
+          errorData,
+          orderId: order.id,
+          orderStatus: order.status,
+          orderFulfillmentStage: order.fulfillmentStage
+        });
         throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`);
       }
       const jrsResponse = await response.json();
@@ -288,21 +321,16 @@ export const OrderTab: React.FC<OrderTabProps> = ({
     } catch (error) {
       console.error('Failed to move order to shipping:', error);
       
-      // Show user-friendly error message
+      // Show user-friendly error message with more details
       const errorMessage = error instanceof Error 
         ? error.message 
         : 'Failed to process shipping request';
         
-      alert(`Error: ${errorMessage}. Shipping was not completed; the order has been returned to To Ship.`);
-      if (order) {
-        try {
-          await OrdersService.updateOrderStatus(order.id, 'to-ship');
-        } catch (rollbackError) {
-          console.error('Failed to roll back order status after shipping error:', rollbackError);
-        }
-      }
-      setActiveSubTab('to-ship');
-      setPage(1);
+      const detailsMessage = `Order: ${order.id}\nStatus: ${order.status}\nFulfillment Stage: ${order.fulfillmentStage || 'none'}\n\nError: ${errorMessage}`;
+        
+      alert(`Failed to create shipping request.\n\n${detailsMessage}\n\nPlease try again or contact support if the issue persists.`);
+      
+      // Stay on the current tab since no changes were made
       onRefresh?.();
     } finally {
       setShippingLoading(null);
@@ -334,7 +362,8 @@ export const OrderTab: React.FC<OrderTabProps> = ({
   const statusClasses = (s: Order['status']) => {
     switch (s) {
       case 'pending': return 'bg-amber-100 text-amber-800 border-amber-200';
-      case 'to-ship': return 'bg-sky-100 text-sky-800 border-sky-200';
+      case 'confirmed': return 'bg-green-100 text-green-800 border-green-200';
+      case 'to_ship': return 'bg-sky-100 text-sky-800 border-sky-200';
       case 'processing': return 'bg-indigo-100 text-indigo-800 border-indigo-200';
       case 'completed': return 'bg-emerald-100 text-emerald-800 border-emerald-200';
       case 'cancelled': return 'bg-rose-100 text-rose-800 border-rose-200';
@@ -347,7 +376,7 @@ export const OrderTab: React.FC<OrderTabProps> = ({
     }
   };
 
-  const stepOrder: LifecycleStage[] = ['unpaid','to-ship','shipping','delivered'];
+  const stepOrder: LifecycleStage[] = ['unpaid','confirmed','to-ship','shipping','delivered'];
 
   const copyToClipboard = async (text: string, which: 'id' | 'barcode') => {
     try { await navigator.clipboard.writeText(text); setCopied(which); setTimeout(()=> setCopied(null), 1200); } catch {}
@@ -490,6 +519,14 @@ export const OrderTab: React.FC<OrderTabProps> = ({
             onMoveToPack={handleMoveToPack}
             onMoveToShipping={handleMoveToShipping}
             shippingLoading={shippingLoading}
+          />
+        )
+        : activeSubTab === 'confirmed'
+        ? (
+          <ConfirmedOrdersView
+            orders={pagedOrders}
+            onSelectOrder={handleSelectOrder}
+            onMoveToToShip={handleMoveToToShip}
           />
         )
         : (!loading && pagedOrders.length === 0

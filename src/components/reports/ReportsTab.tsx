@@ -77,7 +77,7 @@ const getPaymentBucket = (o: Order): string => {
     case 'refunded':
     case 'return_refund':
       return 'Refunded';
-    case 'to-ship':
+    case 'to_ship':
     case 'processing':
     case 'completed':
       return 'Paid';
@@ -419,7 +419,7 @@ const ReportsTab: React.FC = () => {
   // Payment Type aggregation
   const paymentTypeRows: ReportRow[] = useMemo(() => {
     const byKey = new Map<string, ReportRow>();
-    const paidStatuses: Order['status'][] = ['to-ship', 'processing', 'completed'];
+    const paidStatuses: Order['status'][] = ['to_ship', 'processing', 'completed'];
     filteredOrders.forEach(o => {
       const key = o.paymentType || 'Unknown';
       const r = byKey.get(key) || { key, itemsSold: 0, grossSales: 0, itemsRefunded: 0, refunds: 0, netSales: 0 };

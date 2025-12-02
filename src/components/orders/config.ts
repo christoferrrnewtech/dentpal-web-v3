@@ -1,6 +1,6 @@
 import { Order } from '@/types/order';
 
-export type LifecycleStage = 'all' | 'unpaid' | 'to-ship' | 'shipping' | 'delivered' | 'failed-delivery' | 'cancellation' | 'return-refund';
+export type LifecycleStage = 'all' | 'unpaid' | 'confirmed' | 'to-ship' | 'shipping' | 'delivered' | 'failed-delivery' | 'cancellation' | 'return-refund';
 
 export type ToShipStage = 'to-pack' | 'to-arrangement' | 'to-hand-over';
 
@@ -14,7 +14,8 @@ export interface SubTabConfig {
 export const mapOrderToStage = (o: Order): LifecycleStage => {
   switch (o.status) {
     case 'pending': return 'unpaid';
-    case 'to-ship': return 'to-ship';
+    case 'confirmed': return 'confirmed'; // Orders confirmed/paid but not yet moved to fulfillment
+    case 'to_ship': return 'to-ship';
     case 'processing': return 'shipping';
     case 'shipping': return 'shipping';
     case 'shipped': return 'shipping';
@@ -32,6 +33,7 @@ export const mapOrderToStage = (o: Order): LifecycleStage => {
 export const SUB_TABS: SubTabConfig[] = [
   { id: 'all', label: 'All', predicate: () => true },
   { id: 'unpaid', label: 'Unpaid', predicate: (o) => mapOrderToStage(o) === 'unpaid' },
+  { id: 'confirmed', label: 'Confirmed', predicate: (o) => mapOrderToStage(o) === 'confirmed' },
   { id: 'to-ship', label: 'To Ship', predicate: (o) => mapOrderToStage(o) === 'to-ship' },
   { id: 'shipping', label: 'Shipping', predicate: (o) => mapOrderToStage(o) === 'shipping' },
   { id: 'delivered', label: 'Delivered', predicate: (o) => mapOrderToStage(o) === 'delivered' },

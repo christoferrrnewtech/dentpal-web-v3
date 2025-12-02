@@ -2,7 +2,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Eye, EyeOff, Mail, Lock, AlertCircle } from "lucide-react";
+import { Eye, EyeOff, Mail, Lock, AlertCircle, XCircle } from "lucide-react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -118,28 +118,51 @@ export default function LoginFormView({
         </button>
       </div>
 
-      <AlertDialog open={showErrorDialog} onOpenChange={onCloseError}>
-        <AlertDialogContent className="sm:max-w-lg border-0 shadow-2xl rounded-2xl overflow-hidden bg-white">
-          <div className="bg-gradient-to-r from-red-500 to-pink-500 p-6 -m-6 mb-4">
-            <AlertDialogHeader className="text-center">
-              <AlertDialogTitle className="text-2xl font-bold text-white mb-2">Authentication Failed</AlertDialogTitle>
-              <AlertDialogDescription className="text-red-50 text-base leading-relaxed">
-                We couldn't log you in with those credentials
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-          </div>
-          <div className="px-6 pb-2">
-            <div className="bg-red-50 border border-red-100 rounded-xl p-4 mb-6">
-              <p className="text-red-700 font-medium text-sm leading-relaxed">{errorMessage}</p>
-            </div>
-          </div>
-          <AlertDialogFooter className="px-6 pb-6 pt-0">
-            <AlertDialogAction onClick={onCloseError} className="h-12 bg-gradient-to-r from-red-500 to-pink-500 text-white rounded-xl">
-              Try Again
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+     <AlertDialog
+  open={showErrorDialog}
+  onOpenChange={(open) => {
+    if (!open) onCloseError();
+  }}
+>
+  <AlertDialogContent className="sm:max-w-sm p-0 overflow-hidden rounded-3xl border border-gray-100 shadow-xl bg-white">
+    <div className="p-7 text-center flex flex-col items-center">
+
+      {/* Icon wrapper */}
+      <div className="h-16 w-16 rounded-2xl bg-red-50 flex items-center justify-center shadow-inner mb-5">
+        <XCircle className="h-10 w-10 text-red-500" />
+      </div>
+
+      {/* Header */}
+      <AlertDialogHeader className="space-y-1">
+        <AlertDialogTitle className="text-[20px] font-semibold text-gray-900 tracking-wide">
+          Something went wrong
+        </AlertDialogTitle>
+
+        <AlertDialogDescription className="text-sm text-gray-500">
+          Please try again or check your connection.
+        </AlertDialogDescription>
+      </AlertDialogHeader>
+
+      {/* Error message */}
+      {errorMessage && (
+        <div className="mt-3 text-sm text-red-600 bg-red-50 w-full py-2 px-3 rounded-lg">
+          {errorMessage}
+        </div>
+      )}
+
+      {/* Footer */}
+      <AlertDialogFooter className="mt-7 w-full">
+        <AlertDialogAction
+          onClick={onCloseError}
+          className="w-full h-11 rounded-xl font-medium bg-red-500 hover:bg-red-600 active:scale-[0.98] transition-all text-white shadow-md"
+        >
+          Try Again
+        </AlertDialogAction>
+      </AlertDialogFooter>
+    </div>
+  </AlertDialogContent>
+</AlertDialog>
+
     </form>
   );
 }
