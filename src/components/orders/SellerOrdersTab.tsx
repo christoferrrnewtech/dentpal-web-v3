@@ -262,7 +262,7 @@ export const OrderTab: React.FC<OrderTabProps> = ({
         requestedPickupSchedule
       });
       
-      // Call improved Firebase Function with minimal payload
+      // Call Firebase Cloud Function which proxies to JRS API (avoids CORS issues)
       const idToken = await auth.currentUser?.getIdToken();
       if (!idToken) {
         alert('Unable to authenticate your shipping request. Please sign in again.');
@@ -270,7 +270,10 @@ export const OrderTab: React.FC<OrderTabProps> = ({
         return;
       }
 
-      const response = await fetch('https://createjrsshipping-atzweehnnq-uc.a.run.app', {
+      // Use the Firebase Cloud Function URL instead of calling JRS API directly
+      const firebaseFunctionUrl = 'https://asia-southeast1-dentpal-161e5.cloudfunctions.net/createJRSShipping';
+      
+      const response = await fetch(firebaseFunctionUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

@@ -271,6 +271,7 @@ const parseAddress = (shippingInfo: any) => {
 // Function to get seller payout adjustments (for sellers to view their charges)
 export const getSellerPayoutAdjustments = onRequest({
   cors: true,
+  region: "asia-southeast1",
 }, async (req, res) => {
   try {
     // Verify authentication
@@ -370,6 +371,7 @@ export const getSellerPayoutAdjustments = onRequest({
 
 export const processSellerPayoutAdjustments = onRequest({
   cors: true,
+  region: "asia-southeast1",
 }, async (req, res) => {
   try {
     // Verify authentication
@@ -475,6 +477,7 @@ export const processSellerPayoutAdjustments = onRequest({
 
 export const createJRSShipping = onRequest({
   cors: true,
+  region: "asia-southeast1",
 }, async (req, res) => {
   // Add explicit CORS headers
   res.set('Access-Control-Allow-Origin', '*');
@@ -626,8 +629,7 @@ export const createJRSShipping = onRequest({
     }
 
     // Generate shipping reference number
-    const randomSuffix = Math.random().toString(36).substring(2, 15);
-    const shippingReferenceNo = `DPAL-${payload.orderId}-${Date.now()}-${randomSuffix}`;
+    const shippingReferenceNo = `DPAL-${payload.orderId}`;
 
     // Parse recipient address
     const recipientAddress = parseAddress(orderData.shippingInfo || {});
@@ -959,3 +961,4 @@ export const createJRSShipping = onRequest({
     });
   }
 });
+

@@ -161,6 +161,7 @@ const parseAddress = (shippingInfo) => {
 // Function to get seller payout adjustments (for sellers to view their charges)
 exports.getSellerPayoutAdjustments = (0, https_1.onRequest)({
     cors: true,
+    region: "asia-southeast1",
 }, async (req, res) => {
     var _a, _b, _c, _d, _e, _f, _g;
     try {
@@ -254,6 +255,7 @@ exports.getSellerPayoutAdjustments = (0, https_1.onRequest)({
 });
 exports.processSellerPayoutAdjustments = (0, https_1.onRequest)({
     cors: true,
+    region: "asia-southeast1",
 }, async (req, res) => {
     var _a;
     try {
@@ -352,6 +354,7 @@ exports.processSellerPayoutAdjustments = (0, https_1.onRequest)({
 });
 exports.createJRSShipping = (0, https_1.onRequest)({
     cors: true,
+    region: "asia-southeast1",
 }, async (req, res) => {
     var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _0, _1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12, _13, _14, _15, _16, _17, _18, _19, _20, _21, _22, _23, _24, _25, _26, _27, _28, _29, _30, _31;
     // Add explicit CORS headers
@@ -483,8 +486,7 @@ exports.createJRSShipping = (0, https_1.onRequest)({
             sellerData = await fetchSellerData(orderData.sellerIds[0]);
         }
         // Generate shipping reference number
-        const randomSuffix = Math.random().toString(36).substring(2, 15);
-        const shippingReferenceNo = `DPAL-${payload.orderId}-${Date.now()}-${randomSuffix}`;
+        const shippingReferenceNo = `DPAL-${payload.orderId}`;
         // Parse recipient address
         const recipientAddress = parseAddress(orderData.shippingInfo || {});
         // Prepare recipient info (buyer/user)

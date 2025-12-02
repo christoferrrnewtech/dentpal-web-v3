@@ -194,7 +194,7 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
     ).sort((a, b) => a.localeCompare(b));
   }, [confirmationOrders]);
 
-  const isPaidStatus = (s: Order['status']) => ['to-ship','processing','completed'].includes(s);
+  const isPaidStatus = (s: Order['status']) => ['to_ship','processing','completed'].includes(s);
   const getAmount = (o: Order) => typeof o.total === 'number' ? o.total : ((o.items || []).reduce((s, it) => s + ((it.price || 0) * (it.quantity || 0)), 0) || 0);
 
   const filteredOrders = useMemo(() => {
@@ -265,6 +265,68 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
 
     return { receipts, totalRevenue, avgSalePerTxn, logisticsDue, avgPackMins, avgHandoverMins };
   }, [paidOrders]);
+
+  // NEW: Financial metrics calculated from raw order data (for sellers only)
+  // Only include PAID orders in financial calculations
+  const financialMetrics = useMemo(() => {
+    if (!confirmationOrders || confirmationOrders.length === 0) {
+      return {
+        totalPaymentProcessingFee: 0,
+        totalPlatformFee: 0,
+        totalShippingCharge: 0,
+        totalNetPayout: 0,
+        totalGross: 0,
+      };
+    }
+
+    let totalPaymentProcessingFee = 0;
+    let totalPlatformFee = 0;
+    let totalShippingCharge = 0;
+    let totalNetPayout = 0;
+    let totalGross = 0;
+
+    confirmationOrders.forEach((order: any) => {
+      // Only count PAID orders (to-ship, processing, completed)
+      if (!isPaidStatus(order.status)) return;
+
+      // Only count orders that match the current seller
+      const sellerId = uid || (isSubAccount && parentId ? parentId : null);
+      if (!sellerId) return;
+      
+      // Check if this order belongs to the seller
+      const orderSellerIds = order.sellerIds || [];
+      const orderSellerId = order.sellerId;
+      
+      // Check if seller matches
+      const isSeller = Array.isArray(orderSellerIds) 
+        ? orderSellerIds.includes(sellerId)
+        : orderSellerId === sellerId;
+      
+      if (!isSeller) return;
+
+      // Extract fees from order.feesBreakdown (mapped from Firestore)
+      const feesData = order.feesBreakdown || {};
+      totalPaymentProcessingFee += Number(feesData.paymentProcessingFee || 0);
+      totalPlatformFee += Number(feesData.platformFee || 0);
+
+      // Extract shipping charge from order.summary
+      const summary = order.summary || {};
+      totalShippingCharge += Number(summary.sellerShippingCharge || 0);
+      totalGross += Number(summary.subtotal || 0);
+
+      // Extract net payout from order.payout
+      const payout = order.payout || {};
+      totalNetPayout += Number(payout.netPayoutToSeller || 0);
+    });
+
+    return {
+      totalPaymentProcessingFee,
+      totalPlatformFee,
+      totalShippingCharge,
+      totalNetPayout,
+      totalGross,
+    };
+  }, [confirmationOrders, uid, isSubAccount, parentId]);
 
   // Initialize active tab from query string (e.g., /?tab=inventory)
   useEffect(() => {
@@ -574,12 +636,17 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
                 <button onClick={() => setShowTutorial(true)} className="px-3 py-2 text-xs font-medium rounded-lg border border-gray-200 bg-white hover:bg-gray-50 shadow-sm">Tutorial</button>
               </div>
 
-              {/* KPI cards */}
+              {/* KPI cards - Row 1: Primary Sales Metrics */}
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                 <div className="bg-white border border-gray-100 rounded-2xl p-5 shadow-sm">
-                  <div className="text-sm font-medium text-gray-700">Average sale per transaction</div>
-                  <div className="mt-2 text-2xl font-bold text-gray-900">{currency.format(kpiMetrics.avgSalePerTxn)}</div>
-                  <div className="mt-1 text-xs text-gray-500">Last {sellerFilters.dateRange.replace('last-','')} days</div>
+                  <div className="text-sm font-medium text-gray-700">Gross Sales</div>
+                  <div className="mt-2 text-2xl font-bold text-gray-900">{currency.format(financialMetrics.totalGross)}</div>
+                  <div className="mt-1 text-xs text-gray-500">Total subtotal from all orders</div>
+                </div>
+                <div className="bg-white border border-gray-100 rounded-2xl p-5 shadow-sm">
+                  <div className="text-sm font-medium text-gray-700">Net Payout</div>
+                  <div className="mt-2 text-2xl font-bold text-green-600">{currency.format(financialMetrics.totalNetPayout)}</div>
+                  <div className="mt-1 text-xs text-gray-500">After fees & charges</div>
                 </div>
                 <div className="bg-white border border-gray-100 rounded-2xl p-5 shadow-sm">
                   <div className="text-sm font-medium text-gray-700">Number of receipts</div>
@@ -587,11 +654,29 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
                   <div className="mt-1 text-xs text-gray-500">Paid orders</div>
                 </div>
                 <div className="bg-white border border-gray-100 rounded-2xl p-5 shadow-sm">
-                  <div className="text-sm font-medium text-gray-700">Logistics fee to pay</div>
-                  <div className="mt-2 text-2xl font-bold text-gray-900">{currency.format(kpiMetrics.logisticsDue)}</div>
-                  <div className="mt-1 text-xs text-gray-500">Shipping + fees</div>
+                  <div className="text-sm font-medium text-gray-700">Average sale per transaction</div>
+                  <div className="mt-2 text-2xl font-bold text-gray-900">{currency.format(kpiMetrics.avgSalePerTxn)}</div>
+                  <div className="mt-1 text-xs text-gray-500">Last {sellerFilters.dateRange.replace('last-','')} days</div>
                 </div>
-                {/* New KPI: Average completion time */}
+              </div>
+
+              {/* KPI cards - Row 2: Fees & Charges */}
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div className="bg-white border border-gray-100 rounded-2xl p-5 shadow-sm">
+                  <div className="text-sm font-medium text-gray-700">Payment Processing Fee</div>
+                  <div className="mt-2 text-2xl font-bold text-red-600">{currency.format(financialMetrics.totalPaymentProcessingFee)}</div>
+                  <div className="mt-1 text-xs text-gray-500">Total payment gateway fees</div>
+                </div>
+                <div className="bg-white border border-gray-100 rounded-2xl p-5 shadow-sm">
+                  <div className="text-sm font-medium text-gray-700">Platform Fee</div>
+                  <div className="mt-2 text-2xl font-bold text-red-600">{currency.format(financialMetrics.totalPlatformFee)}</div>
+                  <div className="mt-1 text-xs text-gray-500">Total platform commission</div>
+                </div>
+                <div className="bg-white border border-gray-100 rounded-2xl p-5 shadow-sm">
+                  <div className="text-sm font-medium text-gray-700">Shipping Charge</div>
+                  <div className="mt-2 text-2xl font-bold text-orange-600">{currency.format(financialMetrics.totalShippingCharge)}</div>
+                  <div className="mt-1 text-xs text-gray-500">Seller portion of shipping</div>
+                </div>
                 <div className="bg-white border border-gray-100 rounded-2xl p-5 shadow-sm">
                   <div className="text-sm font-medium text-gray-700">Average completion time</div>
                   <div className="mt-2 text-2xl font-bold text-gray-900">{`${fmtMins(kpiMetrics.avgPackMins)} / ${fmtMins(kpiMetrics.avgHandoverMins)}`}</div>

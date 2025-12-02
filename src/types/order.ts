@@ -78,6 +78,28 @@ export interface Order {
     categoryId?: string; // optional category id reference
     cost?: number; // unit cost for COGS
   }>;
+  // NEW: Raw nested financial data structures from Firestore
+  summary?: {
+    subtotal?: number;
+    shippingCost?: number;
+    taxAmount?: number;
+    discountAmount?: number;
+    total?: number;
+    totalItems?: number;
+    sellerShippingCharge?: number;
+    buyerShippingCharge?: number;
+    shippingSplitRule?: string;
+  };
+  feesBreakdown?: {
+    paymentProcessingFee?: number;
+    platformFee?: number;
+    totalSellerFees?: number;
+    paymentMethod?: string;
+  };
+  payout?: {
+    netPayoutToSeller?: number;
+    calculatedAt?: any;
+  };
 }
 
 // Props for booking-related components

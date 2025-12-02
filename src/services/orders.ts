@@ -1,11 +1,7 @@
 import { db } from '@/lib/firebase';
-import { collection, onSnapshot, query, where, DocumentData, QuerySnapshot, doc, getDoc, updateDoc, serverTimestamp, writeBatch, increment, addDoc } from 'firebase/firestore';
+import { collection, onSnapshot, query, where, DocumentData, QuerySnapshot, doc, getDoc, updateDoc } from 'firebase/firestore';
 import { getStorage, ref, getDownloadURL } from 'firebase/storage';
 import type { Order } from '@/types/order';
-import { ProductService } from '@/services/product';
-// Define Product and Inventory collections locally
-const PRODUCT_COLLECTION = 'Product';
-const ADJUSTMENTS_COLLECTION = 'inventory_adjustments';
 
 const ORDER_COLLECTION = 'Order';
 // Also support lowercase/plural collection naming used elsewhere in the app
@@ -255,6 +251,28 @@ const mapDocToOrder = (id: string, data: any): Order => {
       return 'pending';
     })(),
     fulfillmentStage,
+    // NEW: Preserve raw nested financial structures for dashboard calculations
+    summary: data.summary ? {
+      subtotal: data.summary.subtotal != null ? Number(data.summary.subtotal) : undefined,
+      shippingCost: data.summary.shippingCost != null ? Number(data.summary.shippingCost) : undefined,
+      taxAmount: data.summary.taxAmount != null ? Number(data.summary.taxAmount) : undefined,
+      discountAmount: data.summary.discountAmount != null ? Number(data.summary.discountAmount) : undefined,
+      total: data.summary.total != null ? Number(data.summary.total) : undefined,
+      totalItems: data.summary.totalItems != null ? Number(data.summary.totalItems) : undefined,
+      sellerShippingCharge: data.summary.sellerShippingCharge != null ? Number(data.summary.sellerShippingCharge) : undefined,
+      buyerShippingCharge: data.summary.buyerShippingCharge != null ? Number(data.summary.buyerShippingCharge) : undefined,
+      shippingSplitRule: data.summary.shippingSplitRule ? String(data.summary.shippingSplitRule) : undefined,
+    } : undefined,
+    feesBreakdown: data.fees ? {
+      paymentProcessingFee: data.fees.paymentProcessingFee != null ? Number(data.fees.paymentProcessingFee) : undefined,
+      platformFee: data.fees.platformFee != null ? Number(data.fees.platformFee) : undefined,
+      totalSellerFees: data.fees.totalSellerFees != null ? Number(data.fees.totalSellerFees) : undefined,
+      paymentMethod: data.fees.paymentMethod ? String(data.fees.paymentMethod) : undefined,
+    } : undefined,
+    payout: data.payout ? {
+      netPayoutToSeller: data.payout.netPayoutToSeller != null ? Number(data.payout.netPayoutToSeller) : undefined,
+      calculatedAt: data.payout.calculatedAt,
+    } : undefined,
   };
 };
 
@@ -401,7 +419,8 @@ const OrdersService = {
         if (docSnap.exists()) {
           const currentData = docSnap.data();
           const currentHistory = Array.isArray(currentData.statusHistory) ? currentData.statusHistory : [];
-
+          
+          // Create status history entry
           const statusNotes = {
             'to-pack': 'Order is ready to be packed',
             'to-arrangement': 'Order is being prepared for arrangement',
@@ -413,63 +432,6 @@ const OrdersService = {
             note: statusNotes[stage],
             timestamp: new Date()
           };
-
-          // When moving to arrangement, decrement stock per ordered item quantity
-          if (stage === 'to-arrangement') {
-            const items: any[] = Array.isArray(currentData.items) ? currentData.items : [];
-            const batch = writeBatch(db);
-
-            for (const it of items) {
-              const qty = Number(it.quantity || 0);
-              if (!qty || qty <= 0) continue;
-              const productId = String(it.productId || it.productID || (it.product && it.product.id) || '');
-              const variationId = String((it.variationId || (it.variation && it.variation.id)) || '');
-
-              try {
-                if (productId) {
-                  // Decrement stock
-                  if (variationId) {
-                    const vRef = doc(db, PRODUCT_COLLECTION, productId, 'Variation', variationId);
-                    batch.update(vRef, { stock: increment(-qty), updatedAt: serverTimestamp() });
-                  } else {
-                    const pRef = doc(db, PRODUCT_COLLECTION, productId);
-                    batch.update(pRef, { inStock: increment(-qty), updatedAt: serverTimestamp() });
-                  }
-
-                  // Write an inventory adjustment entry (denormalized)
-                  try {
-                    // Read product to enrich seller/name
-                    const pSnap = await getDoc(doc(db, PRODUCT_COLLECTION, productId));
-                    const pData: any = pSnap.exists() ? pSnap.data() : {};
-                    const sellerId = pData?.sellerId ?? null;
-                    const itemName = String(it.name || pData?.name || '') || null;
-
-                    await addDoc(collection(db, ADJUSTMENTS_COLLECTION), {
-                      // No inventory itemId link available here; reference product/variation
-                      productId,
-                      variationId: variationId || null,
-                      orderId,
-                      sellerId,
-                      itemName,
-                      delta: -qty,
-                      reason: 'Order arranged',
-                      // We don’t have precise before/after without extra reads on variation; leave null
-                      stockBefore: null,
-                      stockAfter: null,
-                      userId: null,
-                      at: serverTimestamp(),
-                    });
-                  } catch (adjErr) {
-                    console.warn('Failed to write inventory adjustment', adjErr);
-                  }
-                }
-              } catch (e) {
-                console.warn('Stock decrement failed for item', it, e);
-              }
-            }
-
-            await batch.commit();
-          }
 
           await updateDoc(docRef, { 
             fulfillmentStage: stage,
