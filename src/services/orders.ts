@@ -1,7 +1,11 @@
 import { db } from '@/lib/firebase';
-import { collection, onSnapshot, query, where, DocumentData, QuerySnapshot, doc, getDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, onSnapshot, query, where, DocumentData, QuerySnapshot, doc, getDoc, updateDoc, serverTimestamp, writeBatch, increment, addDoc } from 'firebase/firestore';
 import { getStorage, ref, getDownloadURL } from 'firebase/storage';
 import type { Order } from '@/types/order';
+import { ProductService } from '@/services/product';
+// Define Product and Inventory collections locally
+const PRODUCT_COLLECTION = 'Product';
+const ADJUSTMENTS_COLLECTION = 'inventory_adjustments';
 
 const ORDER_COLLECTION = 'Order';
 // Also support lowercase/plural collection naming used elsewhere in the app
@@ -395,8 +399,7 @@ const OrdersService = {
         if (docSnap.exists()) {
           const currentData = docSnap.data();
           const currentHistory = Array.isArray(currentData.statusHistory) ? currentData.statusHistory : [];
-          
-          // Create status history entry
+
           const statusNotes = {
             'to-pack': 'Order moved to packing stage',
             'to-arrangement': 'Order moved to arrangement stage', 
@@ -408,6 +411,63 @@ const OrdersService = {
             note: statusNotes[stage],
             timestamp: serverTimestamp()
           };
+
+          // When moving to arrangement, decrement stock per ordered item quantity
+          if (stage === 'to-arrangement') {
+            const items: any[] = Array.isArray(currentData.items) ? currentData.items : [];
+            const batch = writeBatch(db);
+
+            for (const it of items) {
+              const qty = Number(it.quantity || 0);
+              if (!qty || qty <= 0) continue;
+              const productId = String(it.productId || it.productID || (it.product && it.product.id) || '');
+              const variationId = String((it.variationId || (it.variation && it.variation.id)) || '');
+
+              try {
+                if (productId) {
+                  // Decrement stock
+                  if (variationId) {
+                    const vRef = doc(db, PRODUCT_COLLECTION, productId, 'Variation', variationId);
+                    batch.update(vRef, { stock: increment(-qty), updatedAt: serverTimestamp() });
+                  } else {
+                    const pRef = doc(db, PRODUCT_COLLECTION, productId);
+                    batch.update(pRef, { inStock: increment(-qty), updatedAt: serverTimestamp() });
+                  }
+
+                  // Write an inventory adjustment entry (denormalized)
+                  try {
+                    // Read product to enrich seller/name
+                    const pSnap = await getDoc(doc(db, PRODUCT_COLLECTION, productId));
+                    const pData: any = pSnap.exists() ? pSnap.data() : {};
+                    const sellerId = pData?.sellerId ?? null;
+                    const itemName = String(it.name || pData?.name || '') || null;
+
+                    await addDoc(collection(db, ADJUSTMENTS_COLLECTION), {
+                      // No inventory itemId link available here; reference product/variation
+                      productId,
+                      variationId: variationId || null,
+                      orderId,
+                      sellerId,
+                      itemName,
+                      delta: -qty,
+                      reason: 'Order arranged',
+                      // We don’t have precise before/after without extra reads on variation; leave null
+                      stockBefore: null,
+                      stockAfter: null,
+                      userId: null,
+                      at: serverTimestamp(),
+                    });
+                  } catch (adjErr) {
+                    console.warn('Failed to write inventory adjustment', adjErr);
+                  }
+                }
+              } catch (e) {
+                console.warn('Stock decrement failed for item', it, e);
+              }
+            }
+
+            await batch.commit();
+          }
 
           await updateDoc(docRef, { 
             fulfillmentStage: stage,
