@@ -31,11 +31,11 @@ export const PERMISSIONS_BY_ROLE: Record<WebUserRole, WebUserPermissions> = {
     dashboard: true,
     bookings: true,
     confirmation: false,
-    withdrawal: false,
+    withdrawal: true,
     access: false,
     images: false,
     users: false,
-    inventory: false,
+    inventory: true,
     'seller-orders': true,
     'add-product': true,
     'product-qc': false,
@@ -156,8 +156,22 @@ export function useAuth(): UseAuthResult {
                 perms = normalizePermsFalse(perms || {});
               }
             } else {
-              // Primary accounts: ensure we at least have explicit keys
-              perms = perms ? { ...PERMISSIONS_BY_ROLE[roleVal], ...perms } : PERMISSIONS_BY_ROLE[roleVal];
+              // Primary accounts: merge role defaults with stored permissions
+              // Role defaults provide the base; stored permissions override only if explicitly set
+              // This ensures new permissions added to role defaults are available
+              const roleDefaults = PERMISSIONS_BY_ROLE[roleVal];
+              if (perms) {
+                const merged: WebUserPermissions = { ...roleDefaults };
+                // Only override with stored value if it exists in stored perms
+                (Object.keys(roleDefaults) as Array<keyof WebUserPermissions>).forEach((key) => {
+                  if (key in (perms as any)) {
+                    (merged as any)[key] = (perms as any)[key];
+                  }
+                });
+                perms = merged;
+              } else {
+                perms = roleDefaults;
+              }
             }
             setPermissions(perms);
           }

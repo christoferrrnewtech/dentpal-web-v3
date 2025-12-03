@@ -1,20 +1,12 @@
-import { useState } from "react";
-
-interface WithdrawalRequest {
-  id: string;
-  date: string;
-  sellerName: string;
-  withdrawalAmount: number;
-  availableBalance: number;
-  status: 'pending' | 'approved' | 'rejected' | 'processing' | 'completed';
-  requestedDate: string;
-  sellerId: string;
-  bankDetails?: {
-    accountName: string;
-    accountNumber: string;
-    bankName: string;
-  };
-}
+import { useState, useEffect, useMemo } from "react";
+import { RefreshCw, Clock, CheckCircle, XCircle, AlertCircle, Banknote, Search, Filter } from "lucide-react";
+import { useAuth } from "@/hooks/use-auth";
+import {
+  getAllWithdrawalRequests,
+  approveWithdrawalRequest,
+  rejectWithdrawalRequest,
+} from "@/services/withdrawal";
+import type { WithdrawalRequest, WithdrawalStatus } from "@/types/withdrawal";
 
 interface WithdrawalTabProps {
   loading: boolean;
@@ -26,398 +18,294 @@ interface WithdrawalTabProps {
   onTabChange: (tab: string) => void;
 }
 
-const WithdrawalTab = ({ 
-  loading, 
-  error, 
+const WithdrawalTab = ({
+  loading: externalLoading,
+  error: externalError,
   setError,
-  onApproveWithdrawal,
-  onRejectWithdrawal,
-  onExportWithdrawals,
-  onTabChange 
+  onTabChange,
 }: WithdrawalTabProps) => {
-  
-  const [selectedDate, setSelectedDate] = useState("");
-  const [selectedSeller, setSelectedSeller] = useState("");
-  const [selectedStatus, setSelectedStatus] = useState("");
-  const [activeSection, setActiveSection] = useState<'requests' | 'history'>('requests');
+  const { uid } = useAuth();
 
-  // Mock withdrawal data - replace with API calls
-  const [withdrawalRequests] = useState<WithdrawalRequest[]>([
-    {
-      id: "WD-2024-001",
-      date: "2024-09-09",
-      sellerName: "Dr. Sarah Johnson",
-      withdrawalAmount: 25000.00,
-      availableBalance: 45000.00,
-      status: "pending",
-      requestedDate: "2024-09-09T08:30:00Z",
-      sellerId: "SELL-001",
-      bankDetails: {
-        accountName: "Dr. Sarah Johnson",
-        accountNumber: "1234567890",
-        bankName: "BPI Bank"
-      }
-    },
-    {
-      id: "WD-2024-002",
-      date: "2024-09-09",
-      sellerName: "Dr. Michael Chen",
-      withdrawalAmount: 15000.00,
-      availableBalance: 30000.00,
-      status: "pending",
-      requestedDate: "2024-09-09T09:15:00Z",
-      sellerId: "SELL-002",
-      bankDetails: {
-        accountName: "Dr. Michael Chen",
-        accountNumber: "0987654321",
-        bankName: "Metrobank"
-      }
-    },
-    {
-      id: "WD-2024-003",
-      date: "2024-09-08",
-      sellerName: "Dr. Lisa Rodriguez",
-      withdrawalAmount: 35000.00,
-      availableBalance: 20000.00, // Insufficient balance
-      status: "pending",
-      requestedDate: "2024-09-08T14:20:00Z",
-      sellerId: "SELL-003",
-      bankDetails: {
-        accountName: "Dr. Lisa Rodriguez",
-        accountNumber: "5678901234",
-        bankName: "BDO Bank"
-      }
+  // Local state
+  const [withdrawalRequests, setWithdrawalRequests] = useState<WithdrawalRequest[]>([]);
+  const [fetchingRequests, setFetchingRequests] = useState(true);
+  const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [localError, setLocalError] = useState<string | null>(null);
+
+  // Filters
+  const [selectedStatus, setSelectedStatus] = useState<string>("all");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [activeSection, setActiveSection] = useState<"pending" | "history">("pending");
+
+  // Rejection modal
+  const [showRejectModal, setShowRejectModal] = useState(false);
+  const [rejectingId, setRejectingId] = useState<string | null>(null);
+  const [rejectionReason, setRejectionReason] = useState("");
+
+  // Fetch all withdrawal requests
+  useEffect(() => {
+    fetchRequests();
+  }, []);
+
+  const fetchRequests = async () => {
+    setFetchingRequests(true);
+    try {
+      const requests = await getAllWithdrawalRequests();
+      setWithdrawalRequests(requests);
+      setLocalError(null);
+    } catch (error: any) {
+      console.error("Error fetching withdrawal requests:", error);
+      setLocalError("Failed to load withdrawal requests");
+    } finally {
+      setFetchingRequests(false);
     }
-  ]);
+  };
 
-  const [withdrawalHistory] = useState<WithdrawalRequest[]>([
-    {
-      id: "WD-2024-004",
-      date: "2024-09-07",
-      sellerName: "Dr. James Wilson",
-      withdrawalAmount: 20000.00,
-      availableBalance: 50000.00,
-      status: "completed",
-      requestedDate: "2024-09-07T10:00:00Z",
-      sellerId: "SELL-004"
-    },
-    {
-      id: "WD-2024-005",
-      date: "2024-09-06",
-      sellerName: "Dr. Emma Thompson",
-      withdrawalAmount: 12000.00,
-      availableBalance: 25000.00,
-      status: "rejected",
-      requestedDate: "2024-09-06T16:30:00Z",
-      sellerId: "SELL-005"
-    }
-  ]);
-
-  // Filter withdrawals based on selected criteria
-  const filteredRequests = withdrawalRequests.filter(request => {
-    if (selectedDate && request.date !== selectedDate) return false;
-    if (selectedSeller && !request.sellerName.toLowerCase().includes(selectedSeller.toLowerCase())) return false;
-    if (selectedStatus && request.status !== selectedStatus) return false;
-    return true;
+  const currency = new Intl.NumberFormat("en-PH", {
+    style: "currency",
+    currency: "PHP",
+    maximumFractionDigits: 2,
   });
 
-  const filteredHistory = withdrawalHistory.filter(request => {
-    if (selectedDate && request.date !== selectedDate) return false;
-    if (selectedSeller && !request.sellerName.toLowerCase().includes(selectedSeller.toLowerCase())) return false;
-    if (selectedStatus && request.status !== selectedStatus) return false;
-    return true;
-  });
+  // Filtered requests based on section and filters
+  const filteredRequests = useMemo(() => {
+    let filtered = withdrawalRequests;
 
-  const getStatusBadge = (status: string) => {
-    const badges = {
-      pending: { bg: 'bg-yellow-100', text: 'text-yellow-800', label: 'Pending', dot: 'bg-yellow-400' },
-      approved: { bg: 'bg-blue-100', text: 'text-blue-800', label: 'Approved', dot: 'bg-blue-400' },
-      processing: { bg: 'bg-indigo-100', text: 'text-indigo-800', label: 'Processing', dot: 'bg-indigo-400' },
-      completed: { bg: 'bg-green-100', text: 'text-green-800', label: 'Completed', dot: 'bg-green-400' },
-      rejected: { bg: 'bg-red-100', text: 'text-red-800', label: 'Rejected', dot: 'bg-red-400' }
+    // Filter by section
+    if (activeSection === "pending") {
+      filtered = filtered.filter((r) => r.status === "pending");
+    } else {
+      filtered = filtered.filter((r) => r.status !== "pending");
+    }
+
+    // Filter by status (for history section)
+    if (activeSection === "history" && selectedStatus !== "all") {
+      filtered = filtered.filter((r) => r.status === selectedStatus);
+    }
+
+    // Filter by search query
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase();
+      filtered = filtered.filter(
+        (r) =>
+          r.sellerName.toLowerCase().includes(query) ||
+          r.sellerEmail.toLowerCase().includes(query) ||
+          r.referenceNumber?.toLowerCase().includes(query) ||
+          r.receiver.bankAccountName.toLowerCase().includes(query)
+      );
+    }
+
+    return filtered;
+  }, [withdrawalRequests, activeSection, selectedStatus, searchQuery]);
+
+  // Stats
+  const stats = useMemo(() => {
+    const pending = withdrawalRequests.filter((r) => r.status === "pending");
+    const approved = withdrawalRequests.filter((r) => r.status === "approved");
+    const processing = withdrawalRequests.filter((r) => r.status === "processing");
+    const completed = withdrawalRequests.filter((r) => r.status === "completed");
+    const rejected = withdrawalRequests.filter((r) => r.status === "rejected");
+
+    return {
+      pendingCount: pending.length,
+      pendingAmount: pending.reduce((sum, r) => sum + r.amount, 0),
+      approvedCount: approved.length + processing.length,
+      completedCount: completed.length,
+      completedAmount: completed.reduce((sum, r) => sum + r.amount, 0),
+      rejectedCount: rejected.length,
     };
-    return badges[status as keyof typeof badges] || badges.pending;
+  }, [withdrawalRequests]);
+
+  const getStatusBadge = (status: WithdrawalStatus) => {
+    const badges: Record<WithdrawalStatus, { bg: string; text: string; label: string; icon: any }> = {
+      pending: {
+        bg: "bg-yellow-100",
+        text: "text-yellow-800",
+        label: "Pending",
+        icon: Clock,
+      },
+      approved: {
+        bg: "bg-blue-100",
+        text: "text-blue-800",
+        label: "Approved",
+        icon: CheckCircle,
+      },
+      processing: {
+        bg: "bg-indigo-100",
+        text: "text-indigo-800",
+        label: "Processing",
+        icon: RefreshCw,
+      },
+      completed: {
+        bg: "bg-green-100",
+        text: "text-green-800",
+        label: "Completed",
+        icon: CheckCircle,
+      },
+      rejected: {
+        bg: "bg-red-100",
+        text: "text-red-800",
+        label: "Rejected",
+        icon: XCircle,
+      },
+      failed: {
+        bg: "bg-red-100",
+        text: "text-red-800",
+        label: "Failed",
+        icon: AlertCircle,
+      },
+    };
+    return badges[status] || badges.pending;
   };
 
-  const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat('en-PH', { 
-      style: 'currency', 
-      currency: 'PHP' 
-    }).format(amount);
+  const handleApprove = async (withdrawalId: string) => {
+    if (!uid) return;
+
+    setActionLoading(withdrawalId);
+    setLocalError(null);
+
+    try {
+      const result = await approveWithdrawalRequest(withdrawalId, uid);
+      if (result.success) {
+        await fetchRequests();
+      } else {
+        setLocalError(result.error || "Failed to approve withdrawal");
+      }
+    } catch (error: any) {
+      setLocalError(error.message || "Failed to approve withdrawal");
+    } finally {
+      setActionLoading(null);
+    }
   };
 
-  const isInsufficientBalance = (withdrawalAmount: number, availableBalance: number) => {
-    return withdrawalAmount > availableBalance;
+  const handleRejectClick = (withdrawalId: string) => {
+    setRejectingId(withdrawalId);
+    setRejectionReason("");
+    setShowRejectModal(true);
   };
 
-  const WithdrawalTable = ({ 
-    requests, 
-    showActions = false 
-  }: { 
-    requests: WithdrawalRequest[], 
-    showActions?: boolean 
-  }) => (
-    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-      {/* Table Header */}
-      <div className="bg-gray-50 px-6 py-4 border-b border-gray-200">
-        <div className="grid grid-cols-4 gap-4 text-xs font-medium text-gray-600 uppercase tracking-wide">
-          <span>Date</span>
-          <span>Seller Name</span>
-          <span>Withdrawal Amount</span>
-          <span>Available Balance</span>
-        </div>
-      </div>
-      
-      {/* Table Body */}
-      <div className="divide-y divide-gray-200">
-        {requests.length === 0 ? (
-          <div className="p-12 text-center text-gray-500">
-            <div className="w-16 h-16 mx-auto mb-4 bg-gray-100 rounded-full flex items-center justify-center">
-              <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1" />
-              </svg>
-            </div>
-            <p className="text-lg font-medium mb-2">No withdrawal {activeSection === 'requests' ? 'requests' : 'history'}</p>
-            <p className="text-sm">
-              {activeSection === 'requests' 
-                ? "New withdrawal requests will appear here" 
-                : "Processed withdrawals will be displayed in this section"
-              }
-            </p>
-          </div>
-        ) : (
-          requests.map((request) => {
-            const statusBadge = getStatusBadge(request.status);
-            const insufficientBalance = isInsufficientBalance(request.withdrawalAmount, request.availableBalance);
-            
-            return (
-              <div key={request.id} className="p-6 hover:bg-gray-50 transition-colors">
-                <div className="grid grid-cols-4 gap-4 items-center">
-                  {/* Date */}
-                  <div className="text-sm font-medium text-gray-900">
-                    {request.date}
-                  </div>
-                  
-                  {/* Seller Name */}
-                  <div>
-                    <p className="text-sm font-medium text-gray-900">{request.sellerName}</p>
-                    <div className="flex items-center mt-1">
-                      <div className={`w-2 h-2 rounded-full ${statusBadge.dot} mr-2`}></div>
-                      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${statusBadge.bg} ${statusBadge.text}`}>
-                        {statusBadge.label}
-                      </span>
-                    </div>
-                    {request.bankDetails && (
-                      <p className="text-xs text-gray-500 mt-1">
-                        {request.bankDetails.bankName} • ****{request.bankDetails.accountNumber.slice(-4)}
-                      </p>
-                    )}
-                  </div>
-                  
-                  {/* Withdrawal Amount */}
-                  <div className="text-sm font-semibold text-gray-900">
-                    {formatCurrency(request.withdrawalAmount)}
-                  </div>
-                  
-                  {/* Available Balance */}
-                  <div className={`text-sm font-semibold ${
-                    insufficientBalance ? 'text-red-600' : 'text-green-600'
-                  }`}>
-                    {formatCurrency(request.availableBalance)}
-                  </div>
-                </div>
-                
-                {/* Insufficient Balance Warning */}
-                {insufficientBalance && (
-                  <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-lg">
-                    <div className="flex items-center">
-                      <svg className="w-5 h-5 text-red-400 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16c-.77.833.192 2.5 1.732 2.5z" />
-                      </svg>
-                      <p className="text-sm font-medium text-red-800">
-                        Insufficient Balance: Withdrawal amount exceeds available balance by {formatCurrency(request.withdrawalAmount - request.availableBalance)}
-                      </p>
-                    </div>
-                  </div>
-                )}
-                
-                {/* Action Buttons (for requests only) */}
-                {showActions && request.status === 'pending' && (
-                  <div className="mt-4 flex items-center justify-between">
-                    <div className="flex items-center space-x-3">
-                      <button 
-                        onClick={() => onApproveWithdrawal(request.id)}
-                        disabled={loading || insufficientBalance}
-                        className="px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        {insufficientBalance ? 'Insufficient Balance' : 'Approve & Transfer'}
-                      </button>
-                      <button 
-                        onClick={() => onRejectWithdrawal(request.id)}
-                        disabled={loading}
-                        className="px-4 py-2 text-sm font-medium text-red-700 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        Reject Request
-                      </button>
-                    </div>
-                    <div className="text-xs text-gray-500">
-                      Requested: {new Date(request.requestedDate).toLocaleString()}
-                    </div>
-                  </div>
-                )}
-                
-                {/* Bank Transfer Info for Approved/Processing */}
-                {showActions && (request.status === 'approved' || request.status === 'processing') && (
-                  <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center space-x-2">
-                        <svg className="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1" />
-                        </svg>
-                        <span className="text-sm font-medium text-blue-800">
-                          {request.status === 'approved' ? 'Approved - Ready for Transfer' : 'Transfer in Progress'}
-                        </span>
-                      </div>
-                      {request.bankDetails && (
-                        <div className="text-xs text-blue-600">
-                          {request.bankDetails.accountName} • {request.bankDetails.bankName}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
-            );
-          })
-        )}
-      </div>
-    </div>
-  );
+  const handleRejectConfirm = async () => {
+    if (!uid || !rejectingId) return;
+
+    if (!rejectionReason.trim()) {
+      setLocalError("Please provide a reason for rejection");
+      return;
+    }
+
+    setActionLoading(rejectingId);
+    setLocalError(null);
+
+    try {
+      const result = await rejectWithdrawalRequest(rejectingId, uid, rejectionReason.trim());
+      if (result.success) {
+        setShowRejectModal(false);
+        setRejectingId(null);
+        setRejectionReason("");
+        await fetchRequests();
+      } else {
+        setLocalError(result.error || "Failed to reject withdrawal");
+      }
+    } catch (error: any) {
+      setLocalError(error.message || "Failed to reject withdrawal");
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const formatDate = (dateString: string) => {
+    return new Date(dateString).toLocaleDateString("en-PH", {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  };
 
   return (
     <div className="space-y-6">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-2xl font-bold text-gray-900">Withdrawal Requests</h2>
+          <p className="text-sm text-gray-500 mt-1">
+            Review and manage seller payout requests
+          </p>
+        </div>
+        <button
+          onClick={fetchRequests}
+          disabled={fetchingRequests}
+          className="flex items-center gap-2 px-4 py-2 text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition disabled:opacity-50"
+        >
+          <RefreshCw className={`w-4 h-4 ${fetchingRequests ? "animate-spin" : ""}`} />
+          Refresh
+        </button>
+      </div>
+
       {/* Error Display */}
-      {error && (
+      {(localError || externalError) && (
         <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-          <div className="flex items-center">
-            <svg className="w-5 h-5 text-red-400 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-            <p className="text-sm text-red-700">{error}</p>
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-5 h-5 text-red-600" />
+            <p className="text-sm text-red-700">{localError || externalError}</p>
           </div>
         </div>
       )}
 
-      {/* Header with Filters */}
-      <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-        <div className="flex items-center space-x-4">
-          <h2 className="text-2xl font-bold text-gray-900">WITHDRAWAL</h2>
-        </div>
-        
-        {/* Filters Section */}
-        <div className="flex items-center space-x-4 bg-white border border-gray-200 rounded-xl p-4">
-          <div className="text-sm font-medium text-gray-700 uppercase tracking-wide">Filters</div>
-          
-          <select 
-            value={selectedDate}
-            onChange={(e) => setSelectedDate(e.target.value)}
-            className="px-3 py-2 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent bg-white"
-          >
-            <option value="">Select Date</option>
-            <option value="2024-09-09">Today (Sep 9, 2024)</option>
-            <option value="2024-09-08">Yesterday (Sep 8, 2024)</option>
-            <option value="2024-09-07">Sep 7, 2024</option>
-            <option value="2024-09-06">Sep 6, 2024</option>
-          </select>
-          
-          <input
-            type="text"
-            placeholder="Select Seller"
-            value={selectedSeller}
-            onChange={(e) => setSelectedSeller(e.target.value)}
-            className="px-3 py-2 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent bg-white"
-          />
-          
-          <select 
-            value={selectedStatus}
-            onChange={(e) => setSelectedStatus(e.target.value)}
-            className="px-3 py-2 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent bg-white"
-          >
-            <option value="">Select Status</option>
-            <option value="pending">Pending</option>
-            <option value="approved">Approved</option>
-            <option value="processing">Processing</option>
-            <option value="completed">Completed</option>
-            <option value="rejected">Rejected</option>
-          </select>
-        </div>
-      </div>
-
-      {/* Stats Overview */}
+      {/* Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <div className="bg-gradient-to-r from-yellow-50 to-amber-50 border border-yellow-200 rounded-xl p-4">
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm font-medium text-yellow-600">Pending Requests</p>
-              <p className="text-2xl font-bold text-yellow-900">
-                {withdrawalRequests.filter(r => r.status === 'pending').length}
+              <p className="text-2xl font-bold text-yellow-900">{stats.pendingCount}</p>
+              <p className="text-xs text-yellow-700 mt-1">
+                {currency.format(stats.pendingAmount)} total
               </p>
             </div>
             <div className="w-10 h-10 bg-yellow-100 rounded-full flex items-center justify-center">
-              <svg className="w-6 h-6 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
+              <Clock className="w-5 h-5 text-yellow-600" />
             </div>
           </div>
         </div>
-        
+
         <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-xl p-4">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm font-medium text-blue-600">Processing</p>
-              <p className="text-2xl font-bold text-blue-900">
-                {withdrawalRequests.filter(r => r.status === 'approved' || r.status === 'processing').length}
-              </p>
+              <p className="text-sm font-medium text-blue-600">Approved / Processing</p>
+              <p className="text-2xl font-bold text-blue-900">{stats.approvedCount}</p>
+              <p className="text-xs text-blue-700 mt-1">Awaiting transfer</p>
             </div>
             <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
-              <svg className="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-              </svg>
+              <RefreshCw className="w-5 h-5 text-blue-600" />
             </div>
           </div>
         </div>
-        
+
         <div className="bg-gradient-to-r from-green-50 to-emerald-50 border border-green-200 rounded-xl p-4">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm font-medium text-green-600">Completed Today</p>
-              <p className="text-2xl font-bold text-green-900">
-                {withdrawalHistory.filter(r => r.status === 'completed').length}
+              <p className="text-sm font-medium text-green-600">Completed</p>
+              <p className="text-2xl font-bold text-green-900">{stats.completedCount}</p>
+              <p className="text-xs text-green-700 mt-1">
+                {currency.format(stats.completedAmount)} paid out
               </p>
             </div>
             <div className="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center">
-              <svg className="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-              </svg>
+              <CheckCircle className="w-5 h-5 text-green-600" />
             </div>
           </div>
         </div>
-        
-        <div className="bg-gradient-to-r from-teal-50 to-cyan-50 border border-teal-200 rounded-xl p-4">
+
+        <div className="bg-gradient-to-r from-red-50 to-rose-50 border border-red-200 rounded-xl p-4">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm font-medium text-teal-600">Total Amount</p>
-              <p className="text-2xl font-bold text-teal-900">
-                {formatCurrency([...withdrawalRequests, ...withdrawalHistory]
-                  .filter(r => r.status === 'completed')
-                  .reduce((sum, r) => sum + r.withdrawalAmount, 0)
-                )}
-              </p>
+              <p className="text-sm font-medium text-red-600">Rejected</p>
+              <p className="text-2xl font-bold text-red-900">{stats.rejectedCount}</p>
+              <p className="text-xs text-red-700 mt-1">Declined requests</p>
             </div>
-            <div className="w-10 h-10 bg-teal-100 rounded-full flex items-center justify-center">
-              <svg className="w-6 h-6 text-teal-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1" />
-              </svg>
+            <div className="w-10 h-10 bg-red-100 rounded-full flex items-center justify-center">
+              <XCircle className="w-5 h-5 text-red-600" />
             </div>
           </div>
         </div>
@@ -425,25 +313,25 @@ const WithdrawalTab = ({
 
       {/* Section Tabs */}
       <div className="flex space-x-1 bg-gray-100 rounded-xl p-1">
-        <button 
+        <button
           className={`flex-1 py-3 px-4 text-sm font-medium rounded-lg transition-colors ${
-            activeSection === "requests" 
-              ? "text-white bg-teal-600" 
+            activeSection === "pending"
+              ? "text-white bg-teal-600"
               : "text-gray-600 hover:text-gray-900"
           }`}
-          onClick={() => setActiveSection("requests")}
+          onClick={() => setActiveSection("pending")}
         >
-          REQUESTS
-          {filteredRequests.length > 0 && (
+          PENDING REQUESTS
+          {stats.pendingCount > 0 && (
             <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-800">
-              {filteredRequests.length}
+              {stats.pendingCount}
             </span>
           )}
         </button>
-        <button 
+        <button
           className={`flex-1 py-3 px-4 text-sm font-medium rounded-lg transition-colors ${
-            activeSection === "history" 
-              ? "text-white bg-teal-600" 
+            activeSection === "history"
+              ? "text-white bg-teal-600"
               : "text-gray-600 hover:text-gray-900"
           }`}
           onClick={() => setActiveSection("history")}
@@ -452,51 +340,232 @@ const WithdrawalTab = ({
         </button>
       </div>
 
-      {/* Loading State */}
-      {loading && (
-        <div className="flex items-center justify-center py-12">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-teal-600"></div>
-          <span className="ml-3 text-gray-600">Processing withdrawal...</span>
+      {/* Filters */}
+      <div className="bg-white rounded-xl border border-gray-200 p-4">
+        <div className="flex flex-col md:flex-row md:items-center gap-4">
+          <div className="flex-1">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+              <input
+                type="text"
+                placeholder="Search by seller name, email, or reference..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+              />
+            </div>
+          </div>
+          {activeSection === "history" && (
+            <div className="flex items-center gap-2">
+              <Filter className="w-4 h-4 text-gray-400" />
+              <select
+                value={selectedStatus}
+                onChange={(e) => setSelectedStatus(e.target.value)}
+                className="px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+              >
+                <option value="all">All Statuses</option>
+                <option value="approved">Approved</option>
+                <option value="processing">Processing</option>
+                <option value="completed">Completed</option>
+                <option value="rejected">Rejected</option>
+                <option value="failed">Failed</option>
+              </select>
+            </div>
+          )}
         </div>
-      )}
+      </div>
 
-      {/* Content Sections */}
-      {!loading && (
-        <>
-          {activeSection === 'requests' && (
-            <div className="space-y-6">
-              <div className="flex items-center justify-between">
-                <h3 className="text-lg font-semibold text-gray-900">Withdrawal Requests</h3>
-                <div className="text-sm text-gray-500">
-                  {filteredRequests.length} requests requiring review
-                </div>
-              </div>
-              <WithdrawalTable requests={filteredRequests} showActions={true} />
+      {/* Requests Table */}
+      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+        {fetchingRequests && withdrawalRequests.length === 0 ? (
+          <div className="p-12 text-center">
+            <div className="animate-spin h-8 w-8 border-2 border-teal-600 border-t-transparent rounded-full mx-auto mb-4" />
+            <p className="text-sm text-gray-500">Loading withdrawal requests...</p>
+          </div>
+        ) : filteredRequests.length === 0 ? (
+          <div className="p-12 text-center">
+            <div className="w-16 h-16 mx-auto mb-4 bg-gray-100 rounded-full flex items-center justify-center">
+              <Banknote className="w-8 h-8 text-gray-400" />
             </div>
-          )}
+            <p className="text-lg font-medium text-gray-900 mb-2">
+              No {activeSection === "pending" ? "pending" : ""} withdrawal requests
+            </p>
+            <p className="text-sm text-gray-500">
+              {activeSection === "pending"
+                ? "New withdrawal requests from sellers will appear here"
+                : "Processed withdrawal requests will appear here"}
+            </p>
+          </div>
+        ) : (
+          <div className="divide-y divide-gray-100">
+            {filteredRequests.map((request) => {
+              const statusBadge = getStatusBadge(request.status);
+              const StatusIcon = statusBadge.icon;
+              const isLoading = actionLoading === request.id;
 
-          {activeSection === 'history' && (
-            <div className="space-y-6">
-              <div className="flex items-center justify-between">
-                <h3 className="text-lg font-semibold text-gray-900">Withdrawal History</h3>
-                <div className="flex items-center space-x-2">
-                  <span className="text-sm text-gray-500">{filteredHistory.length} processed</span>
-                  <select 
-                    className="px-3 py-2 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
-                    onChange={(e) => e.target.value && onExportWithdrawals(e.target.value)}
-                    value=""
-                  >
-                    <option value="">Export</option>
-                    <option value="csv">CSV</option>
-                    <option value="xlsx">Excel</option>
-                    <option value="pdf">PDF</option>
-                  </select>
+              return (
+                <div key={request.id} className="p-6 hover:bg-gray-50 transition-colors">
+                  <div className="flex items-start justify-between">
+                    <div className="flex items-start gap-4">
+                      <div
+                        className={`w-12 h-12 rounded-full flex items-center justify-center ${statusBadge.bg}`}
+                      >
+                        <StatusIcon className={`w-6 h-6 ${statusBadge.text}`} />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-3">
+                          <h4 className="font-semibold text-gray-900">
+                            {request.sellerName || "Unknown Seller"}
+                          </h4>
+                          <span
+                            className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${statusBadge.bg} ${statusBadge.text}`}
+                          >
+                            {statusBadge.label}
+                          </span>
+                        </div>
+                        <p className="text-sm text-gray-500 mt-0.5">{request.sellerEmail}</p>
+                        <div className="mt-2 text-sm text-gray-600">
+                          <span className="font-medium">Amount:</span>{" "}
+                          <span className="text-lg font-bold text-gray-900">
+                            {currency.format(request.amount)}
+                          </span>
+                        </div>
+                        <div className="mt-1 text-sm text-gray-500">
+                          <span className="font-medium">Bank:</span>{" "}
+                          {request.receiver.bankName} • {request.receiver.bankAccountName} •{" "}
+                          ****{request.receiver.bankAccountNumber.slice(-4)}
+                        </div>
+                        {request.referenceNumber && (
+                          <div className="mt-1 text-xs text-gray-400">
+                            Ref: {request.referenceNumber}
+                          </div>
+                        )}
+                        <div className="mt-1 text-xs text-gray-400">
+                          Requested: {formatDate(request.createdAt)}
+                        </div>
+                        {request.description && (
+                          <div className="mt-1 text-xs text-gray-500 italic">
+                            "{request.description}"
+                          </div>
+                        )}
+                        {request.rejectionReason && (
+                          <div className="mt-2 p-2 bg-red-50 rounded-lg text-sm text-red-700">
+                            <span className="font-medium">Rejection reason:</span>{" "}
+                            {request.rejectionReason}
+                          </div>
+                        )}
+                        {request.providerError && (
+                          <div className="mt-2 p-2 bg-red-50 rounded-lg text-sm text-red-700">
+                            <span className="font-medium">Provider error:</span>{" "}
+                            {request.providerError}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Action Buttons for Pending Requests */}
+                    {request.status === "pending" && (
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => {
+                            if (!request.id) return;
+                            handleApprove(request.id);
+                          }}
+                          disabled={isLoading || !request.id}
+                          className="px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {isLoading ? (
+                            <span className="flex items-center gap-2">
+                              <span className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full" />
+                              Approving...
+                            </span>
+                          ) : (
+                            "Approve"
+                          )}
+                        </button>
+                        <button
+                          onClick={() => {
+                            if (!request.id) return;
+                            handleRejectClick(request.id);
+                          }}
+                          disabled={isLoading || !request.id}
+                          className="px-4 py-2 text-sm font-medium text-red-700 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          Reject
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Status info for non-pending */}
+                    {request.status !== "pending" && request.approvedAt && (
+                      <div className="text-right text-xs text-gray-500">
+                        <div>Approved: {formatDate(request.approvedAt)}</div>
+                        {request.completedAt && (
+                          <div className="text-green-600">
+                            Completed: {formatDate(request.completedAt)}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </div>
-              </div>
-              <WithdrawalTable requests={filteredHistory} showActions={false} />
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Rejection Modal */}
+      {showRejectModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div
+            className="absolute inset-0 bg-black/40"
+            onClick={() => !actionLoading && setShowRejectModal(false)}
+          />
+          <div className="relative z-10 w-[92vw] max-w-md bg-white rounded-2xl shadow-xl border border-gray-200 overflow-hidden">
+            <div className="px-6 py-4 border-b border-gray-100">
+              <h3 className="text-lg font-semibold text-gray-900">Reject Withdrawal Request</h3>
+              <p className="text-sm text-gray-500 mt-1">
+                Please provide a reason for rejecting this request
+              </p>
             </div>
-          )}
-        </>
+
+            <div className="p-6">
+              <textarea
+                value={rejectionReason}
+                onChange={(e) => setRejectionReason(e.target.value)}
+                placeholder="Enter rejection reason..."
+                rows={4}
+                className="w-full p-3 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-teal-500 focus:border-transparent resize-none"
+                disabled={!!actionLoading}
+              />
+
+              <div className="flex gap-3 mt-4">
+                <button
+                  onClick={() => setShowRejectModal(false)}
+                  disabled={!!actionLoading}
+                  className="flex-1 px-4 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-medium rounded-lg transition disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleRejectConfirm}
+                  disabled={!!actionLoading || !rejectionReason.trim()}
+                  className="flex-1 px-4 py-2.5 bg-red-600 hover:bg-red-700 text-white text-sm font-medium rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {actionLoading ? (
+                    <span className="flex items-center justify-center gap-2">
+                      <span className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full" />
+                      Rejecting...
+                    </span>
+                  ) : (
+                    "Confirm Rejection"
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

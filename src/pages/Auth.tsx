@@ -1,10 +1,25 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import AuthLayout from "@/components/auth/AuthLayout";
 import LoginForm from "@/components/auth/LoginForm";
 import SignupForm from "@/components/auth/SignupForm";
 
 const Auth = () => {
   const [isLogin, setIsLogin] = useState(true);
+
+  // Clear any tab query parameter when on auth page
+  // This ensures users start fresh at dashboard after login
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      if (params.has('tab')) {
+        params.delete('tab');
+        const newUrl = params.toString() 
+          ? `${window.location.pathname}?${params.toString()}`
+          : window.location.pathname;
+        window.history.replaceState({}, '', newUrl);
+      }
+    } catch {}
+  }, []);
 
   const handleLoginSuccess = () => {
     // Authentication is handled by useAuth hook

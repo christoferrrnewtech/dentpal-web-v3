@@ -7,6 +7,7 @@ import RevenueChart from "@/components/dashboard/RevenueChart";
 import Booking from "@/pages/Booking";
 import ConfirmationTab from "@/components/confirmation/ConfirmationTab";
 import WithdrawalTab from "@/components/withdrawal/WithdrawalTab";
+import SellerWithdrawalTab from "@/components/withdrawal/SellerWithdrawalTab";
 import AccessTab from "@/components/access/AccessTab";
 import ImagesTab from "@/components/images/ImagesTab";
 import UsersTab from "@/components/users/UsersTab";
@@ -1120,6 +1121,18 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
         );
       case "withdrawal":
         if (!isAllowed("withdrawal")) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
+        // Show seller-facing withdrawal for non-admin users
+        if (!isAdmin) {
+          return (
+            <SellerWithdrawalTab
+              financialMetrics={financialMetrics}
+              sellerFilters={sellerFilters}
+              onFiltersChange={setSellerFilters}
+              loading={loading}
+            />
+          );
+        }
+        // Admin view for managing withdrawal requests
         return (
           <WithdrawalTab 
             loading={loading}

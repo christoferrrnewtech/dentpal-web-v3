@@ -98,7 +98,7 @@ export interface Order {
   };
   payout?: {
     netPayoutToSeller?: number;
-    calculatedAt?: any;
+    calculatedAt?: Timestamp | Date | string;
   };
 }
 

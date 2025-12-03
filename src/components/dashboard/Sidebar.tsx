@@ -120,7 +120,7 @@ const Sidebar = ({ activeItem, onItemClick, onLogout }: SidebarProps) => {
 
         // Primary sellers (not sub-accounts): custom seller ordering
         if (isSeller && !isAdmin) {
-          const sellerOrder = ['dashboard', 'seller-orders', 'reports', 'inventory', 'add-product', 'sub-accounts', 'profile'];
+          const sellerOrder = ['dashboard', 'seller-orders', 'reports', 'withdrawal', 'inventory', 'add-product', 'sub-accounts', 'profile'];
           const map = new Map(permitted.map((i) => [i.id, i] as const));
           return sellerOrder.map((id) => map.get(id)).filter(Boolean) as typeof permitted;
         }

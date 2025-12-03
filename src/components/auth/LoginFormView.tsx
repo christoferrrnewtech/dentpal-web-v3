@@ -153,7 +153,6 @@ export default function LoginFormView({
       {/* Footer */}
       <AlertDialogFooter className="mt-7 w-full">
         <AlertDialogAction
-          onClick={onCloseError}
           className="w-full h-11 rounded-xl font-medium bg-red-500 hover:bg-red-600 active:scale-[0.98] transition-all text-white shadow-md"
         >
           Try Again

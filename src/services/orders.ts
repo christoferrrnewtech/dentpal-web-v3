@@ -271,7 +271,15 @@ const mapDocToOrder = (id: string, data: any): Order => {
     } : undefined,
     payout: data.payout ? {
       netPayoutToSeller: data.payout.netPayoutToSeller != null ? Number(data.payout.netPayoutToSeller) : undefined,
-      calculatedAt: data.payout.calculatedAt,
+      calculatedAt: (() => {
+        const val = data.payout.calculatedAt;
+        if (val == null) return undefined;
+        if (typeof val?.toDate === 'function') return val.toDate().toISOString();
+        if (typeof val?.toMillis === 'function') return new Date(val.toMillis()).toISOString();
+        if (val instanceof Date) return val.toISOString();
+        if (typeof val === 'string') return val;
+        return undefined;
+      })(),
     } : undefined,
   };
 };
@@ -530,7 +538,7 @@ const OrdersService = {
           const currentHistory = Array.isArray(currentData.statusHistory) ? currentData.statusHistory : [];
           
           const reverseNotes = {
-            'to-pack': ' Order moved back to packing stage',
+            'to-pack': 'Order moved back to packing stage',
             'to-arrangement': 'Order moved back to arrangement stage'
           };
 

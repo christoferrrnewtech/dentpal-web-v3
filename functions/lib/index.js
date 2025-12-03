@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.createJRSShipping = exports.processSellerPayoutAdjustments = exports.getSellerPayoutAdjustments = void 0;
+exports.listPaymongoTransactions = exports.getPaymongoTransaction = exports.getWalletTransactions = exports.checkWithdrawalStatus = exports.processWithdrawal = exports.createJRSShipping = exports.processSellerPayoutAdjustments = exports.getSellerPayoutAdjustments = void 0;
 const https_1 = require("firebase-functions/v2/https");
 const logger = require("firebase-functions/logger");
 const app_1 = require("firebase-admin/app");
@@ -15,6 +15,10 @@ const auth = (0, auth_1.getAuth)();
 // Define parameters for JRS API
 const JRS_API_KEY = (0, params_1.defineString)("JRS_API_KEY");
 const JRS_API_URL = (0, params_1.defineString)("JRS_API_URL", { default: "https://jrs-express.azure-api.net/qa-online-shipping-ship/ShippingRequestFunction" });
+// Define parameters for PayMongo API
+const PAYMONGO_SECRET_KEY = (0, params_1.defineSecret)("PAYMONGO_SECRET_KEY");
+const PAYMONGO_WALLET_ID = (0, params_1.defineString)("PAYMONGO_WALLET_ID");
+const PAYMONGO_API_URL = (0, params_1.defineString)("PAYMONGO_API_URL", { default: "https://api.paymongo.com/v1" });
 const verifyAuthToken = async (authorizationHeader) => {
     if (!authorizationHeader) {
         throw new Error("Missing Authorization header");
@@ -32,6 +36,32 @@ const verifyAuthToken = async (authorizationHeader) => {
     catch (error) {
         logger.error("Token verification failed", { error });
         throw new Error("Invalid or expired authentication token");
+    }
+};
+/**
+ * Custom error class for admin access verification failures
+ */
+class AdminAccessError extends Error {
+    constructor(message) {
+        super(message);
+        this.name = "AdminAccessError";
+    }
+}
+/**
+ * Verify that the authenticated user has admin role
+ * @param adminUid - The UID of the authenticated user (from decodedToken.uid)
+ * @param actionDescription - Description of the action being attempted (for logging)
+ * @throws AdminAccessError if user is not an admin
+ */
+const verifyAdminAccess = async (adminUid, actionDescription) => {
+    var _a, _b;
+    const adminDoc = await db.collection("Seller").doc(adminUid).get();
+    if (!adminDoc.exists || ((_a = adminDoc.data()) === null || _a === void 0 ? void 0 : _a.role) !== "admin") {
+        logger.warn(`Non-admin user attempted to ${actionDescription}`, {
+            adminUid,
+            role: ((_b = adminDoc.data()) === null || _b === void 0 ? void 0 : _b.role) || "unknown",
+        });
+        throw new AdminAccessError("Unauthorized. Admin access required.");
     }
 };
 // Helper functions
@@ -289,43 +319,67 @@ exports.processSellerPayoutAdjustments = (0, https_1.onRequest)({
         const processed = [];
         const errors = [];
         for (const doc of pendingAdjustments.docs) {
-            const adjustment = doc.data();
             try {
-                // Update adjustment status to processed
-                await doc.ref.update({
-                    status: 'processed',
-                    processedAt: firestore_1.FieldValue.serverTimestamp(),
-                    processedBy: decodedToken.uid,
-                });
-                // Update seller's pending deductions
-                const sellerRef = db.collection('Seller').doc(adjustment.sellerId);
-                await sellerRef.update({
-                    'payoutAdjustments.pendingDeductions': firestore_1.FieldValue.increment(-adjustment.originalShippingCharge || -adjustment.amount),
-                    'payoutAdjustments.processedDeductions': firestore_1.FieldValue.increment(adjustment.originalShippingCharge || -adjustment.amount),
-                    'payoutAdjustments.lastProcessed': firestore_1.FieldValue.serverTimestamp(),
+                await db.runTransaction(async (transaction) => {
+                    var _a;
+                    const adjustmentSnap = await transaction.get(doc.ref);
+                    if (!adjustmentSnap.exists) {
+                        throw new Error("Adjustment document does not exist");
+                    }
+                    const adjustment = adjustmentSnap.data();
+                    if (!adjustment) {
+                        throw new Error("Adjustment data is undefined");
+                    }
+                    // Prevent double-processing
+                    if (adjustment.status === 'processed') {
+                        logger.warn("Adjustment already processed, skipping", {
+                            adjustmentId: doc.id,
+                            sellerId: adjustment.sellerId,
+                            orderId: adjustment.orderId,
+                        });
+                        return;
+                    }
+                    // Compute delta as positive magnitude for decrementing pendingDeductions
+                    const originalShipping = (_a = adjustment.metadata) === null || _a === void 0 ? void 0 : _a.originalShippingCharge;
+                    const delta = typeof originalShipping === 'number'
+                        ? originalShipping
+                        : Math.abs(adjustment.amount);
+                    // Update adjustment status
+                    transaction.update(doc.ref, {
+                        status: 'processed',
+                        processedAt: firestore_1.FieldValue.serverTimestamp(),
+                        processedBy: decodedToken.uid,
+                    });
+                    // Update seller's payout adjustments
+                    const sellerRef = db.collection('Seller').doc(adjustment.sellerId);
+                    transaction.update(sellerRef, {
+                        'payoutAdjustments.pendingDeductions': firestore_1.FieldValue.increment(-delta),
+                        'payoutAdjustments.processedDeductions': firestore_1.FieldValue.increment(delta),
+                        'payoutAdjustments.lastProcessed': firestore_1.FieldValue.serverTimestamp(),
+                    });
                 });
                 processed.push({
                     adjustmentId: doc.id,
-                    orderId: adjustment.orderId,
-                    sellerId: adjustment.sellerId,
-                    amount: adjustment.amount,
+                    orderId: doc.data().orderId,
+                    sellerId: doc.data().sellerId,
+                    amount: doc.data().amount,
                 });
-                logger.info("Processed seller payout adjustment", {
+                logger.info("Processed seller payout adjustment (transaction)", {
                     adjustmentId: doc.id,
-                    sellerId: adjustment.sellerId,
-                    orderId: adjustment.orderId,
-                    amount: adjustment.amount,
+                    sellerId: doc.data().sellerId,
+                    orderId: doc.data().orderId,
+                    amount: doc.data().amount,
                 });
             }
             catch (error) {
-                logger.error("Failed to process adjustment", {
+                logger.error("Failed to process adjustment (transaction)", {
                     adjustmentId: doc.id,
-                    sellerId: adjustment.sellerId,
+                    sellerId: doc.data().sellerId,
                     error: error instanceof Error ? error.message : 'Unknown error',
                 });
                 errors.push({
                     adjustmentId: doc.id,
-                    sellerId: adjustment.sellerId,
+                    sellerId: doc.data().sellerId,
                     error: error instanceof Error ? error.message : 'Unknown error',
                 });
             }
@@ -790,6 +844,429 @@ exports.createJRSShipping = (0, https_1.onRequest)({
         res.status(500).json({
             error: "Internal server error",
             message: error instanceof Error ? error.message : "Unknown error",
+        });
+    }
+});
+/**
+ * Process a withdrawal by creating a PayMongo wallet transaction
+ * Called by admin when approving a withdrawal request
+ */
+exports.processWithdrawal = (0, https_1.onRequest)({
+    cors: true,
+    region: "asia-southeast1",
+    secrets: [PAYMONGO_SECRET_KEY],
+}, async (req, res) => {
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r;
+    // Only allow POST
+    if (req.method !== "POST") {
+        res.status(405).json({ error: "Method not allowed" });
+        return;
+    }
+    try {
+        // Verify authentication
+        const decodedToken = await verifyAuthToken(req.headers.authorization);
+        const adminUid = decodedToken.uid;
+        // Verify admin role
+        await verifyAdminAccess(adminUid, "process withdrawal");
+        const { withdrawalId } = req.body;
+        if (!withdrawalId) {
+            res.status(400).json({ error: "Missing withdrawalId" });
+            return;
+        }
+        // Get the withdrawal request from Firestore
+        const withdrawalRef = db.collection("Withdrawal").doc(withdrawalId);
+        const withdrawalDoc = await withdrawalRef.get();
+        if (!withdrawalDoc.exists) {
+            res.status(404).json({ error: "Withdrawal request not found" });
+            return;
+        }
+        const withdrawalData = withdrawalDoc.data();
+        // Check if withdrawal is in a valid state for processing
+        if (withdrawalData.status !== "approved") {
+            res.status(400).json({
+                error: "Invalid withdrawal status",
+                message: `Withdrawal must be approved before processing. Current status: ${withdrawalData.status}`
+            });
+            return;
+        }
+        // Update status to processing
+        await withdrawalRef.update({
+            status: "processing",
+            processedBy: adminUid,
+            processedAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+        });
+        // Prepare PayMongo request
+        const walletId = PAYMONGO_WALLET_ID.value();
+        const apiUrl = PAYMONGO_API_URL.value();
+        const secretKey = PAYMONGO_SECRET_KEY.value();
+        // Amount in PayMongo is in centavos (smallest currency unit)
+        const amountInCentavos = Math.round(withdrawalData.amount * 100);
+        const paymongoRequest = {
+            data: {
+                attributes: {
+                    amount: amountInCentavos,
+                    currency: "PHP",
+                    description: withdrawalData.description || `Withdrawal payout - ${withdrawalData.referenceNumber}`,
+                    receiver: {
+                        bank_account_name: withdrawalData.receiver.bankAccountName,
+                        bank_account_number: withdrawalData.receiver.bankAccountNumber,
+                        bank_code: withdrawalData.receiver.bankCode,
+                        bank_id: withdrawalData.receiver.bankId || undefined,
+                        bank_name: withdrawalData.receiver.bankName,
+                    },
+                    reference_number: withdrawalData.referenceNumber,
+                },
+            },
+        };
+        logger.info("Creating PayMongo wallet transaction", {
+            withdrawalId,
+            amount: withdrawalData.amount,
+            amountInCentavos,
+            receiver: withdrawalData.receiver.bankAccountName,
+            referenceNumber: withdrawalData.referenceNumber,
+        });
+        // Make PayMongo API request
+        const paymongoResponse = await axios_1.default.post(`${apiUrl}/wallets/${walletId}/transactions`, paymongoRequest, {
+            headers: {
+                "Authorization": `Basic ${Buffer.from(secretKey + ":").toString("base64")}`,
+                "Content-Type": "application/json",
+            },
+        });
+        const transactionData = paymongoResponse.data.data;
+        logger.info("PayMongo wallet transaction created", {
+            withdrawalId,
+            transactionId: transactionData.id,
+            status: transactionData.attributes.status,
+        });
+        // Update withdrawal with PayMongo response
+        await withdrawalRef.update({
+            paymongoTransactionId: transactionData.id,
+            paymongoTransferId: transactionData.attributes.transfer_id,
+            paymongoStatus: transactionData.attributes.status,
+            paymongoProvider: transactionData.attributes.provider,
+            paymongoNetAmount: transactionData.attributes.net_amount / 100,
+            paymongoBatchId: transactionData.attributes.batch_transaction_id,
+            paymongoCreatedAt: transactionData.attributes.created_at,
+            updatedAt: new Date().toISOString(),
+            // If PayMongo immediately completes, update status
+            ...(transactionData.attributes.status === "completed" && {
+                status: "completed",
+                completedAt: new Date().toISOString(),
+            }),
+        });
+        res.status(200).json({
+            success: true,
+            message: "Withdrawal transaction initiated successfully",
+            withdrawalId,
+            transaction: {
+                id: transactionData.id,
+                status: transactionData.attributes.status,
+                provider: transactionData.attributes.provider,
+                amount: transactionData.attributes.amount / 100,
+                netAmount: transactionData.attributes.net_amount / 100,
+                referenceNumber: transactionData.attributes.reference_number,
+            },
+        });
+    }
+    catch (error) {
+        // Handle admin access errors with 403
+        if (error instanceof AdminAccessError) {
+            res.status(403).json({ error: error.message });
+            return;
+        }
+        logger.error("Error processing withdrawal", {
+            error: error.message,
+            response: (_a = error.response) === null || _a === void 0 ? void 0 : _a.data,
+            stack: error.stack,
+        });
+        // If PayMongo returned an error, update the withdrawal status
+        if ((_b = error.response) === null || _b === void 0 ? void 0 : _b.data) {
+            const withdrawalId = (_c = req.body) === null || _c === void 0 ? void 0 : _c.withdrawalId;
+            if (withdrawalId) {
+                try {
+                    await db.collection("Withdrawal").doc(withdrawalId).update({
+                        status: "failed",
+                        providerError: ((_e = (_d = error.response.data.errors) === null || _d === void 0 ? void 0 : _d[0]) === null || _e === void 0 ? void 0 : _e.detail) || error.message,
+                        providerErrorCode: ((_g = (_f = error.response.data.errors) === null || _f === void 0 ? void 0 : _f[0]) === null || _g === void 0 ? void 0 : _g.code) || "unknown",
+                        updatedAt: new Date().toISOString(),
+                    });
+                }
+                catch (updateError) {
+                    logger.error("Failed to update withdrawal status after error", { updateError });
+                }
+            }
+        }
+        res.status(((_h = error.response) === null || _h === void 0 ? void 0 : _h.status) || 500).json({
+            error: "Failed to process withdrawal",
+            message: ((_m = (_l = (_k = (_j = error.response) === null || _j === void 0 ? void 0 : _j.data) === null || _k === void 0 ? void 0 : _k.errors) === null || _l === void 0 ? void 0 : _l[0]) === null || _m === void 0 ? void 0 : _m.detail) || error.message,
+            code: (_r = (_q = (_p = (_o = error.response) === null || _o === void 0 ? void 0 : _o.data) === null || _p === void 0 ? void 0 : _p.errors) === null || _q === void 0 ? void 0 : _q[0]) === null || _r === void 0 ? void 0 : _r.code,
+        });
+    }
+});
+/**
+ * Check the status of a withdrawal transaction from PayMongo
+ */
+exports.checkWithdrawalStatus = (0, https_1.onRequest)({
+    cors: true,
+    region: "asia-southeast1",
+    secrets: [PAYMONGO_SECRET_KEY],
+}, async (req, res) => {
+    var _a, _b, _c, _d, _e, _f;
+    // Allow GET or POST
+    if (req.method !== "GET" && req.method !== "POST") {
+        res.status(405).json({ error: "Method not allowed" });
+        return;
+    }
+    try {
+        // Verify authentication
+        const decodedToken = await verifyAuthToken(req.headers.authorization);
+        const adminUid = decodedToken.uid;
+        // Verify admin role
+        await verifyAdminAccess(adminUid, "check withdrawal status");
+        const withdrawalId = req.method === "GET" ? req.query.withdrawalId : req.body.withdrawalId;
+        if (!withdrawalId) {
+            res.status(400).json({ error: "Missing withdrawalId" });
+            return;
+        }
+        // Get the withdrawal request from Firestore
+        const withdrawalRef = db.collection("Withdrawal").doc(withdrawalId);
+        const withdrawalDoc = await withdrawalRef.get();
+        if (!withdrawalDoc.exists) {
+            res.status(404).json({ error: "Withdrawal request not found" });
+            return;
+        }
+        const withdrawalData = withdrawalDoc.data();
+        if (!withdrawalData.paymongoTransactionId) {
+            res.status(400).json({
+                error: "No PayMongo transaction found",
+                message: "This withdrawal has not been processed yet"
+            });
+            return;
+        }
+        // Fetch transaction status from PayMongo
+        const walletId = PAYMONGO_WALLET_ID.value();
+        const apiUrl = PAYMONGO_API_URL.value();
+        const secretKey = PAYMONGO_SECRET_KEY.value();
+        const paymongoResponse = await axios_1.default.get(`${apiUrl}/wallets/${walletId}/transactions/${withdrawalData.paymongoTransactionId}`, {
+            headers: {
+                "Authorization": `Basic ${Buffer.from(secretKey + ":").toString("base64")}`,
+            },
+        });
+        const transactionData = paymongoResponse.data.data;
+        logger.info("PayMongo transaction status retrieved", {
+            withdrawalId,
+            transactionId: transactionData.id,
+            status: transactionData.attributes.status,
+        });
+        // Update withdrawal status if changed
+        const updateData = {
+            paymongoStatus: transactionData.attributes.status,
+            updatedAt: new Date().toISOString(),
+        };
+        if (transactionData.attributes.status === "completed" && withdrawalData.status !== "completed") {
+            updateData.status = "completed";
+            updateData.completedAt = new Date().toISOString();
+        }
+        else if (transactionData.attributes.status === "failed" && withdrawalData.status !== "failed") {
+            updateData.status = "failed";
+            updateData.providerError = transactionData.attributes.provider_error;
+            updateData.providerErrorCode = transactionData.attributes.provider_error_code;
+        }
+        await withdrawalRef.update(updateData);
+        res.status(200).json({
+            success: true,
+            withdrawalId,
+            withdrawalStatus: updateData.status || withdrawalData.status,
+            transaction: {
+                id: transactionData.id,
+                status: transactionData.attributes.status,
+                provider: transactionData.attributes.provider,
+                providerError: transactionData.attributes.provider_error,
+                amount: transactionData.attributes.amount / 100,
+                netAmount: transactionData.attributes.net_amount / 100,
+                referenceNumber: transactionData.attributes.reference_number,
+                createdAt: transactionData.attributes.created_at,
+                updatedAt: transactionData.attributes.updated_at,
+            },
+        });
+    }
+    catch (error) {
+        // Handle admin access errors with 403
+        if (error instanceof AdminAccessError) {
+            res.status(403).json({ error: error.message });
+            return;
+        }
+        logger.error("Error checking withdrawal status", {
+            error: error.message,
+            response: (_a = error.response) === null || _a === void 0 ? void 0 : _a.data,
+        });
+        res.status(((_b = error.response) === null || _b === void 0 ? void 0 : _b.status) || 500).json({
+            error: "Failed to check withdrawal status",
+            message: ((_f = (_e = (_d = (_c = error.response) === null || _c === void 0 ? void 0 : _c.data) === null || _d === void 0 ? void 0 : _d.errors) === null || _e === void 0 ? void 0 : _e[0]) === null || _f === void 0 ? void 0 : _f.detail) || error.message,
+        });
+    }
+});
+/**
+ * Get all wallet transactions from PayMongo (admin only)
+ */
+exports.getWalletTransactions = (0, https_1.onRequest)({
+    cors: true,
+    region: "asia-southeast1",
+    secrets: [PAYMONGO_SECRET_KEY],
+}, async (req, res) => {
+    var _a, _b, _c, _d, _e, _f;
+    if (req.method !== "GET") {
+        res.status(405).json({ error: "Method not allowed" });
+        return;
+    }
+    try {
+        // Verify authentication
+        const decodedToken = await verifyAuthToken(req.headers.authorization);
+        const adminUid = decodedToken.uid;
+        // Verify admin role
+        await verifyAdminAccess(adminUid, "get wallet transactions");
+        const limit = parseInt(req.query.limit) || 10;
+        const startingAfter = req.query.starting_after;
+        const walletId = PAYMONGO_WALLET_ID.value();
+        const apiUrl = PAYMONGO_API_URL.value();
+        const secretKey = PAYMONGO_SECRET_KEY.value();
+        let url = `${apiUrl}/wallets/${walletId}/transactions?limit=${limit}`;
+        if (startingAfter) {
+            url += `&starting_after=${startingAfter}`;
+        }
+        const paymongoResponse = await axios_1.default.get(url, {
+            headers: {
+                "Authorization": `Basic ${Buffer.from(secretKey + ":").toString("base64")}`,
+            },
+        });
+        res.status(200).json({
+            success: true,
+            data: paymongoResponse.data.data,
+            hasMore: paymongoResponse.data.has_more,
+        });
+    }
+    catch (error) {
+        // Handle admin access errors with 403
+        if (error instanceof AdminAccessError) {
+            res.status(403).json({ error: error.message });
+            return;
+        }
+        logger.error("Error fetching wallet transactions", {
+            error: error.message,
+            response: (_a = error.response) === null || _a === void 0 ? void 0 : _a.data,
+        });
+        res.status(((_b = error.response) === null || _b === void 0 ? void 0 : _b.status) || 500).json({
+            error: "Failed to fetch wallet transactions",
+            message: ((_f = (_e = (_d = (_c = error.response) === null || _c === void 0 ? void 0 : _c.data) === null || _d === void 0 ? void 0 : _d.errors) === null || _e === void 0 ? void 0 : _e[0]) === null || _f === void 0 ? void 0 : _f.detail) || error.message,
+        });
+    }
+});
+/**
+ * Get a specific wallet transaction from PayMongo
+ * Proxies the read operation securely without exposing the secret key to the frontend
+ * Admin-only access required
+ */
+exports.getPaymongoTransaction = (0, https_1.onRequest)({
+    cors: true,
+    region: "asia-southeast1",
+    secrets: [PAYMONGO_SECRET_KEY],
+}, async (req, res) => {
+    var _a, _b, _c, _d, _e, _f;
+    if (req.method !== "GET") {
+        res.status(405).json({ error: "Method not allowed" });
+        return;
+    }
+    try {
+        // Verify authentication
+        const decodedToken = await verifyAuthToken(req.headers.authorization);
+        const adminUid = decodedToken.uid;
+        // Verify admin role
+        await verifyAdminAccess(adminUid, "access PayMongo transaction");
+        const transactionId = req.query.transactionId;
+        if (!transactionId) {
+            res.status(400).json({ error: "Missing transactionId parameter" });
+            return;
+        }
+        const walletId = PAYMONGO_WALLET_ID.value();
+        const apiUrl = PAYMONGO_API_URL.value();
+        const secretKey = PAYMONGO_SECRET_KEY.value();
+        const response = await axios_1.default.get(`${apiUrl}/wallets/${walletId}/transactions/${transactionId}`, {
+            headers: {
+                "Authorization": `Basic ${Buffer.from(secretKey + ":").toString("base64")}`,
+                "Accept": "application/json",
+            },
+        });
+        res.status(200).json({ success: true, data: response.data });
+    }
+    catch (error) {
+        // Handle admin access errors with 403
+        if (error instanceof AdminAccessError) {
+            res.status(403).json({ error: error.message });
+            return;
+        }
+        logger.error("Error retrieving PayMongo transaction", {
+            error: error.message,
+            response: (_a = error.response) === null || _a === void 0 ? void 0 : _a.data,
+        });
+        const errorMessage = ((_e = (_d = (_c = (_b = error.response) === null || _b === void 0 ? void 0 : _b.data) === null || _c === void 0 ? void 0 : _c.errors) === null || _d === void 0 ? void 0 : _d[0]) === null || _e === void 0 ? void 0 : _e.detail) ||
+            error.message ||
+            "Failed to retrieve transaction";
+        res.status(((_f = error.response) === null || _f === void 0 ? void 0 : _f.status) || 500).json({
+            success: false,
+            error: errorMessage
+        });
+    }
+});
+/**
+ * List wallet transactions from PayMongo
+ * Proxies the read operation securely without exposing the secret key to the frontend
+ * Admin-only access required
+ */
+exports.listPaymongoTransactions = (0, https_1.onRequest)({
+    cors: true,
+    region: "asia-southeast1",
+    secrets: [PAYMONGO_SECRET_KEY],
+}, async (req, res) => {
+    var _a, _b, _c, _d, _e, _f;
+    if (req.method !== "GET") {
+        res.status(405).json({ error: "Method not allowed" });
+        return;
+    }
+    try {
+        // Verify authentication
+        const decodedToken = await verifyAuthToken(req.headers.authorization);
+        const adminUid = decodedToken.uid;
+        // Verify admin role
+        await verifyAdminAccess(adminUid, "list PayMongo transactions");
+        const limit = parseInt(req.query.limit) || 10;
+        const walletId = PAYMONGO_WALLET_ID.value();
+        const apiUrl = PAYMONGO_API_URL.value();
+        const secretKey = PAYMONGO_SECRET_KEY.value();
+        const response = await axios_1.default.get(`${apiUrl}/wallets/${walletId}/transactions?limit=${limit}`, {
+            headers: {
+                "Authorization": `Basic ${Buffer.from(secretKey + ":").toString("base64")}`,
+                "Accept": "application/json",
+            },
+        });
+        res.status(200).json({ success: true, data: response.data.data || [] });
+    }
+    catch (error) {
+        // Handle admin access errors with 403
+        if (error instanceof AdminAccessError) {
+            res.status(403).json({ error: error.message });
+            return;
+        }
+        logger.error("Error listing PayMongo transactions", {
+            error: error.message,
+            response: (_a = error.response) === null || _a === void 0 ? void 0 : _a.data,
+        });
+        const errorMessage = ((_e = (_d = (_c = (_b = error.response) === null || _b === void 0 ? void 0 : _b.data) === null || _c === void 0 ? void 0 : _c.errors) === null || _d === void 0 ? void 0 : _d[0]) === null || _e === void 0 ? void 0 : _e.detail) ||
+            error.message ||
+            "Failed to list transactions";
+        res.status(((_f = error.response) === null || _f === void 0 ? void 0 : _f.status) || 500).json({
+            success: false,
+            error: errorMessage
         });
     }
 });

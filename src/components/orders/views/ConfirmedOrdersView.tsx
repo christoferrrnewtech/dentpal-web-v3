@@ -75,7 +75,7 @@ const ConfirmedOrderRow: React.FC<ConfirmedOrderRowProps> = ({ order, onDetails,
           
           {/* Size and contact */}
           <div className="hidden lg:block text-xs text-gray-500">
-            {order.package.size} / {order.customer.contact || '—'}
+            {order.package?.size ?? '—'} / {order.customer?.contact ?? '—'}
           </div>
         </div>
 
