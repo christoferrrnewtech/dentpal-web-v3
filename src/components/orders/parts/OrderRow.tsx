@@ -1,6 +1,7 @@
 import React from 'react';
 import { Order } from '@/types/order';
 import { ChevronDown, ChevronUp, Printer, FileText, Download, Eye, Loader2 } from 'lucide-react';
+import QRCode from 'qrcode';
 
 interface OrderRowProps {
   order: Order;
@@ -15,10 +16,41 @@ interface OrderRowProps {
   isShippingLoading?: boolean; // Loading state for shipping requests
 }
 
-const buildInvoiceHTML = (order: Order) => {
+const buildInvoiceHTML = async (order: Order) => {
   const currency = order.currency || 'PHP';
   const total = order.total != null ? order.total : '';
   const hasItems = Array.isArray(order.items) && order.items.length > 0;
+  
+  // Load and convert logo to base64
+  let logoDataUrl = '';
+  try {
+    const logoPath = '/src/assets/dentpal_logo.png';
+    const response = await fetch(logoPath);
+    const blob = await response.blob();
+    logoDataUrl = await new Promise<string>((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result as string);
+      reader.readAsDataURL(blob);
+    });
+  } catch (err) {
+    console.error('Failed to load logo:', err);
+  }
+  
+  // Generate QR code for tracking ID
+  const trackingId = order.shippingInfo?.jrs?.trackingId || order.barcode || 'N/A';
+  let qrCodeDataUrl = '';
+  try {
+    qrCodeDataUrl = await QRCode.toDataURL(trackingId, {
+      width: 120,
+      margin: 1,
+      color: {
+        dark: '#0f172a',
+        light: '#ffffff'
+      }
+    });
+  } catch (err) {
+    console.error('Failed to generate QR code:', err);
+  }
   const itemsMarkup = hasItems
     ? `<table style="width:100%; border-collapse:collapse; margin-top:8px;">
          <thead>
@@ -51,11 +83,12 @@ const buildInvoiceHTML = (order: Order) => {
     .sheet { max-width: 800px; margin: 24px auto; padding: 32px; border: 1px solid var(--line); border-radius: 16px; }
     .header { display:flex; align-items:center; justify-content:space-between; gap:16px; padding-bottom:16px; border-bottom:1px solid var(--line); }
     .brand { display:flex; align-items:center; gap:12px; }
-    .brand-badge { width:36px; height:36px; border-radius:10px; background:linear-gradient(135deg,#0ea5e9,#0d9488); box-shadow: 0 4px 12px rgba(13,148,136,0.25); }
+    .brand-badge { width:48px; height:48px; object-fit:contain; }
     .title { font-size:20px; font-weight:700; }
     .meta { text-align:right; font-size:12px; color: var(--muted); }
     .section { padding:16px 0; }
     .grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+    .grid-three { display:grid; grid-template-columns:1fr 1fr auto; gap:16px; align-items:start; }
     .label { font-size:12px; color: var(--muted); }
     .value { font-size:14px; font-weight:600; }
     .row { display:flex; align-items:center; justify-content:space-between; gap:12px; }
@@ -70,8 +103,8 @@ const buildInvoiceHTML = (order: Order) => {
   <div class="sheet">
     <div class="header">
       <div class="brand">
-        <div class="brand-badge"></div>
-        <div class="title">Invoice</div>
+        ${logoDataUrl ? `<img src="${logoDataUrl}" alt="DentPal Logo" class="brand-badge" />` : '<div style="width:48px; height:48px; border-radius:10px; background:linear-gradient(135deg,#0ea5e9,#0d9488);"></div>'}
+        <div class="title">Waybill</div>
       </div>
       <div class="meta">
         <div><strong>Order #</strong> ${order.id}</div>
@@ -79,18 +112,22 @@ const buildInvoiceHTML = (order: Order) => {
       </div>
     </div>
 
-    <div class="section grid">
+    <div class="section grid-three">
       <div>
         <div class="label">Buyer</div>
         <div class="value">${order.customer.name || ''}</div>
-        <div class="label" style="margin-top:4px">Contact</div>
+        <div class="label" style="margin-top:8px">Contact</div>
         <div class="value">${order.customer.contact || ''}</div>
       </div>
       <div>
         <div class="label">Status</div>
         <div class="badge">${order.status}</div>
-        <div class="label" style="margin-top:8px">Tracking / Barcode</div>
-        <div class="value">${order.barcode}</div>
+        <div class="label" style="margin-top:8px">Tracking ID</div>
+        <div class="value" style="margin-top:4px;">${trackingId}</div>
+      </div>
+<div style="display:flex; flex-direction:column; align-items:flex-start; justify-content:flex-start;">
+        <div class="label" style="text-align:center; margin-bottom:8px;">QR Code</div>
+        ${qrCodeDataUrl ? `<img src="${qrCodeDataUrl}" alt="QR Code" style="width:100px; height:100px; border:1px solid var(--line); border-radius:8px; padding:4px; background:white;" />` : '<div style="width:100px; height:100px; border:1px dashed var(--line); border-radius:8px; display:flex; align-items:center; justify-content:center; font-size:10px; color:var(--muted);">No QR</div>'}
       </div>
     </div>
 
@@ -105,7 +142,7 @@ const buildInvoiceHTML = (order: Order) => {
     </div>
 
     <div class="footer">
-      Thanks for your purchase. This is a system-generated invoice. For concerns, contact support.
+      Thanks for your purchase. This is a system-generated waybill. For concerns, contact support.
     </div>
     <div class="actions" style="margin-top:16px">
       <button onclick="window.print()" style="padding:10px 14px; border:1px solid var(--line); border-radius:10px; background:white; cursor:pointer">Print</button>
@@ -115,8 +152,8 @@ const buildInvoiceHTML = (order: Order) => {
 </html>`;
 };
 
-const printInvoice = (order: Order) => {
-  const html = buildInvoiceHTML(order);
+const printInvoice = async (order: Order) => {
+  const html = await buildInvoiceHTML(order);
   const w = window.open('', '_blank');
   if (!w) return;
   w.document.open();

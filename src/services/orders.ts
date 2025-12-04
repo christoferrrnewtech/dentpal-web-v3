@@ -281,6 +281,25 @@ const mapDocToOrder = (id: string, data: any): Order => {
         return undefined;
       })(),
     } : undefined,
+    // NEW: Map JRS shipping information
+    shippingInfo: data.shippingInfo?.jrs ? {
+      jrs: {
+        trackingId: data.shippingInfo.jrs.trackingId ? String(data.shippingInfo.jrs.trackingId) : undefined,
+        trackingNumber: data.shippingInfo.jrs.trackingNumber ? String(data.shippingInfo.jrs.trackingNumber) : undefined,
+        status: data.shippingInfo.jrs.status ? String(data.shippingInfo.jrs.status) : undefined,
+        createdAt: (() => {
+          const val = data.shippingInfo.jrs.createdAt;
+          if (val == null) return undefined;
+          if (typeof val?.toDate === 'function') return val.toDate().toISOString();
+          if (typeof val?.toMillis === 'function') return new Date(val.toMillis()).toISOString();
+          if (val instanceof Date) return val.toISOString();
+          if (typeof val === 'string') return val;
+          return undefined;
+        })(),
+        pickupSchedule: data.shippingInfo.jrs.pickupSchedule ? String(data.shippingInfo.jrs.pickupSchedule) : undefined,
+        courier: data.shippingInfo.jrs.courier ? String(data.shippingInfo.jrs.courier) : undefined,
+      }
+    } : undefined,
   };
 };
 

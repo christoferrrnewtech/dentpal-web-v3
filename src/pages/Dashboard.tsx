@@ -348,17 +348,21 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
   }, [location.search]);
 
   // NEW: Keep URL query (?tab=...) in sync when activeItem changes to ensure future navigations take effect
+  // Use a ref to prevent infinite loop
+  const lastSyncedTab = useRef<string | null>(null);
   useEffect(() => {
     try {
       if (!activeItem) return;
       const params = new URLSearchParams(location.search);
       const current = params.get('tab');
-      if (current !== activeItem) {
+      // Only navigate if activeItem changed AND it's different from URL AND we haven't just synced this value
+      if (current !== activeItem && lastSyncedTab.current !== activeItem) {
+        lastSyncedTab.current = activeItem;
         params.set('tab', activeItem);
         navigate({ pathname: location.pathname || '/', search: params.toString() }, { replace: true });
       }
     } catch {}
-  }, [activeItem]);
+  }, [activeItem, location.pathname, location.search, navigate]);
 
   // Listen for custom navigation events from header actions (e.g., notifications)
   useEffect(() => {

@@ -88,13 +88,22 @@ const ProductQCTab: React.FC = () => {
       const updates: Record<string, string> = {};
       await Promise.all(missing.map(async (id) => {
         try {
-          const snap = await getDoc(doc(db, 'web_users', id));
+          // Try Seller collection first (new schema)
+          let snap = await getDoc(doc(db, 'Seller', id));
           if (snap.exists()) {
             const d: any = snap.data();
-            const name = d.name || d.displayName || d.fullName || d.email || id;
+            const name = d.name || d.displayName || d.fullName || d.vendor?.company?.name || d.vendor?.contacts?.name || d.email || id;
             updates[id] = String(name);
           } else {
-            updates[id] = id;
+            // Fallback to web_users collection (legacy)
+            snap = await getDoc(doc(db, 'web_users', id));
+            if (snap.exists()) {
+              const d: any = snap.data();
+              const name = d.name || d.displayName || d.fullName || d.email || id;
+              updates[id] = String(name);
+            } else {
+              updates[id] = id;
+            }
           }
         } catch {
           updates[id] = id;
