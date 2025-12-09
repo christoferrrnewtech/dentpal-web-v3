@@ -604,14 +604,21 @@ export const createJRSShipping = onRequest({
     
     let isSeller = false;
     if (orderData.sellerIds && Array.isArray(orderData.sellerIds)) {
-      // Check if authenticated user is one of the sellers for this order
-      const sellerPromises = orderData.sellerIds.map((sellerId: string) => 
-        db.collection("Seller").doc(sellerId).get()
-      );
-      const sellerDocs = await Promise.all(sellerPromises);
-      isSeller = sellerDocs.some(doc => 
-        doc.exists && (doc.data()?.userId === decodedToken.uid || doc.data()?.email === decodedToken.email)
-      );
+      // First check if the user's UID is directly in the sellerIds array
+      // (Some orders store user UIDs directly in sellerIds)
+      if (orderData.sellerIds.includes(decodedToken.uid)) {
+        isSeller = true;
+      } else {
+        // Fallback: Check if sellerIds contains Seller document IDs
+        // and verify the authenticated user owns one of those seller records
+        const sellerPromises = orderData.sellerIds.map((sellerId: string) => 
+          db.collection("Seller").doc(sellerId).get()
+        );
+        const sellerDocs = await Promise.all(sellerPromises);
+        isSeller = sellerDocs.some(doc => 
+          doc.exists && (doc.data()?.userId === decodedToken.uid || doc.data()?.email === decodedToken.email)
+        );
+      }
     }
 
     if (!isOrderOwner && !isAdmin && !isSeller) {
@@ -747,6 +754,24 @@ export const createJRSShipping = onRequest({
     const codAmount = payload.codAmountToCollect || 
       (orderData.paymentInfo?.method === 'cod' ? orderData.summary?.total || 0 : 0);
 
+    // Check if order has fragile items
+    const hasFragileItems = orderData.metadata?.hasFragileItems === true || 
+      orderData.items?.some((item: any) => item.isFragile === true);
+
+    // Build remarks with FRAGILE prefix if needed
+    let remarks = payload.remarks || orderData.shippingInfo?.notes || "";
+    if (hasFragileItems && !remarks.toUpperCase().startsWith("FRAGILE")) {
+      remarks = remarks ? `FRAGILE - ${remarks}` : "FRAGILE - Handle with care";
+    }
+
+    // Build special instruction with fragile warning if needed
+    let specialInstruction = payload.specialInstruction || "";
+    if (hasFragileItems && !specialInstruction.toUpperCase().includes("FRAGILE")) {
+      specialInstruction = specialInstruction 
+        ? `FRAGILE ITEMS - Handle with care. ${specialInstruction}` 
+        : "FRAGILE ITEMS - Handle with care";
+    }
+
     // Prepare JRS API request
     const jrsRequest: JRSShippingRequest = {
       requestType: "shipfromecom",
@@ -778,8 +803,8 @@ export const createJRSShipping = onRequest({
         shipperPhone: shipperInfo.phone,
         requestedPickupSchedule: payload.requestedPickupSchedule || new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
         shipmentDescription: shipmentDescription,
-        remarks: payload.remarks || orderData.shippingInfo?.notes || "",
-        specialInstruction: payload.specialInstruction || "",
+        remarks: remarks,
+        specialInstruction: specialInstruction,
         codAmountToCollect: codAmount,
         shippingReferenceNo: shippingReferenceNo,
       },
@@ -791,6 +816,8 @@ export const createJRSShipping = onRequest({
       itemCount: shipmentItems.length,
       codAmount: codAmount > 0,
       hasPickupSchedule: !!payload.requestedPickupSchedule,
+      hasFragileItems: hasFragileItems,
+      remarks: remarks,
     });
 
     // Make API call to JRS
