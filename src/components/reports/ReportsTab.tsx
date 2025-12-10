@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, useRef } from 'react';
 import { Calendar, Download, RefreshCcw, Search, SlidersHorizontal } from 'lucide-react';
 import { useAuth } from '@/hooks/use-auth';
 import OrdersService from '@/services/orders';
@@ -37,7 +37,7 @@ interface AmountRow { key: string; amount: number; count?: number }
 // New: tax, discount, shipFees, refundsDetail, settlements, byCustomer, bySeller, byRegion, timeSeries
 // timeSeries will produce rows keyed by date bucket
 
-type SubTab = 'item' | 'category' | 'brand' | 'paymentType';
+type SubTab = 'item' | 'category' | 'brand' | 'paymentType' | 'invoice';
 
 type Basis = 'accrual' | 'cash';
 
@@ -45,8 +45,25 @@ const formatCurrency = (n: number) => `₱${(n || 0).toLocaleString()}`;
 
 // Choose which date field to use based on basis
 const getOrderDate = (o: Order, basis: Basis): string => {
-  if (basis === 'cash') return o.paidAt || o.timestamp; // fallback to accrual if missing
+  if (basis === 'cash') return (o as any).paidAt || o.timestamp; // fallback to accrual if missing
   return o.timestamp;
+};
+// NEW: robust date object resolver supporting Firestore Timestamp, ISO strings, and YYYY-MM-DD
+const getOrderDateObj = (o: Order, basis: Basis): Date | null => {
+  const raw: any = basis === 'cash' ? (o as any).paidAt || o.timestamp : o.timestamp;
+  if (!raw) return null;
+  try {
+    // Firestore Timestamp
+    if (raw && typeof raw.toDate === 'function') return raw.toDate();
+    const s = String(raw);
+    // ISO date-time or epoch
+    const d1 = new Date(s);
+    if (!isNaN(d1.getTime())) return d1;
+    // YYYY-MM-DD fallback
+    const d2 = new Date(`${s}T00:00:00`);
+    if (!isNaN(d2.getTime())) return d2;
+    return null;
+  } catch { return null; }
 };
 
 const withinRange = (dateStr: string, range: string) => {
@@ -92,7 +109,48 @@ const ReportsTab: React.FC = () => {
   const [active, setActive] = useState<SubTab>('item');
   const [basis, setBasis] = useState<Basis>('accrual');
   const [dateRange, setDateRange] = useState<string>('last_30');
-  const [query, setQuery] = useState('');
+  const [query, setQuery] = useState<string>('');
+  // NEW: Sales Invoice custom date range picker (admin-dashboard style)
+  const [showInvoiceDatePicker, setShowInvoiceDatePicker] = useState(false);
+  const invoiceDateDropdownRef = useRef<HTMLDivElement | null>(null);
+  const [invoiceCalendarMonth, setInvoiceCalendarMonth] = useState<Date>(new Date());
+  const [invoiceRange, setInvoiceRange] = useState<{ start: Date | null; end: Date | null }>({ start: null, end: null });
+  const toISO = (d: Date | null) => d ? new Date(d.getFullYear(), d.getMonth(), d.getDate()).toISOString().slice(0,10) : '';
+  const daysInMonth = (month: Date) => new Date(month.getFullYear(), month.getMonth()+1, 0).getDate();
+  const firstWeekday = (month: Date) => new Date(month.getFullYear(), month.getMonth(), 1).getDay(); // 0=Sun
+  const isInRange = (day: Date) => {
+    const { start, end } = invoiceRange;
+    if (!start) return false;
+    if (start && !end) return day.getTime() === start.getTime();
+    if (start && end) return day >= start && day <= end;
+    return false;
+  };
+  const handleDayClick = (day: Date) => {
+    setInvoiceRange(prev => {
+      if (!prev.start || (prev.start && prev.end)) return { start: day, end: null };
+      if (day < prev.start) return { start: day, end: prev.start };
+      return { start: prev.start, end: day };
+    });
+  };
+  const applyInvoiceRange = () => {
+    const start = invoiceRange.start; const end = invoiceRange.end || invoiceRange.start;
+    if (!start || !end) return;
+    const from = toISO(start);
+    const to = toISO(end as Date);
+    console.log('[InvoiceRange] Apply clicked:', { from, to, start, end });
+    // Use custom token for filtering below
+    setDateRange(`custom:${from}:${to}`);
+    setShowInvoiceDatePicker(false);
+  };
+  useEffect(() => {
+    if (!showInvoiceDatePicker) return;
+    const handler = (e: MouseEvent) => {
+      if (!invoiceDateDropdownRef.current) return;
+      if (!invoiceDateDropdownRef.current.contains(e.target as Node)) setShowInvoiceDatePicker(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showInvoiceDatePicker]);
 
   // Product category cache for Sales by Category
   const [categoryByPid, setCategoryByPid] = useState<Record<string, string>>({});
@@ -119,10 +177,10 @@ const ReportsTab: React.FC = () => {
   // Subscribe to orders based on role
   useEffect(() => {
     let unsub = () => {};
-    if (isAdmin) unsub = OrdersService.listenAll(setOrders);
-    else if (isSubAccount && parentId) unsub = OrdersService.listenBySeller(parentId, setOrders);
-    else if (uid) unsub = OrdersService.listenBySeller(uid, setOrders);
-    return () => unsub();
+    if (isAdmin) unsub = OrdersService.listenAll((rows) => { setOrders(rows); });
+    else if (isSubAccount && parentId) unsub = OrdersService.listenBySeller(parentId, (rows) => { setOrders(rows); });
+    else if (uid) unsub = OrdersService.listenBySeller(uid, (rows) => { setOrders(rows); });
+    return () => { unsub(); };
   }, [isAdmin, uid, isSubAccount, parentId]);
 
   // Load Categories and their Subcategories from Firestore (subcollection 'subCategory')
@@ -189,9 +247,20 @@ const ReportsTab: React.FC = () => {
     return c?.name || '';
   }, [categories, selectedCategoryName]);
 
-  // Filter by date range and basis
+  // Filter by date range and basis (extended to support custom range)
   const filteredOrders = useMemo(() => {
-    return orders.filter(o => withinRange(getOrderDate(o, basis), dateRange));
+    const ordersByPreset = (rng: string) => orders.filter(o => withinRange(getOrderDate(o, basis), rng));
+    if (dateRange?.startsWith('custom:')) {
+      const parts = dateRange.split(':');
+      const from = parts[1]; const to = parts[2] || parts[1];
+      const fromDate = new Date(`${from}T00:00:00`);
+      const toDate = new Date(`${to}T23:59:59.999`);
+      return orders.filter(o => {
+        const d = getOrderDateObj(o, basis);
+        return !!d && d >= fromDate && d <= toDate;
+      });
+    }
+    return ordersByPreset(dateRange);
   }, [orders, dateRange, basis]);
 
   // Fetch Product categories for items in view (by productId)
@@ -563,6 +632,75 @@ const ReportsTab: React.FC = () => {
     doc.save(`sales-by-brand-${dateRange}-${basis}.pdf`);
   };
 
+  // Export consolidated Sales Invoice PDF for the selected range
+  const exportSalesInvoicePdf = () => {
+    // Build invoice meta
+    const now = new Date();
+    const periodLabel = 'To Ship Orders (Testing)';
+    // TEMP: Use the same filtered orders from invoiceOrders (to_ship only)
+    const ordersInRange = invoiceOrders;
+    const lineItems: Array<{ name: string; qty: number; price: number; total: number; }>=[];
+    let subtotal = 0;
+    ordersInRange.forEach((o) => {
+      const lines = (o.items || []).map(it => ({
+        name: String(it.name || 'Item'),
+        qty: Number(it.quantity || 0),
+        price: Number(it.price || 0),
+        total: Number(it.price || 0) * Number(it.quantity || 0),
+      }));
+      lines.forEach(l => { lineItems.push(l); subtotal += l.total; });
+    });
+    const totalPaymentProcessingFee = ordersInRange.reduce((s, o) => s + Number(o.feesBreakdown?.paymentProcessingFee || 0), 0);
+    const totalPlatformFee = ordersInRange.reduce((s, o) => s + Number(o.feesBreakdown?.platformFee || 0), 0);
+    const totalShippingCharge = ordersInRange.reduce((s, o) => s + Number(o.summary?.sellerShippingCharge || 0), 0);
+    const netPayout = ordersInRange.reduce((s, o) => s + Number(o.payout?.netPayoutToSeller || 0), 0);
+
+    const doc = new jsPDF();
+    doc.setFontSize(12);
+    doc.text('DentPal Sales Invoice Summary', 14, 16);
+    doc.setFontSize(9);
+    doc.text(`Period: ${periodLabel}`, 14, 22);
+    doc.text(`Generated: ${now.toISOString().slice(0,19).replace('T',' ')}`, 14, 26);
+
+    autoTable(doc, {
+      head: [['Item', 'Qty', 'Price', 'Line Total']],
+      body: lineItems.map(li => [li.name, String(li.qty), `₱${li.price.toLocaleString()}`, `₱${li.total.toLocaleString()}`]),
+      styles: { fontSize: 9 },
+      headStyles: { fillColor: [13, 148, 136] },
+      startY: 32,
+    });
+
+    const y = (doc as any).lastAutoTable?.finalY || 32;
+    doc.setFontSize(10);
+    doc.text('Summary', 14, y + 8);
+    autoTable(doc, {
+      head: [['Subtotal', 'Payment Processing Fee', 'Platform Fee', 'Shipping Charge', 'Net Payout']],
+      body: [[
+        `₱${subtotal.toLocaleString()}`,
+        `₱${totalPaymentProcessingFee.toLocaleString()}`,
+        `₱${totalPlatformFee.toLocaleString()}`,
+        `₱${totalShippingCharge.toLocaleString()}`,
+        `₱${netPayout.toLocaleString()}`,
+      ]],
+      styles: { fontSize: 9 },
+      headStyles: { fillColor: [243, 244, 246], textColor: [17,24,39] },
+      startY: y + 10,
+    });
+
+    doc.save(`sales-invoice-summary-${periodLabel.replace(/\s+/g,'-')}.pdf`);
+  };
+
+  // TEMP: Filter shipping orders (for testing layout)
+  const invoiceEligible = (o: Order) => {
+    // Include shipping, to_ship, processing, completed
+    return ['shipping', 'to_ship', 'processing', 'completed'].includes(o.status);
+  };
+
+  // Invoice orders: showing shipping/to_ship/processing/completed (ignoring date range for now)
+  const invoiceOrders = useMemo(() => {
+    return orders.filter(invoiceEligible);
+  }, [orders]);
+
   return (
     <div className="space-y-6">
       {/* Sub Tabs */}
@@ -572,6 +710,8 @@ const ReportsTab: React.FC = () => {
           { id: 'category', label: 'Sales by Category' },
           { id: 'brand', label: 'Sales by Brand' },
           { id: 'paymentType', label: 'Sales by Payment Type' },
+          // NEW: Sales Invoice Summary tab
+          { id: 'invoice' as any, label: 'Sales Invoice Summary' },
         ].map(t => (
           <button
             key={t.id}
@@ -585,58 +725,95 @@ const ReportsTab: React.FC = () => {
 
       {/* Filters bar */}
       <div className="bg-white border border-gray-200 rounded-lg p-3 flex flex-wrap items-center gap-3">
-        <div className="flex items-center gap-2" title="Choose Accrual (order date) or Cash (paid date) basis for date filtering and exports.">
-          <SlidersHorizontal className="w-4 h-4 text-gray-500" />
-          <select
-            value={basis}
-            onChange={(e) => setBasis(e.target.value as Basis)}
-            className="text-sm p-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
-          >
-            <option value="accrual">Accrual basis</option>
-            <option value="cash">Cash basis</option>
-          </select>
-        </div>
-        <div className="flex items-center gap-2" title="Limit the report to a time window.">
-          <Calendar className="w-4 h-4 text-gray-500" />
-          <select
-            value={dateRange}
-            onChange={(e) => setDateRange(e.target.value)}
-            className="text-sm p-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
-          >
-            <option value="today">Today</option>
-            <option value="last_7">Last 7 days</option>
-            <option value="last_30">Last 30 days</option>
-            <option value="this_month">This month</option>
-            <option value="last_month">Last month</option>
-            <option value="ytd">Year to date</option>
-          </select>
-        </div>
-        {active === 'category' ? (
-          <div className="flex items-center gap-2" title="Filter by Category and Subcategory">
-            <Search className="w-4 h-4 text-gray-500" />
+        {/* Basis retained for existing tabs; hidden on invoice */}
+        {active !== ('invoice' as any) && (
+          <div className="flex items-center gap-2" title="Choose Accrual (order date) or Cash (paid date) basis for date filtering and exports.">
+            <SlidersHorizontal className="w-4 h-4 text-gray-500" />
             <select
-              value={selectedCategoryName}
-              onChange={(e) => { setSelectedCategoryName(e.target.value); setSelectedSubcategory('ALL'); }}
+              value={basis}
+              onChange={(e) => setBasis(e.target.value as Basis)}
               className="text-sm p-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
             >
-              <option value="ALL">All categories</option>
-              {categories.map(c => (
-                <option key={c.id} value={c.name}>{c.name}</option>
-              ))}
-            </select>
-            <select
-              value={selectedSubcategory}
-              onChange={(e) => setSelectedSubcategory(e.target.value)}
-              disabled={selectedCategoryName === 'ALL' || (subsByCategory[selectedCategoryName]?.length || 0) === 0}
-              className="text-sm p-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent disabled:opacity-50"
-            >
-              <option value="ALL">All subcategories</option>
-              {selectedCategoryName !== 'ALL' && (subsByCategory[selectedCategoryName] || []).map(sub => (
-                <option key={sub} value={sub}>{sub}</option>
-              ))}
+              <option value="accrual">Accrual basis</option>
+              <option value="cash">Cash basis</option>
             </select>
           </div>
+        )}
+        {active === ('invoice' as any) ? (
+          <div className="flex items-center gap-2" title="Select a custom date range for the sales invoice.">
+            <Calendar className="w-4 h-4 text-gray-500" />
+            <div ref={invoiceDateDropdownRef} className="relative">
+              <button
+                type="button"
+                onClick={() => setShowInvoiceDatePicker(v => !v)}
+                aria-haspopup="dialog"
+                aria-expanded={showInvoiceDatePicker}
+                className="p-2 border border-gray-200 rounded-lg text-sm bg-white hover:bg-gray-50 flex items-center justify-between min-w-[220px]"
+              >
+                <span className="truncate pr-2">{dateRange?.startsWith('custom:') ? (()=>{ const [_, f, t] = dateRange.split(':'); return `${f} → ${t || f}`; })() : 'Select range'}</span>
+                <span className={`text-[11px] transition-transform ${showInvoiceDatePicker ? 'rotate-180' : ''}`}>⌄</span>
+              </button>
+              {showInvoiceDatePicker && (
+                <div className="absolute left-0 mt-2 z-30 w-[300px] border border-gray-200 rounded-xl bg-white shadow-xl p-3 space-y-3 animate-fade-in">
+                  {/* Calendar header */}
+                  <div className="flex items-center justify-between">
+                    <button type="button" onClick={() => setInvoiceCalendarMonth(m => new Date(m.getFullYear(), m.getMonth()-1, 1))} className="px-2 py-1 text-xs rounded border bg-white hover:bg-gray-100">◀</button>
+                    <div className="text-xs font-medium text-gray-700">{invoiceCalendarMonth.toLocaleString('en-US', { month: 'long', year: 'numeric' })}</div>
+                    <button type="button" onClick={() => setInvoiceCalendarMonth(m => new Date(m.getFullYear(), m.getMonth()+1, 1))} className="px-2 py-1 text-xs rounded border bg-white hover:bg-gray-100">▶</button>
+                  </div>
+                  {/* Weekday labels */}
+                  <div className="grid grid-cols-7 text-[10px] font-medium text-gray-500">{['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d => <div key={d} className="text-center">{d}</div>)}</div>
+                  {/* Days grid */}
+                  <div className="grid grid-cols-7 gap-1 text-xs">
+                    {Array.from({ length: firstWeekday(invoiceCalendarMonth) }).map((_,i) => <div key={'spacer'+i} />)}
+                    {Array.from({ length: daysInMonth(invoiceCalendarMonth) }).map((_,i) => {
+                      const day = new Date(invoiceCalendarMonth.getFullYear(), invoiceCalendarMonth.getMonth(), i+1);
+                      const selectedStart = invoiceRange.start && day.getTime() === invoiceRange.start.getTime();
+                      const selectedEnd = invoiceRange.end && day.getTime() === invoiceRange.end.getTime();
+                      const inRangeLocal = isInRange(day);
+                      return (
+                        <button
+                          key={i}
+                          type="button"
+                          onClick={() => handleDayClick(day)}
+                          className={`h-7 rounded-md flex items-center justify-center transition border text-gray-700 ${selectedStart || selectedEnd ? 'bg-teal-600 text-white border-teal-600 font-semibold' : inRangeLocal ? 'bg-teal-100 border-teal-200' : 'bg-white border-gray-200 hover:bg-gray-100'}`}
+                          title={toISO(day)}
+                        >{i+1}</button>
+                      );
+                    })}
+                  </div>
+                  {/* Actions */}
+                  <div className="flex items-center justify-between pt-1">
+                    <button type="button" onClick={() => { setInvoiceRange({ start: null, end: null }); setDateRange(''); }} className="text-[11px] px-2 py-1 rounded-md border bg-white hover:bg-gray-100">Clear</button>
+                    <div className="flex gap-2">
+                      <button type="button" onClick={applyInvoiceRange} disabled={!invoiceRange.start} className="text-[11px] px-3 py-1 rounded-md bg-teal-600 text-white disabled:opacity-40">Apply</button>
+                      <button type="button" onClick={() => setShowInvoiceDatePicker(false)} className="text-[11px] px-3 py-1 rounded-md border bg-white hover:bg-gray-100">Done</button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
         ) : (
+          // existing preset selector for other tabs
+          <div className="flex items-center gap-2" title="Limit the report to a time window.">
+            <Calendar className="w-4 h-4 text-gray-500" />
+            <select
+              value={dateRange}
+              onChange={(e) => setDateRange(e.target.value)}
+              className="text-sm p-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+            >
+              <option value="today">Today</option>
+              <option value="last_7">Last 7 days</option>
+              <option value="last_30">Last 30 days</option>
+              <option value="this_month">This month</option>
+              <option value="last_month">Last month</option>
+              <option value="ytd">Year to date</option>
+            </select>
+          </div>
+        )}
+        {/* Search hidden on invoice tab */}
+        {active !== ('invoice' as any) && (
           <div className="flex items-center gap-2" title="Filter rows by the first column value.">
             <Search className="w-4 h-4 text-gray-500" />
             <input
@@ -648,18 +825,16 @@ const ReportsTab: React.FC = () => {
           </div>
         )}
         <div className="ml-auto flex items-center gap-2">
-          <button className="inline-flex items-center gap-1 px-3 py-1.5 text-sm rounded-lg border border-gray-300 hover:bg-gray-50" onClick={() => exportCsv()} title="Export the current summary table as CSV.">
-            <Download className="w-4 h-4" /> Export CSV
-          </button>
-          {active === 'brand' && (
-            <>
-              <button className="inline-flex items-center gap-1 px-3 py-1.5 text-sm rounded-lg border border-gray-300 hover:bg-gray-50" onClick={() => exportXlsxBrand()} title="Export Sales by Brand as XLSX.">
-                <Download className="w-4 h-4" /> Export XLSX
-              </button>
-              <button className="inline-flex items-center gap-1 px-3 py-1.5 text-sm rounded-lg border border-gray-300 hover:bg-gray-50" onClick={() => exportPdfBrand()} title="Export Sales by Brand as PDF.">
-                <Download className="w-4 h-4" /> Export PDF
-              </button>
-            </>
+          {/* Existing exports */}
+          {active !== ('invoice' as any) && (
+            <button className="inline-flex items-center gap-1 px-3 py-1.5 text-sm rounded-lg border border-gray-300 hover:bg-gray-50" onClick={() => exportCsv()} title="Export the current summary table as CSV.">
+              <Download className="w-4 h-4" /> Export CSV
+            </button>
+          )}
+          {active === ('invoice' as any) && (
+            <button className="inline-flex items-center gap-1 px-3 py-1.5 text-sm rounded-lg border border-gray-300 hover:bg-gray-50" onClick={() => exportSalesInvoicePdf()} title="Download consolidated Sales Invoice PDF for the selected period.">
+              <Download className="w-4 h-4" /> Export Invoice PDF
+            </button>
           )}
           <button className="inline-flex items-center gap-1 px-3 py-1.5 text-sm rounded-lg border border-gray-300 hover:bg-gray-50" onClick={() => {/* no-op, data is live */}} title="Data is live; click to re-evaluate filters.">
             <RefreshCcw className="w-4 h-4" /> Refresh
@@ -667,80 +842,129 @@ const ReportsTab: React.FC = () => {
         </div>
       </div>
 
-      {/* Data grid */}
-      <div className="overflow-auto border border-gray-200 rounded-lg">
-        <table className="min-w-full text-sm">
-          <thead className="bg-gray-50">
-            {active === 'paymentType' ? (
-              <tr className="text-left text-xs font-semibold text-gray-600">
-                <th className="px-3 py-2" title="Payment instrument or channel">Payment Type</th>
-                <th className="px-3 py-2" title="Number of successful payment transactions on paid statuses">Payment Transactions</th>
-                <th className="px-3 py-2" title="Sum of amounts for payment transactions">Payment Amount</th>
-                <th className="px-3 py-2" title="Number of refund transactions (orders with refund status)">Refund Transactions</th>
-                <th className="px-3 py-2" title="Sum of refund amounts">Refund Amount</th>
-                <th className="px-3 py-2" title="Payment Amount minus Refund Amount">Net Sales</th>
-              </tr>
-            ) : active === 'brand' ? (
-              <tr className="text-left text-xs font-semibold text-gray-600">
-                <th className="px-3 py-2">Brand</th>
-                <th className="px-3 py-2" title="Sum of line totals">Gross Sales</th>
-                <th className="px-3 py-2" title="Sum of refunded amounts">Refunds</th>
-                <th className="px-3 py-2" title="Gross Sales minus Refunds">Net Sales</th>
-              </tr>
-            ) : (
-              <tr className="text-left text-xs font-semibold text-gray-600">
-                <th className="px-3 py-2">{firstColHeader}</th>
-                <th className="px-3 py-2" title="Total item quantities sold">Items Sold</th>
-                <th className="px-3 py-2" title="Sum of line totals">Gross Sales</th>
-                <th className="px-3 py-2" title="Quantities on refunded orders">Items Refunded</th>
-                <th className="px-3 py-2" title="Sum of refunded amounts">Refunds</th>
-                <th className="px-3 py-2" title="Gross Sales minus Refunds">Net Sales</th>
-              </tr>
-            )}
-          </thead>
-          <tbody>
-            {active === 'brand' ? (
-              data.map((r, idx) => (
-                <tr key={r.key} className={idx % 2 ? 'bg-white' : 'bg-gray-50'}>
-                  <td className="px-3 py-2 font-medium text-gray-900">{r.key}</td>
-                  <td className="px-3 py-2">{formatCurrency(r.grossSales)}</td>
-                  <td className="px-3 py-2">{formatCurrency(r.refunds)}</td>
-                  <td className="px-3 py-2 font-semibold text-teal-700">{formatCurrency(r.netSales)}</td>
-                </tr>
-              ))
-            ) : (
-              data.map((r, idx) => (
-                <tr key={r.key} className={idx % 2 ? 'bg-white' : 'bg-gray-50'}>
-                  <td className="px-3 py-2 font-medium text-gray-900">{r.key}</td>
-                  <td className="px-3 py-2">{r.itemsSold.toLocaleString()}</td>
-                  <td className="px-3 py-2">{formatCurrency(r.grossSales)}</td>
-                  <td className="px-3 py-2">{r.itemsRefunded.toLocaleString()}</td>
-                  <td className="px-3 py-2">{formatCurrency(r.refunds)}</td>
-                  <td className="px-3 py-2 font-semibold text-teal-700">{formatCurrency(r.netSales)}</td>
-                </tr>
-              ))
-            )}
-            {data.length === 0 && (
-              <tr>
-                <td colSpan={active === 'brand' ? 4 : (active === 'paymentType') ? 6 : 6} className="px-3 py-6 text-center text-sm text-gray-500">No data for the selected range.</td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-
-      {/* Totals footer */}
-      {active === 'paymentType' && totalsPaymentType ? (
+      {/* Data grid or invoice preview */}
+      {active === ('invoice' as any) ? (
         <div className="bg-white border border-gray-200 rounded-lg p-4">
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-sm">
-            <div><div className="text-xs text-gray-500">Payment Transactions</div><div className="font-semibold">{totalsPaymentType.payTx.toLocaleString()}</div></div>
-            <div><div className="text-xs text-gray-500">Payment Amount</div><div className="font-semibold">{formatCurrency(totalsPaymentType.payAmt)}</div></div>
-            <div><div className="text-xs text-gray-500">Refund Transactions</div><div className="font-semibold">{totalsPaymentType.refundTx.toLocaleString()}</div></div>
-            <div><div className="text-xs text-gray-500">Refund Amount</div><div className="font-semibold">{formatCurrency(totalsPaymentType.refundAmt)}</div></div>
-            <div><div className="text-xs text-gray-500">Net Sales</div><div className="font-semibold text-teal-700">{formatCurrency(totalsPaymentType.net)}</div></div>
+          <div className="text-sm text-gray-700 mb-2">Sales Invoice Summary</div>
+          <div className="text-xs text-gray-500 mb-4">{dateRange?.startsWith('custom:') ? (()=>{ const [_, f, t] = dateRange.split(':'); return `Period: ${f} → ${t || f}`; })() : 'Please select a date range to view invoice data'}</div>
+          <div className="overflow-auto border border-gray-100 rounded">
+            <table className="min-w-full text-sm">
+              <thead className="bg-gray-50">
+                <tr className="text-left text-xs font-semibold text-gray-600">
+                  <th className="px-3 py-2">Item</th>
+                  <th className="px-3 py-2">Qty</th>
+                  <th className="px-3 py-2">Price</th>
+                  <th className="px-3 py-2">Line Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(() => {
+                  // Use filtered invoice orders (paid status + date range)
+                  const ordersSrc = invoiceOrders;
+                  const rows: Array<{ name: string; qty: number; price: number; total: number; }> = [];
+                  let subtotal = 0;
+                  ordersSrc.forEach(o => {
+                    (o.items || []).forEach(it => {
+                      const qty = Number(it.quantity || 0);
+                      const price = Number(it.price || 0);
+                      const total = qty * price;
+                      rows.push({ name: String(it.name || 'Item'), qty, price, total });
+                      subtotal += total;
+                    });
+                  });
+                  if (rows.length === 0) return (
+                    <tr><td colSpan={4} className="px-3 py-6 text-center text-sm text-gray-500">
+                      {dateRange?.startsWith('custom:') 
+                        ? 'No paid orders in the selected date range.' 
+                        : 'No paid orders found. Please select a date range.'}
+                    </td></tr>
+                  );
+                  return (
+                    <>
+                      {rows.map((r, idx) => (
+                        <tr key={idx} className={idx % 2 ? 'bg-white' : 'bg-gray-50'}>
+                          <td className="px-3 py-2 font-medium text-gray-900">{r.name}</td>
+                          <td className="px-3 py-2">{r.qty.toLocaleString()}</td>
+                          <td className="px-3 py-2">{formatCurrency(r.price)}</td>
+                          <td className="px-3 py-2 font-semibold text-teal-700">{formatCurrency(r.total)}</td>
+                        </tr>
+                      ))}
+                      <tr>
+                        <td className="px-3 py-2 text-right font-medium" colSpan={3}>Subtotal</td>
+                        <td className="px-3 py-2 font-semibold">{formatCurrency(subtotal)}</td>
+                      </tr>
+                    </>
+                  );
+                })()}
+              </tbody>
+            </table>
           </div>
         </div>
       ) : (
+        <div className="overflow-auto border border-gray-200 rounded-lg">
+          <table className="min-w-full text-sm">
+            <thead className="bg-gray-50">
+              {active === 'paymentType' ? (
+                <tr className="text-left text-xs font-semibold text-gray-600">
+                  <th className="px-3 py-2" title="Payment instrument or channel">Payment Type</th>
+                  <th className="px-3 py-2" title="Number of successful payment transactions on paid statuses">Payment Transactions</th>
+                  <th className="px-3 py-2" title="Sum of amounts for payment transactions">Payment Amount</th>
+                  <th className="px-3 py-2" title="Number of refund transactions (orders with refund status)">Refund Transactions</th>
+                  <th className="px-3 py-2" title="Sum of refund amounts">Refund Amount</th>
+                  <th className="px-3 py-2" title="Payment Amount minus Refund Amount">Net Sales</th>
+                </tr>
+              ) : active === 'brand' ? (
+                <tr className="text-left text-xs font-semibold text-gray-600">
+                  <th className="px-3 py-2">Brand</th>
+                  <th className="px-3 py-2" title="Sum of line totals">Gross Sales</th>
+                  <th className="px-3 py-2" title="Sum of refunded amounts">Refunds</th>
+                  <th className="px-3 py-2" title="Gross Sales minus Refunds">Net Sales</th>
+                </tr>
+              ) : (
+                <tr className="text-left text-xs font-semibold text-gray-600">
+                  <th className="px-3 py-2">{firstColHeader}</th>
+                  <th className="px-3 py-2" title="Total item quantities sold">Items Sold</th>
+                  <th className="px-3 py-2" title="Sum of line totals">Gross Sales</th>
+                  <th className="px-3 py-2" title="Quantities on refunded orders">Items Refunded</th>
+                  <th className="px-3 py-2" title="Sum of refunded amounts">Refunds</th>
+                  <th className="px-3 py-2" title="Gross Sales minus Refunds">Net Sales</th>
+                </tr>
+              )}
+            </thead>
+            <tbody>
+              {active === 'brand' ? (
+                data.map((r, idx) => (
+                  <tr key={r.key} className={idx % 2 ? 'bg-white' : 'bg-gray-50'}>
+                    <td className="px-3 py-2 font-medium text-gray-900">{r.key}</td>
+                    <td className="px-3 py-2">{formatCurrency(r.grossSales)}</td>
+                    <td className="px-3 py-2">{formatCurrency(r.refunds)}</td>
+                    <td className="px-3 py-2 font-semibold text-teal-700">{formatCurrency(r.netSales)}</td>
+                  </tr>
+                ))
+              ) : (
+                data.map((r, idx) => (
+                  <tr key={r.key} className={idx % 2 ? 'bg-white' : 'bg-gray-50'}>
+                    <td className="px-3 py-2 font-medium text-gray-900">{r.key}</td>
+                    <td className="px-3 py-2">{r.itemsSold.toLocaleString()}</td>
+                    <td className="px-3 py-2">{formatCurrency(r.grossSales)}</td>
+                    <td className="px-3 py-2">{r.itemsRefunded.toLocaleString()}</td>
+                    <td className="px-3 py-2">{formatCurrency(r.refunds)}</td>
+                    <td className="px-3 py-2 font-semibold text-teal-700">{formatCurrency(r.netSales)}</td>
+                  </tr>
+                ))
+              )}
+              {data.length === 0 && (
+                <tr>
+                  <td colSpan={active === 'brand' ? 4 : (active === 'paymentType') ? 6 : 6} className="px-3 py-6 text-center text-sm text-gray-500">No data for the selected range.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Totals footer */}
+      {active === ('invoice' as any) ? null : (
         <div className="bg-white border border-gray-200 rounded-lg p-4">
           <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-sm">
             <div title="Sum of line totals before refunds"><div className="text-xs text-gray-500">Gross Sales</div><div className="font-semibold">{formatCurrency(totals.grossSales)}</div></div>

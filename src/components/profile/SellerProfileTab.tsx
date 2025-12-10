@@ -68,8 +68,12 @@ const SellerProfileTab: React.FC = () => {
 			try {
 				if (!uid) return;
 				const doc = await SellersService.get(uid);
+				if (!mounted) return;
+				
 				const v: any = (doc as any)?.vendor || null;
-				if (!mounted || !v) return;
+				if (!v) {
+					return;
+				}				
 				setVendor(prev => ({
 					...prev,
 					categories: Array.isArray(v.categories) ? v.categories : [],
@@ -94,7 +98,9 @@ const SellerProfileTab: React.FC = () => {
 					bankingInfo: v.bankingInfo || '',
 					bankBranchAddress: v.bankBranchAddress || '',
 				}));
-			} catch {}
+			} catch (err) {
+				console.error('Error loading vendor profile:', err);
+			}
 		})();
 		return () => { mounted = false; };
 	}, [uid]);
@@ -718,12 +724,25 @@ const SellerProfileTab: React.FC = () => {
 		} finally { setSubmitLoading(false); }
 	};
 
+	// Check if we have vendor data even if not marked as complete
+	const hasVendorData = !!(vendor.companyName || vendor.tin || vendor.email || vendor.mobile);
+
 	return (
 		<div className="space-y-6">
 			{Title}
 
-			{vendorProfileComplete && !isEditing ? (
-				renderCompletedSummary()
+			{/* Show completed summary if profile is complete OR if vendor data exists */}
+			{(vendorProfileComplete || hasVendorData) && !isEditing ? (
+				<>
+					{!vendorProfileComplete && hasVendorData && (
+						<div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-4">
+							<p className="text-sm text-amber-800">
+								Your profile information is available but not marked as complete. You can view your details below or click Edit to update.
+							</p>
+						</div>
+					)}
+					{renderCompletedSummary()}
+				</>
 			) : (
 				<>
 					{/* Stepper Header and wizard shown only when not completed or when editing */}

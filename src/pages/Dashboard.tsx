@@ -15,7 +15,7 @@ import OrderTab from '@/components/orders/SellerOrdersTab';
 import InventoryTab from '@/components/inventory/InventoryTab';
 import ProductQCTab from '@/components/admin/ProductQCTab';
 import { Order } from "@/types/order";
-import { DollarSign, Users, ShoppingCart, TrendingUp, Filter } from "lucide-react";
+import { DollarSign, Users, ShoppingCart, TrendingUp, Filter, Download } from "lucide-react";
 // Add permission-aware auth hook
 import { useAuth } from "@/hooks/use-auth";
 import SellerProfileTab from '@/components/profile/SellerProfileTab';
@@ -26,7 +26,9 @@ import NotificationsTab from '@/components/notifications/NotificationsTab';
 import { useLocation, useNavigate } from 'react-router-dom';
 import WarrantyManager from '@/pages/admin/WarrantyManager';
 import CategoryManager from '@/pages/admin/CategoryManager';
-import { getWebUsers } from '@/services/webUserService';
+import { getProvinces as getPhProvinces, getCitiesByProvince as getPhCities, getCitiesByProvinceAsync as getPhCitiesAsync } from '../lib/phLocations';
+import { db } from '@/lib/firebase';
+import { collection, getDocs } from 'firebase/firestore';
 
 interface DashboardProps {
   user: { name?: string; email: string };
@@ -100,6 +102,9 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
   const visibleColumnKeys = Object.keys(exportColumnVisibility).filter(k => exportColumnVisibility[k]);
   const [showExportColumnMenu, setShowExportColumnMenu] = useState(false);
   const exportColumnMenuRef = useRef<HTMLDivElement | null>(null);
+  // Export dropdown state
+  const [showExportMenu, setShowExportMenu] = useState(false);
+  const exportMenuRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     if (!showExportColumnMenu) return;
     const handler = (e: MouseEvent) => {
@@ -109,6 +114,15 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, [showExportColumnMenu]);
+  useEffect(() => {
+    if (!showExportMenu) return;
+    const handler = (e: MouseEvent) => {
+      if (!exportMenuRef.current) return;
+      if (!exportMenuRef.current.contains(e.target as Node)) setShowExportMenu(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showExportMenu]);
   const toISO = (d: Date | null) => d ? new Date(d.getFullYear(), d.getMonth(), d.getDate()).toISOString().slice(0,10) : '';
   const daysInMonth = (month: Date) => new Date(month.getFullYear(), month.getMonth()+1, 0).getDate();
   const firstWeekday = (month: Date) => new Date(month.getFullYear(), month.getMonth(), 1).getDay(); // 0=Sun
@@ -348,17 +362,21 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
   }, [location.search]);
 
   // NEW: Keep URL query (?tab=...) in sync when activeItem changes to ensure future navigations take effect
+  // Use a ref to prevent infinite loop
+  const lastSyncedTab = useRef<string | null>(null);
   useEffect(() => {
     try {
       if (!activeItem) return;
       const params = new URLSearchParams(location.search);
       const current = params.get('tab');
-      if (current !== activeItem) {
+      // Only navigate if activeItem changed AND it's different from URL AND we haven't just synced this value
+      if (current !== activeItem && lastSyncedTab.current !== activeItem) {
+        lastSyncedTab.current = activeItem;
         params.set('tab', activeItem);
         navigate({ pathname: location.pathname || '/', search: params.toString() }, { replace: true });
       }
     } catch {}
-  }, [activeItem]);
+  }, [activeItem, location.pathname, location.search, navigate]);
 
   // Listen for custom navigation events from header actions (e.g., notifications)
   useEffect(() => {
@@ -397,7 +415,11 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
     'categories': 'categories',
   } as any;
 
-  const isAllowed = (itemId: string) => hasPermission((permissionByMenuId[itemId] || 'dashboard') as any);
+  const isAllowed = (itemId: string) => {
+    // Hide Profile tab for admin users only
+    if (itemId === 'profile' && isAdmin) return false;
+    return hasPermission((permissionByMenuId[itemId] || 'dashboard') as any);
+  };
 
   // Ensure active tab is permitted; otherwise jump to first allowed
   useEffect(() => {
@@ -619,6 +641,108 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
     }
   };
 
+  // Export seller metrics table as CSV
+  const exportSellerMetricsCSV = () => {
+    try {
+      const headers = visibleColumnKeys.map(k => columnLabels[k]);
+      const rows = adminSellersDisplayed.map(s => {
+        // TODO: Replace with real aggregated data
+        const gross = 0;
+        const avgOrder = 0;
+        const tx = 0;
+        const logistic = 0;
+        const payment = 0;
+        const inquiry = 0;
+        const cellByKey: Record<string, any> = {
+          seller: s.shopName || s.name || s.uid,
+          gross: gross,
+          avg: avgOrder,
+          tx: tx,
+          logistic: logistic,
+          payment: payment,
+          inquiry: inquiry,
+        };
+        return visibleColumnKeys.map(k => cellByKey[k]);
+      });
+
+      const csvContent = [
+        headers.join(','),
+        ...rows.map(row => row.join(','))
+      ].join('\n');
+
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const link = document.createElement('a');
+      const url = URL.createObjectURL(blob);
+      link.setAttribute('href', url);
+      link.setAttribute('download', `seller-metrics-${new Date().toISOString().slice(0,10)}.csv`);
+      link.style.visibility = 'hidden';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setShowExportMenu(false);
+    } catch (err) {
+      console.error('CSV export failed:', err);
+      setError('Failed to export CSV. Please try again.');
+    }
+  };
+
+  // Export seller metrics table as PDF
+  const exportSellerMetricsPDF = async () => {
+    try {
+      const { jsPDF } = await import('jspdf');
+      const autoTable = (await import('jspdf-autotable')).default;
+      
+      const doc = new jsPDF();
+      
+      // Add title
+      doc.setFontSize(16);
+      doc.text('Seller Metrics Report', 14, 15);
+      
+      // Add date range if available
+      doc.setFontSize(10);
+      const dateText = adminFilters.dateFrom 
+        ? `Period: ${adminFilters.dateFrom} to ${adminFilters.dateTo}`
+        : 'All time';
+      doc.text(dateText, 14, 22);
+
+      // Prepare table data
+      const headers = visibleColumnKeys.map(k => columnLabels[k]);
+      const rows = adminSellersDisplayed.map(s => {
+        // TODO: Replace with real aggregated data
+        const gross = 0;
+        const avgOrder = 0;
+        const tx = 0;
+        const logistic = 0;
+        const payment = 0;
+        const inquiry = 0;
+        const cellByKey: Record<string, any> = {
+          seller: s.shopName || s.name || s.uid,
+          gross: gross.toLocaleString(),
+          avg: avgOrder.toLocaleString(),
+          tx: tx.toLocaleString(),
+          logistic: logistic.toLocaleString(),
+          payment: payment.toLocaleString(),
+          inquiry: inquiry.toLocaleString(),
+        };
+        return visibleColumnKeys.map(k => cellByKey[k]);
+      });
+
+      autoTable(doc, {
+        head: [headers],
+        body: rows,
+        startY: 28,
+        styles: { fontSize: 9 },
+        headStyles: { fillColor: [13, 148, 136] },
+      });
+
+      doc.save(`seller-metrics-${new Date().toISOString().slice(0,10)}.pdf`);
+      setShowExportMenu(false);
+    } catch (err) {
+      console.error('PDF export failed:', err);
+      setError('Failed to export PDF. Please try again.');
+    }
+  };
+
   console.log("Dashboard component rendered for user:", user);
 
   const getPageContent = () => {
@@ -691,12 +815,72 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
                 <div className="flex flex-col lg:flex-row lg:items-end lg:space-x-4 gap-4">
                   <div className="flex-1 min-w-[160px]">
                     <label className="block text-xs font-medium text-gray-700 mb-1">Select date</label>
-                    <select className="w-full p-2 border border-gray-200 rounded-lg text-xs focus:ring-2 focus:ring-teal-500 focus:border-transparent" value={sellerFilters.dateRange} onChange={(e)=> setSellerFilters(f=>({ ...f, dateRange: e.target.value }))}>
-                      <option value="last-7">Last 7 days</option>
-                      <option value="last-30">Last 30 days</option>
-                      <option value="last-90">Last 90 days</option>
-                      <option value="last-365">Last year</option>
-                    </select>
+                    <div ref={sellerDateDropdownRef} className="relative">
+                      <button
+                        type="button"
+                        onClick={() => setShowSellerDatePicker(v => !v)}
+                        aria-haspopup="dialog"
+                        aria-expanded={showSellerDatePicker}
+                        className="w-full p-2 border border-gray-200 rounded-lg text-xs bg-white hover:bg-gray-50 flex items-center justify-between"
+                      >
+                        <span className="truncate pr-2">
+                          {sellerRange.start ? `${toISO(sellerRange.start)} → ${toISO(sellerRange.end || sellerRange.start)}` : sellerFilters.dateRange.replace('last-','Last ')}
+                        </span>
+                        <span className={`text-[11px] transition-transform ${showSellerDatePicker ? 'rotate-180' : ''}`}>⌄</span>
+                      </button>
+                      {showSellerDatePicker && (
+                        <div className="absolute left-0 mt-2 z-30 w-[280px] border border-gray-200 rounded-xl bg-white shadow-xl p-3 space-y-3 animate-fade-in">
+                          {/* Presets */}
+                          <div className="flex flex-wrap gap-2">
+                            <button onClick={() => applySellerPreset('today')} className="px-2 py-1 text-xs rounded-md border bg-white hover:bg-teal-50">Today</button>
+                            <button onClick={() => applySellerPreset('7')} className="px-2 py-1 text-xs rounded-md border bg-white hover:bg-teal-50">Last 7 days</button>
+                            <button onClick={() => applySellerPreset('30')} className="px-2 py-1 text-xs rounded-md border bg-white hover:bg-teal-50">Last 30 days</button>
+                            {sellerRange.start && (
+                              <span className="text-[10px] text-gray-500 ml-auto">{toISO(sellerRange.start)} → {toISO(sellerRange.end || sellerRange.start)}</span>
+                            )}
+                          </div>
+                          {/* Calendar header */}
+                          <div className="flex items-center justify-between">
+                            <button type="button" onClick={() => setSellerCalendarMonth(m => new Date(m.getFullYear(), m.getMonth()-1, 1))} className="px-2 py-1 text-xs rounded border bg-white hover:bg-gray-100">◀</button>
+                            <div className="text-xs font-medium text-gray-700">
+                              {sellerCalendarMonth.toLocaleString('en-US', { month: 'long', year: 'numeric' })}
+                            </div>
+                            <button type="button" onClick={() => setSellerCalendarMonth(m => new Date(m.getFullYear(), m.getMonth()+1, 1))} className="px-2 py-1 text-xs rounded border bg-white hover:bg-gray-100">▶</button>
+                          </div>
+                          {/* Weekday labels */}
+                          <div className="grid grid-cols-7 text-[10px] font-medium text-gray-500">
+                            {['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d => <div key={d} className="text-center">{d}</div>)}
+                          </div>
+                          {/* Days grid with range highlight */}
+                          <div className="grid grid-cols-7 gap-1 text-xs">
+                            {Array.from({ length: sellerFirstWeekday(sellerCalendarMonth) }).map((_,i) => <div key={'spacer'+i} />)}
+                            {Array.from({ length: sellerDaysInMonth(sellerCalendarMonth) }).map((_,i) => {
+                              const day = new Date(sellerCalendarMonth.getFullYear(), sellerCalendarMonth.getMonth(), i+1);
+                              const selectedStart = sellerRange.start && day.getTime() === sellerRange.start.getTime();
+                              const selectedEnd = sellerRange.end && day.getTime() === sellerRange.end.getTime();
+                              const inRange = isSellerInRange(day);
+                              return (
+                                <button
+                                  key={i}
+                                  type="button"
+                                  onClick={() => handleSellerDayClick(day)}
+                                  className={`h-7 rounded-md flex items-center justify-center transition border text-gray-700 ${selectedStart || selectedEnd ? 'bg-teal-600 text-white border-teal-600 font-semibold' : inRange ? 'bg-teal-100 border-teal-200' : 'bg-white border-gray-200 hover:bg-gray-100'} ${day.toDateString() === new Date().toDateString() && !selectedStart && !selectedEnd ? 'ring-1 ring-teal-400' : ''}`}
+                                  title={toISO(day)}
+                                >{i+1}</button>
+                              );
+                            })}
+                          </div>
+                          {/* Actions */}
+                          <div className="flex items-center justify-between pt-1">
+                            <button type="button" onClick={() => { setSellerRange({ start: null, end: null }); setSellerFilters(f=> ({ ...f, dateRange: 'last-30' })); }} className="text-[11px] px-2 py-1 rounded-md border bg-white hover:bg-gray-100">Clear</button>
+                            <div className="flex gap-2">
+                              <button type="button" onClick={applySellerRange} disabled={!sellerRange.start} className="text-[11px] px-3 py-1 rounded-md bg-teal-600 text-white disabled:opacity-40">Apply</button>
+                              <button type="button" onClick={() => setShowSellerDatePicker(false)} className="text-[11px] px-3 py-1 rounded-md border bg-white hover:bg-gray-100">Done</button>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   </div>
                   <div className="flex-1 min-w-[160px]">
                     <label className="block text-xs font-medium text-gray-700 mb-1">Select product</label>
@@ -713,25 +897,6 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
                       <option value="all">All subcategories</option>
                       {subcategoryOptions.map(sc => (
                         <option key={sc} value={sc}>{sc}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="flex-1 min-w-[160px]">
-                    <label className="block text-xs font-medium text-gray-700 mb-1">Select location</label>
-                    <select className="w-full p-2 border border-gray-200 rounded-lg text-xs focus:ring-2 focus:ring-teal-500 focus:border-transparent" value={sellerFilters.location} onChange={(e)=> setSellerFilters(f=>({ ...f, location: e.target.value }))}>
-                      <option value="all">All locations</option>
-                      <option value="ncr">NCR</option>
-                      <option value="luzon">Luzon</option>
-                      <option value="visayas">Visayas</option>
-                      <option value="mindanao">Mindanao</option>
-                    </select>
-                  </div>
-                  <div className="flex-1 min-w-[160px]">
-                    <label className="block text-xs font-medium text-gray-700 mb-1">Select payment type</label>
-                    <select className="w-full p-2 border border-gray-200 rounded-lg text-xs focus:ring-2 focus:ring-teal-500 focus:border-transparent" value={sellerFilters.paymentType} onChange={(e)=> setSellerFilters(f=>({ ...f, paymentType: e.target.value }))}>
-                      <option value="all">All payment types</option>
-                      {paymentTypeOptions.map(pt => (
-                        <option key={pt} value={pt}>{pt}</option>
                       ))}
                     </select>
                   </div>
@@ -933,17 +1098,78 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
                     ))}
                   </select>
                 </div>
-                {/* City Filter */}
-                <div className="flex-1 min-w-[160px]">
+                {/* City Filter (dropdown trigger that opens checkbox list) */}
+                <div className="flex-1 min-w-[220px]">
                   <label className="block text-xs font-medium text-gray-700 mb-1">CITY</label>
-                  <select
-                    value={adminFilters.city}
-                    onChange={(e)=> setAdminFilters(f=> ({...f, city: e.target.value}))}
-                    className="w-full p-2 border border-gray-200 rounded-lg text-xs focus:ring-2 focus:ring-teal-500 focus:border-transparent"
-                  >
-                    <option value="all">All cities</option>
-                    {phCities.map(c => <option key={c.code} value={c.code}>{c.name}</option>)}
-                  </select>
+                  <div ref={adminCityDropdownRef} className="relative">
+                    <button
+                      type="button"
+                      disabled={adminFilters.province === 'all'}
+                      onClick={() => setShowAdminCityDropdown(v => !v)}
+                      className={`w-full p-2 border rounded-lg text-xs bg-white flex items-center justify-between ${adminFilters.province === 'all' ? 'border-gray-200 text-gray-400 cursor-not-allowed' : 'border-gray-200 hover:bg-gray-50 text-gray-700'}`}
+                    >
+                      <span className="truncate pr-2">
+                        {adminFilters.province === 'all'
+                          ? 'Select a province to choose cities'
+                          : adminSelectedCityCodes.size > 0
+                            ? `${adminSelectedCityCodes.size} city${adminSelectedCityCodes.size > 1 ? 'ies' : ''} selected`
+                            : 'Select cities'}
+                      </span>
+                      <span className={`text-[11px] transition-transform ${showAdminCityDropdown ? 'rotate-180' : ''}`}>⌄</span>
+                    </button>
+                    {showAdminCityDropdown && adminFilters.province !== 'all' && (
+                      <div className="absolute left-0 mt-2 z-30 w-[300px] border border-gray-200 rounded-xl bg-white shadow-xl p-3 space-y-3 animate-fade-in">
+                        <div className="flex items-center justify-between">
+                          <div className="text-[11px] text-gray-700">Select cities in {phProvinces.find(p=>p.code===adminFilters.province)?.name || 'province'}</div>
+                          {adminSelectedCityCodes.size === 0 && phCities.length > 0 && (
+                            <span className="text-[10px] px-2 py-0.5 rounded bg-amber-100 text-amber-800">Required</span>
+                          )}
+                        </div>
+                        {phCities.length > 0 ? (
+                          <div className="max-h-40 overflow-auto">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                              {phCities.map(c => {
+                                const checked = adminSelectedCityCodes.has(c.code);
+                                return (
+                                  <label key={c.code} className="flex items-center gap-2 text-[11px] text-gray-700">
+                                    <input
+                                      type="checkbox"
+                                      className="rounded border-gray-300 accent-[#F68F22] focus:ring-[#F68F22]"
+                                      checked={checked}
+                                      onChange={() => {
+                                        setAdminSelectedCityCodes(prev => {
+                                          const next = new Set(prev);
+                                          if (next.has(c.code)) next.delete(c.code); else next.add(c.code);
+                                          return next;
+                                        });
+                                      }}
+                                    />
+                                    <span>{c.name}</span>
+                                  </label>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="text-[11px] text-gray-500">Loading cities…</div>
+                        )}
+                        <div className="flex items-center justify-between pt-1">
+                          <button
+                            type="button"
+                            onClick={() => setAdminSelectedCityCodes(new Set())}
+                            className="text-[11px] px-2 py-1 rounded-md border bg-white hover:bg-gray-100"
+                          >Clear</button>
+                          <div className="flex gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setShowAdminCityDropdown(false)}
+                              className="text-[11px] px-3 py-1 rounded-md bg-teal-600 text-white"
+                            >Done</button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
                 {/* Shop Name (Seller) */}
                 <div className="flex-1 min-w-[160px]">
@@ -985,33 +1211,66 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
             <div className="bg-white rounded-2xl border border-gray-200 shadow-sm">
               <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
                 <h3 className="text-sm font-semibold text-gray-800 tracking-wide">EXPORT</h3>
-                {/* Column filter trigger */}
-                <div ref={exportColumnMenuRef} className="relative">
-                  <button
-                    type="button"
-                    onClick={() => setShowExportColumnMenu(v => !v)}
-                    className="flex items-center gap-1 text-xs px-3 py-1.5 rounded-md border border-gray-200 bg-gray-50 hover:bg-gray-100 text-gray-600"
-                  >
-                    <Filter className="w-3.5 h-3.5" />
-                    <span className="whitespace-nowrap">Columns</span>
-                  </button>
-                  {showExportColumnMenu && (
-                    <div className="absolute right-0 mt-2 z-40 w-56 border border-gray-200 bg-white rounded-xl shadow-lg p-3 space-y-2 animate-fade-in">
-                      <div className="text-[11px] font-semibold text-gray-700 mb-1">Visible columns</div>
-                      {Object.keys(columnLabels).map(key => (
-                        <label key={key} className="flex items-center gap-2 text-[11px] text-gray-700">
-                          <input
-                            type="checkbox"
-                            className="rounded border-gray-300 accent-[#F68F22] focus:ring-[#F68F22]"
-                            checked={exportColumnVisibility[key]}
-                            onChange={() => setExportColumnVisibility(v => ({ ...v, [key]: !v[key] }))}
-                          />
-                          <span>{columnLabels[key]}</span>
-                        </label>
-                      ))}
-                      <div className="pt-1 text-[10px] text-gray-400">Uncheck to hide column from table.</div>
-                    </div>
-                  )}
+                <div className="flex items-center gap-2">
+                  {/* Export button with dropdown */}
+                  <div ref={exportMenuRef} className="relative">
+                    <button
+                      type="button"
+                      onClick={() => setShowExportMenu(v => !v)}
+                      className="flex items-center gap-1 text-xs px-3 py-1.5 rounded-md border border-gray-200 bg-gray-50 hover:bg-gray-100 text-gray-600"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      <span className="whitespace-nowrap">Export</span>
+                    </button>
+                    {showExportMenu && (
+                      <div className="absolute right-0 mt-2 z-40 w-32 border border-gray-200 bg-white rounded-xl shadow-lg py-1 animate-fade-in">
+                        <button
+                          type="button"
+                          onClick={exportSellerMetricsCSV}
+                          className="w-full px-4 py-2 text-left text-xs text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                        >
+                          <span>📄</span>
+                          <span>Export CSV</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={exportSellerMetricsPDF}
+                          className="w-full px-4 py-2 text-left text-xs text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                        >
+                          <span>📕</span>
+                          <span>Export PDF</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  {/* Column filter trigger */}
+                  <div ref={exportColumnMenuRef} className="relative">
+                    <button
+                      type="button"
+                      onClick={() => setShowExportColumnMenu(v => !v)}
+                      className="flex items-center gap-1 text-xs px-3 py-1.5 rounded-md border border-gray-200 bg-gray-50 hover:bg-gray-100 text-gray-600"
+                    >
+                      <Filter className="w-3.5 h-3.5" />
+                      <span className="whitespace-nowrap">Columns</span>
+                    </button>
+                    {showExportColumnMenu && (
+                      <div className="absolute right-0 mt-2 z-40 w-56 border border-gray-200 bg-white rounded-xl shadow-lg p-3 space-y-2 animate-fade-in">
+                        <div className="text-[11px] font-semibold text-gray-700 mb-1">Visible columns</div>
+                        {Object.keys(columnLabels).map(key => (
+                          <label key={key} className="flex items-center gap-2 text-[11px] text-gray-700">
+                            <input
+                              type="checkbox"
+                              className="rounded border-gray-300 accent-[#F68F22] focus:ring-[#F68F22]"
+                              checked={exportColumnVisibility[key]}
+                              onChange={() => setExportColumnVisibility(v => ({ ...v, [key]: !v[key] }))}
+                            />
+                            <span>{columnLabels[key]}</span>
+                          </label>
+                        ))}
+                        <div className="pt-1 text-[10px] text-gray-400">Uncheck to hide column from table.</div>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
               <div className="overflow-x-auto">
@@ -1024,7 +1283,7 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
                     </tr>
                   </thead>
                   <tbody>
-                    {adminSellers.length === 0 && (
+                    {adminSellersDisplayed.length === 0 && (
                       <tr>
                         <td colSpan={visibleColumnKeys.length || 1} className="px-4 py-16">
                           <div className="flex flex-col items-center justify-center text-center text-gray-500">
@@ -1037,8 +1296,8 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
                         </td>
                       </tr>
                     )}
-                    {adminSellers.map(s => {
-                      // Dummy computed values; replace with real aggregation later
+                    {adminSellersDisplayed.map(s => {
+                      // TODO: replace with real aggregation filtered by date/province/cities
                       const gross = 0;
                       const avgOrder = 0;
                       const tx = 0;
@@ -1275,74 +1534,142 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
     } else if (isSubAccount && parentId) {
       unsub = OrdersService.listenBySeller(parentId, setConfirmationOrders);
     } else {
+      // Fix: main seller accounts should subscribe to their own orders
       unsub = OrdersService.listenBySeller(uid, setConfirmationOrders);
     }
-    return () => { try { unsub && unsub(); } catch {} };
-  }, [uid, isAdmin]);
-
-  // Load admin sellers for filters
+    return () => unsub && unsub();
+  }, [isAdmin, isSubAccount, parentId, uid]);
+  
+  // Load provinces (Philippines) - admin only
   useEffect(() => {
     if (!isAdmin) return;
-    let mounted = true;
     (async () => {
-      try {
-        const rows = await getWebUsers(['seller' as any]);
-        if (!mounted) return;
-        setAdminSellers(rows.map((u: any) => ({ uid: u.uid, name: u.name, shopName: u.shopName || u.name || u.email })));
-      } catch (e) {
-        console.warn('Failed to load sellers for admin filters', e);
-      }
+      const rows = await getPhProvinces();
+      setPhProvinces(rows);
     })();
-    return () => { mounted = false; };
   }, [isAdmin]);
 
-  // Load provinces on admin view mount
-  useEffect(() => {
-    if (!isAdmin) return;
-    let mounted = true;
-    (async () => {
-      try {
-        const api = await getAddressApi();
-        const regions = await api.regions();
-        const collected: Array<{ code: string; name: string }> = [];
-        for (const r of regions) {
-          try {
-            const provs = await api.provinces(r.region_code || r.code);
-            provs.forEach((p: any) => collected.push({ code: p.province_code, name: p.province_name }));
-          } catch {}
-        }
-        if (!mounted) return;
-        // Deduplicate & sort
-        const unique = Array.from(new Map(collected.map(p => [p.code, p])).values())
-          .sort((a,b)=> a.name.localeCompare(b.name));
-        setPhProvinces(unique);
-      } catch (e) {
-        console.warn('Failed loading provinces', e);
-      }
-    })();
-    return () => { mounted = false; };
-  }, [isAdmin]);
-  // Load cities when province changes
+  // Load cities when province changes (admin only)
   useEffect(() => {
     if (!isAdmin) return;
     const provinceCode = adminFilters.province;
     if (!provinceCode || provinceCode === 'all') { setPhCities([]); return; }
-    let mounted = true;
+    (async () => {
+      const rows = await getPhCitiesAsync(provinceCode);
+      setPhCities(rows);
+    })();
+  }, [adminFilters.province, isAdmin]);
+
+  // Load sellers from Firebase "Seller" collection (admin only)
+  useEffect(() => {
+    if (!isAdmin) return;
+    let cancelled = false;
     (async () => {
       try {
-        const api = await getAddressApi();
-        const rows = await api.cities(provinceCode);
-        if (!mounted) return;
-        const mapped = rows.map((c: any) => ({ code: c.city_code, name: c.city_name, provinceCode }))
-          .sort((a,b)=> a.name.localeCompare(b.name));
-        setPhCities(mapped);
-      } catch (e) {
-        console.warn('Failed loading cities for province', provinceCode, e);
-        setPhCities([]);
+        const sellersSnap = await getDocs(collection(db, 'Seller'));
+        const sellers = sellersSnap.docs.map(doc => {
+          const data = doc.data();
+          return {
+            uid: doc.id,
+            name: data.name || data.ownerName || data.displayName || '',
+            shopName: data.shopName || data.storeName || data.businessName || '',
+          };
+        });
+        if (!cancelled) {
+          setAdminSellers(sellers);
+          console.log('[Dashboard] Loaded sellers from Firebase:', sellers.length);
+        }
+      } catch (error) {
+        console.error('[Dashboard] Error loading sellers:', error);
+        if (!cancelled) {
+          setAdminSellers([]);
+        }
       }
     })();
-    return () => { mounted = false; };
-  }, [adminFilters.province, isAdmin]);
+    return () => { cancelled = true; };
+  }, [isAdmin]);
+
+  // Seller date picker refs/state (fix ReferenceError)
+  const sellerDateDropdownRef = useRef<HTMLDivElement | null>(null);
+  const [showSellerDatePicker, setShowSellerDatePicker] = useState(false);
+  const [sellerCalendarMonth, setSellerCalendarMonth] = useState<Date>(new Date());
+  const [sellerRange, setSellerRange] = useState<{ start: Date | null; end: Date | null }>({ start: null, end: null });
+  const sellerDaysInMonth = (month: Date) => new Date(month.getFullYear(), month.getMonth()+1, 0).getDate();
+  const sellerFirstWeekday = (month: Date) => new Date(month.getFullYear(), month.getMonth(), 1).getDay(); // 0=Sun
+  const isSellerInRange = (day: Date) => {
+    const { start, end } = sellerRange;
+    if (!start) return false;
+    if (start && !end) return day.getTime() === start.getTime();
+    if (start && end) return day >= start && day <= end;
+    return false;
+  };
+  const handleSellerDayClick = (day: Date) => {
+    setSellerRange(prev => {
+      if (!prev.start || (prev.start && prev.end)) return { start: day, end: null };
+      if (day < prev.start) return { start: day, end: prev.start };
+      return { start: prev.start, end: day };
+    });
+  };
+  const applySellerRange = () => {
+    const start = sellerRange.start;
+    const end = sellerRange.end || sellerRange.start;
+    if (!start || !end) return;
+    setSellerFilters(f => ({ ...f, dateRange: `custom:${toISO(start)}:${toISO(end as Date)}` }));
+    setShowSellerDatePicker(false);
+  };
+  const applySellerPreset = (preset: 'today' | '7' | '30') => {
+    const today = new Date();
+    const end = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    let start = new Date(end);
+    if (preset === '7') start = new Date(end.getTime() - 6*86400000);
+    if (preset === '30') start = new Date(end.getTime() - 29*86400000);
+    if (preset === 'today') start = end;
+    setSellerRange({ start, end });
+    setSellerCalendarMonth(new Date(end.getFullYear(), end.getMonth(), 1));
+    if (preset === 'today') {
+      setSellerFilters(f => ({ ...f, dateRange: `custom:${toISO(start)}:${toISO(end)}` }));
+    } else {
+      setSellerFilters(f => ({ ...f, dateRange: `last-${preset}` }));
+    }
+  };
+  useEffect(() => {
+    if (!showSellerDatePicker) return;
+    const handler = (e: MouseEvent) => {
+      if (!sellerDateDropdownRef.current) return;
+      if (!sellerDateDropdownRef.current.contains(e.target as Node)) setShowSellerDatePicker(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showSellerDatePicker]);
+
+  // Admin city selection: allow multi-select via checkboxes when a province is chosen
+  const [adminSelectedCityCodes, setAdminSelectedCityCodes] = useState<Set<string>>(new Set());
+
+  // Reset selected cities when province changes
+  useEffect(() => {
+
+    setAdminSelectedCityCodes(new Set());
+  }, [adminFilters.province]);
+
+  // Admin City dropdown popover state
+  const adminCityDropdownRef = useRef<HTMLDivElement | null>(null);
+  const [showAdminCityDropdown, setShowAdminCityDropdown] = useState(false);
+  useEffect(() => {
+    if (!showAdminCityDropdown) return;
+    const handler = (e: MouseEvent) => {
+      if (!adminCityDropdownRef.current) return;
+      if (!adminCityDropdownRef.current.contains(e.target as Node)) setShowAdminCityDropdown(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showAdminCityDropdown]);
+
+  // Derived admin seller rows based on Shop Name filter
+  const adminSellersDisplayed = useMemo(() => {
+    const sel = adminFilters.seller;
+    if (!sel || sel === 'all') return adminSellers;
+    return adminSellers.filter(s => s.uid === sel);
+  }, [adminFilters.seller, adminSellers]);
 
   return (
     <div className="min-h-screen bg-background flex">

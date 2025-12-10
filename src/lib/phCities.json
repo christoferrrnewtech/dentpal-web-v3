@@ -1,0 +1,19 @@
+[
+  { "code": "MNL", "name": "Manila", "provinceCode": "NCR" },
+  { "code": "MAC", "name": "Makati", "provinceCode": "NCR" },
+  { "code": "TAG", "name": "Taguig", "provinceCode": "NCR" },
+  { "code": "QSZ", "name": "Quezon City", "provinceCode": "NCR" },
+  { "code": "PAS", "name": "Pasay", "provinceCode": "NCR" },
+  { "code": "PAR", "name": "Parañaque", "provinceCode": "NCR" },
+  { "code": "MAN", "name": "Mandaluyong", "provinceCode": "NCR" },
+  { "code": "SAN", "name": "San Juan", "provinceCode": "NCR" },
+  { "code": "CAL", "name": "Caloocan", "provinceCode": "NCR" },
+  { "code": "VAL", "name": "Valenzuela", "provinceCode": "NCR" },
+  { "code": "NAV", "name": "Navotas", "provinceCode": "NCR" },
+  { "code": "MUN", "name": "Muntinlupa", "provinceCode": "NCR" },
+  { "code": "LAS", "name": "Las Piñas", "provinceCode": "NCR" },
+  { "code": "MAR", "name": "Marikina", "provinceCode": "NCR" },
+  { "code": "LEG", "name": "Legazpi City", "provinceCode": "ALB" },
+  { "code": "TAB", "name": "Tabaco City", "provinceCode": "ALB" },
+  { "code": "LIG", "name": "Ligao City", "provinceCode": "ALB" }
+]

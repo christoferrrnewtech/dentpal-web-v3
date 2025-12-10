@@ -2,6 +2,7 @@ export type WebUserRole = 'admin' | 'seller';
 
 export type WebUserPermissions = {
   dashboard: boolean;
+  profile: boolean; // New: Allow access to Profile tab
   bookings: boolean;
   confirmation: boolean;
   withdrawal: boolean;

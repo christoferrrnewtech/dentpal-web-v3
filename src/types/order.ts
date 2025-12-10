@@ -100,6 +100,17 @@ export interface Order {
     netPayoutToSeller?: number;
     calculatedAt?: Timestamp | Date | string;
   };
+  // NEW: Shipping information from JRS Express
+  shippingInfo?: {
+    jrs?: {
+      trackingId?: string;
+      trackingNumber?: string;
+      status?: string;
+      createdAt?: Timestamp | Date | string;
+      pickupSchedule?: string;
+      courier?: string;
+    };
+  };
 }
 
 // Props for booking-related components

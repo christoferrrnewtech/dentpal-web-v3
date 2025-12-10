@@ -90,6 +90,8 @@ const Sidebar = ({ activeItem, onItemClick, onLogout }: SidebarProps) => {
           if (item.id === 'product-qc' && !isAdmin) return false;
           if (item.id === 'warranty' && !isAdmin) return false;
           if (item.id === 'categories' && !isAdmin) return false;
+          // Hide Profile tab for admin users only
+          if (item.id === 'profile' && isAdmin) return false;
           // TEMP: hide seller tabs from admin panel
           if (isAdmin && ['seller-orders','inventory','add-product','sub-accounts'].includes(item.id)) return false;
           // NEW: hide reports & booking for admin
@@ -103,7 +105,8 @@ const Sidebar = ({ activeItem, onItemClick, onLogout }: SidebarProps) => {
           }
 
           // Primary/admin: default to dashboard when specific key not mapped
-          return hasPermission((key || 'dashboard') as any);
+          const hasPerm = hasPermission((key || 'dashboard') as any);
+          return hasPerm;
         });
 
         // Sub-accounts: never show Access or Sub Account regardless of permissions
@@ -122,7 +125,8 @@ const Sidebar = ({ activeItem, onItemClick, onLogout }: SidebarProps) => {
         if (isSeller && !isAdmin) {
           const sellerOrder = ['dashboard', 'seller-orders', 'reports', 'withdrawal', 'inventory', 'add-product', 'sub-accounts', 'profile'];
           const map = new Map(permitted.map((i) => [i.id, i] as const));
-          return sellerOrder.map((id) => map.get(id)).filter(Boolean) as typeof permitted;
+          const ordered = sellerOrder.map((id) => map.get(id)).filter(Boolean) as typeof permitted;
+          return ordered;
         }
 
         // Admins keep full permitted list and original order

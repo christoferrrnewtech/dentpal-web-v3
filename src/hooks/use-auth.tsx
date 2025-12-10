@@ -11,6 +11,7 @@ import type { WebUserPermissions, WebUserRole, WebUserProfile } from '@/types/we
 export const PERMISSIONS_BY_ROLE: Record<WebUserRole, WebUserPermissions> = {
   admin: {
     dashboard: true,
+    profile: true,
     bookings: true,
     confirmation: true,
     withdrawal: true,
@@ -29,6 +30,7 @@ export const PERMISSIONS_BY_ROLE: Record<WebUserRole, WebUserPermissions> = {
   },
   seller: {
     dashboard: true,
+    profile: true,
     bookings: true,
     confirmation: false,
     withdrawal: true,
