@@ -90,6 +90,8 @@ const Sidebar = ({ activeItem, onItemClick, onLogout }: SidebarProps) => {
           if (item.id === 'product-qc' && !isAdmin) return false;
           if (item.id === 'warranty' && !isAdmin) return false;
           if (item.id === 'categories' && !isAdmin) return false;
+          // Hide Profile tab for admin users only
+          if (item.id === 'profile' && isAdmin) return false;
           // TEMP: hide seller tabs from admin panel
           if (isAdmin && ['seller-orders','inventory','add-product','sub-accounts'].includes(item.id)) return false;
           // NEW: hide reports & booking for admin
