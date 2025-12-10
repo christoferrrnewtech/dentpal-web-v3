@@ -64,8 +64,8 @@ const PHL_CITIES_URL = 'https://raw.githubusercontent.com/hubertursua/ph-locatio
 const LOCAL_PROVINCES_URL = '/phl/provinces.json';
 const LOCAL_CITIES_URL = '/phl/cities.json';
 
-const CACHE_KEY_PROV = 'phl_provinces_v2';
-const CACHE_KEY_CITIES = 'phl_cities_v1';
+const CACHE_KEY_PROV = 'phl_provinces_v3'; // Updated to v3 to force refresh
+const CACHE_KEY_CITIES = 'phl_cities_v2'; // Updated to v2 to force refresh
 
 async function fetchJsonWithFallback(primaryUrl: string, backupUrl?: string): Promise<any[] | null> {
   try {
@@ -88,9 +88,62 @@ async function fetchJsonWithFallback(primaryUrl: string, backupUrl?: string): Pr
 // Prefer local package data when available (ph-locations). Use dynamic import so app runs even if package isn’t installed.
 async function loadFromPackage(): Promise<{ provinces?: Province[]; cities?: City[] } | null> {
   try {
-    const mod: any = await import('ph-locations');
-    const pRaw: any[] = Array.isArray(mod.provinces) ? mod.provinces : [];
-    const cRaw: any[] = Array.isArray(mod.cities) ? mod.cities : [];
+    // Try select-philippines-address first (most comprehensive)
+    const selectMod: any = await import('select-philippines-address');
+    const api = {
+      regions: selectMod.regions || selectMod.default?.regions,
+      provinces: selectMod.provinces || selectMod.default?.provinces,
+      cities: selectMod.cities || selectMod.default?.cities,
+    };
+    
+    if (api.regions && api.provinces) {
+      // Get all regions first
+      const regions = await api.regions();
+      console.log('[phLocations] Found regions:', regions.length);
+      const allProvinces: Province[] = [];
+      
+      // Fetch provinces for all regions sequentially to avoid rate limits
+      for (const region of regions) {
+        try {
+          console.log('[phLocations] Fetching provinces for region:', region.region_name);
+          const provs = await api.provinces(region.region_code);
+          console.log('[phLocations] Got', provs.length, 'provinces for', region.region_name);
+          
+          if (Array.isArray(provs)) {
+            provs.forEach((p: any) => {
+              const provinceName = String(p.province_name || p.name || '').trim();
+              const provinceCode = String(p.province_code || p.code || p.id || '').trim();
+              
+              if (provinceName && provinceCode) {
+                allProvinces.push({
+                  code: provinceCode,
+                  name: provinceName
+                });
+              }
+            });
+          }
+        } catch (e) {
+          console.error('[phLocations] Failed to load provinces for region', region.region_name, ':', e);
+        }
+      }
+      
+      console.log('[phLocations] Total provinces loaded from select-philippines-address:', allProvinces.length);
+      
+      if (allProvinces.length > 0) {
+        return { 
+          provinces: allProvinces.sort((a, b) => a.name.localeCompare(b.name)),
+          cities: [] // Cities loaded on-demand per province
+        };
+      }
+    }
+    
+    // Fallback to ph-locations
+    const phMod: any = await import('ph-locations');
+    const pRaw: any[] = Array.isArray(phMod.provinces) ? phMod.provinces : [];
+    const cRaw: any[] = Array.isArray(phMod.cities) ? phMod.cities : [];
+    if (pRaw.length > 0) {
+      console.log('[phLocations] Loaded provinces from ph-locations:', pRaw.length);
+    }
     const pList: Province[] = pRaw
       .map((p: any) => ({ code: String(p.code || p.province_code || p.id), name: String(p.name || p.province_name) }))
       .sort((a, b) => a.name.localeCompare(b.name));
@@ -103,7 +156,7 @@ async function loadFromPackage(): Promise<{ provinces?: Province[]; cities?: Cit
       .sort((a, b) => a.name.localeCompare(b.name));
     return { provinces: pList, cities: cList };
   } catch (e) {
-    // Package not installed or failed to load
+    console.warn('[phLocations] Package load failed, using fallback data:', e);
     return null;
   }
 }
@@ -111,7 +164,11 @@ async function loadFromPackage(): Promise<{ provinces?: Province[]; cities?: Cit
 async function loadProvincesFromRepo(): Promise<Province[] | null> {
   try {
     const cached = localStorage.getItem(CACHE_KEY_PROV);
-    if (cached) return JSON.parse(cached);
+    if (cached) {
+      const parsed = JSON.parse(cached);
+      console.log('[phLocations] Using cached provinces:', parsed.length);
+      return parsed;
+    }
 
     // 1) Try package
     const pkg = await loadFromPackage();
@@ -126,10 +183,11 @@ async function loadProvincesFromRepo(): Promise<Province[] | null> {
       .map((p: any) => ({ code: String(p.code), name: String(p.name) }))
       .sort((a, b) => a.name.localeCompare(b.name));
     const finalList = list.length ? list : provinces.slice();
+    console.log('[phLocations] Loaded provinces from CDN/fallback:', finalList.length);
     localStorage.setItem(CACHE_KEY_PROV, JSON.stringify(finalList));
     return finalList;
   } catch (e) {
-    console.warn('PH provinces load failed', e);
+    console.warn('[phLocations] PH provinces load failed:', e);
     return provinces.slice();
   }
 }
@@ -167,6 +225,27 @@ export const getProvinces = async (): Promise<Province[]> => {
 };
 
 export const getCitiesByProvinceAsync = async (provinceCode: string): Promise<City[]> => {
+  try {
+    // Try to load cities directly from select-philippines-address for this province
+    const selectMod: any = await import('select-philippines-address');
+    const citiesApi = selectMod.cities || selectMod.default?.cities;
+    
+    if (citiesApi) {
+      const cityData = await citiesApi(provinceCode);
+      const citiesList: City[] = cityData.map((c: any) => ({
+        code: String(c.city_code || c.code || c.id),
+        name: String(c.city_name || c.name),
+        provinceCode: String(provinceCode)
+      })).sort((a: City, b: City) => a.name.localeCompare(b.name));
+      
+      console.log('[phLocations] Loaded cities for province', provinceCode, ':', citiesList.length);
+      return citiesList;
+    }
+  } catch (e) {
+    console.warn('[phLocations] Failed to load cities from package for province', provinceCode, e);
+  }
+  
+  // Fallback to cached/static data
   const list = await loadCitiesFromRepo();
   if (list) return list.filter(c => c.provinceCode === provinceCode);
   return getCitiesByProvince(provinceCode);
@@ -177,6 +256,13 @@ export const getCitiesByProvince = (provinceCode: string): City[] => {
     .filter(c => c.provinceCode === provinceCode)
     .slice()
     .sort((a,b)=> a.name.localeCompare(b.name));
+};
+
+// Helper to clear cached location data (useful for testing/debugging)
+export const clearLocationCache = () => {
+  localStorage.removeItem(CACHE_KEY_PROV);
+  localStorage.removeItem(CACHE_KEY_CITIES);
+  console.log('[phLocations] Cache cleared - reload the page to fetch all Philippines provinces');
 };
 
 // Removed inline ambient declaration to avoid redeclaration conflicts.
