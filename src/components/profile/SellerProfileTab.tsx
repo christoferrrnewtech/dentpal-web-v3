@@ -70,14 +70,10 @@ const SellerProfileTab: React.FC = () => {
 				const doc = await SellersService.get(uid);
 				if (!mounted) return;
 				
-				// Check if vendor profile exists
 				const v: any = (doc as any)?.vendor || null;
 				if (!v) {
-					console.log('No vendor profile found for seller:', uid);
 					return;
-				}
-				
-				console.log('Loaded vendor profile:', v);
+				}				
 				setVendor(prev => ({
 					...prev,
 					categories: Array.isArray(v.categories) ? v.categories : [],

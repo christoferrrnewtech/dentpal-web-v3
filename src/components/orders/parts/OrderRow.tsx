@@ -2,6 +2,7 @@ import React from 'react';
 import { Order } from '@/types/order';
 import { ChevronDown, ChevronUp, Printer, FileText, Download, Eye, Loader2 } from 'lucide-react';
 import QRCode from 'qrcode';
+import dentpalLogo from '@/assets/dentpal_logo.png';
 
 interface OrderRowProps {
   order: Order;
@@ -24,8 +25,8 @@ const buildInvoiceHTML = async (order: Order) => {
   // Load and convert logo to base64
   let logoDataUrl = '';
   try {
-    const logoPath = '/src/assets/dentpal_logo.png';
-    const response = await fetch(logoPath);
+    // Use imported asset path (bundler resolves this correctly)
+    const response = await fetch(dentpalLogo);
     const blob = await response.blob();
     logoDataUrl = await new Promise<string>((resolve) => {
       const reader = new FileReader();

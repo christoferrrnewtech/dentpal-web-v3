@@ -106,10 +106,6 @@ const Sidebar = ({ activeItem, onItemClick, onLogout }: SidebarProps) => {
 
           // Primary/admin: default to dashboard when specific key not mapped
           const hasPerm = hasPermission((key || 'dashboard') as any);
-          // Debug: log profile tab permission check
-          if (item.id === 'profile') {
-            console.log('Profile tab permission check:', { key, hasPerm, isSeller, isAdmin });
-          }
           return hasPerm;
         });
 
@@ -130,12 +126,6 @@ const Sidebar = ({ activeItem, onItemClick, onLogout }: SidebarProps) => {
           const sellerOrder = ['dashboard', 'seller-orders', 'reports', 'withdrawal', 'inventory', 'add-product', 'sub-accounts', 'profile'];
           const map = new Map(permitted.map((i) => [i.id, i] as const));
           const ordered = sellerOrder.map((id) => map.get(id)).filter(Boolean) as typeof permitted;
-          console.log('Seller menu items:', { 
-            permitted: permitted.map(i => i.id), 
-            ordered: ordered.map(i => i.id),
-            hasProfile: map.has('profile'),
-            vendorProfileComplete 
-          });
           return ordered;
         }
 

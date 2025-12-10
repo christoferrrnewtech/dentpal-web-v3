@@ -176,12 +176,11 @@ const ReportsTab: React.FC = () => {
 
   // Subscribe to orders based on role
   useEffect(() => {
-    console.log('[Orders] Subscribing listener', { isAdmin, uid, isSubAccount, parentId });
     let unsub = () => {};
-    if (isAdmin) unsub = OrdersService.listenAll((rows) => { console.log('[Orders] listenAll received', rows.length); setOrders(rows); });
-    else if (isSubAccount && parentId) unsub = OrdersService.listenBySeller(parentId, (rows) => { console.log('[Orders] listenBySeller parent received', rows.length); setOrders(rows); });
-    else if (uid) unsub = OrdersService.listenBySeller(uid, (rows) => { console.log('[Orders] listenBySeller uid received', rows.length); setOrders(rows); });
-    return () => { console.log('[Orders] Unsubscribe'); unsub(); };
+    if (isAdmin) unsub = OrdersService.listenAll((rows) => { setOrders(rows); });
+    else if (isSubAccount && parentId) unsub = OrdersService.listenBySeller(parentId, (rows) => { setOrders(rows); });
+    else if (uid) unsub = OrdersService.listenBySeller(uid, (rows) => { setOrders(rows); });
+    return () => { unsub(); };
   }, [isAdmin, uid, isSubAccount, parentId]);
 
   // Load Categories and their Subcategories from Firestore (subcollection 'subCategory')
@@ -250,24 +249,18 @@ const ReportsTab: React.FC = () => {
 
   // Filter by date range and basis (extended to support custom range)
   const filteredOrders = useMemo(() => {
-    console.log('[Filter] Computing filteredOrders. dateRange=', dateRange, 'basis=', basis, 'total orders=', orders.length);
     const ordersByPreset = (rng: string) => orders.filter(o => withinRange(getOrderDate(o, basis), rng));
     if (dateRange?.startsWith('custom:')) {
       const parts = dateRange.split(':');
       const from = parts[1]; const to = parts[2] || parts[1];
       const fromDate = new Date(`${from}T00:00:00`);
       const toDate = new Date(`${to}T23:59:59.999`);
-      const out = orders.filter(o => {
+      return orders.filter(o => {
         const d = getOrderDateObj(o, basis);
-        const ok = !!d && d >= fromDate && d <= toDate;
-        return ok;
+        return !!d && d >= fromDate && d <= toDate;
       });
-      console.log('[Filter] Custom range', { from, to, fromDate, toDate, matched: out.length });
-      return out;
     }
-    const out = ordersByPreset(dateRange);
-    console.log('[Filter] Preset range', { dateRange, matched: out.length });
-    return out;
+    return ordersByPreset(dateRange);
   }, [orders, dateRange, basis]);
 
   // Fetch Product categories for items in view (by productId)
@@ -703,16 +696,9 @@ const ReportsTab: React.FC = () => {
     return ['shipping', 'to_ship', 'processing', 'completed'].includes(o.status);
   };
 
-  // Invoice orders: TEMP showing shipping/to_ship/processing/completed (ignoring date range for now)
+  // Invoice orders: showing shipping/to_ship/processing/completed (ignoring date range for now)
   const invoiceOrders = useMemo(() => {
-    const eligible = orders.filter(invoiceEligible);
-    console.log('[Invoice] TEMP: Showing paid orders (shipping/to_ship/processing/completed)', { 
-      totalOrders: orders.length, 
-      eligibleOrders: eligible.length,
-      statuses: orders.map(o => o.status),
-      eligibleSample: eligible.slice(0, 2).map(o => ({ id: o.id, status: o.status, items: o.items?.length, itemsSample: o.items?.slice(0, 2) }))
-    });
-    return eligible;
+    return orders.filter(invoiceEligible);
   }, [orders]);
 
   return (
