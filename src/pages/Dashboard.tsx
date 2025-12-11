@@ -80,6 +80,13 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
   const [phCities, setPhCities] = useState<Array<{ code: string; name: string; provinceCode: string }>>([]);
   // Admin sellers list for filtering & export table
   const [adminSellers, setAdminSellers] = useState<Array<{ uid: string; name?: string; shopName?: string }>>([]);
+  // Admin metrics from Firebase (orders)
+  const [adminMetrics, setAdminMetrics] = useState<{ totalOrders: number; deliveredOrders: number; shippedOrders: number }>({ totalOrders: 0, deliveredOrders: 0, shippedOrders: 0 });
+  // Admin city selection: allow multi-select via checkboxes when a province is chosen
+  const [adminSelectedCityCodes, setAdminSelectedCityCodes] = useState<Set<string>>(new Set());
+  // Admin City dropdown popover state
+  const adminCityDropdownRef = useRef<HTMLDivElement | null>(null);
+  const [showAdminCityDropdown, setShowAdminCityDropdown] = useState(false);
   // Export table column visibility state (admin)
   const [exportColumnVisibility, setExportColumnVisibility] = useState<Record<string, boolean>>({
     seller: true,
@@ -967,8 +974,9 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm font-medium text-gray-600 mb-1">ORDER SHIPPED</p>
-                    <p className="text-sm text-gray-500 mb-2">NUMBER OF DELIVERED TRANSACTIONS</p>
-                    <p className="text-2xl font-bold text-gray-900">(average order)</p>
+                    <p className="text-sm text-gray-500 mb-2">TOTAL ORDERS SHIPPED</p>
+                    <p className="text-2xl font-bold text-gray-900">{adminMetrics.shippedOrders.toLocaleString()}</p>
+                    <p className="text-xs text-gray-500 mt-1">of {adminMetrics.totalOrders.toLocaleString()} total orders</p>
                   </div>
                   <div className="w-12 h-12 bg-teal-50 rounded-xl flex items-center justify-center">
                     <ShoppingCart className="w-6 h-6 text-teal-600" />
@@ -981,7 +989,8 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
                   <div>
                     <p className="text-sm font-medium text-gray-600 mb-1">TOTAL NUMBER OF</p>
                     <p className="text-sm text-gray-500 mb-2">DELIVERED TRANSACTIONS</p>
-                    <p className="text-2xl font-bold text-gray-900">(total transactions)</p>
+                    <p className="text-2xl font-bold text-gray-900">{adminMetrics.deliveredOrders.toLocaleString()}</p>
+                    <p className="text-xs text-gray-500 mt-1">of {adminMetrics.totalOrders.toLocaleString()} total orders</p>
                   </div>
                   <div className="w-12 h-12 bg-blue-50 rounded-xl flex items-center justify-center">
                     <TrendingUp className="w-6 h-6 text-blue-600" />
@@ -1589,6 +1598,79 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
     return () => { cancelled = true; };
   }, [isAdmin]);
 
+  // Calculate admin metrics from confirmationOrders (admin only)
+  useEffect(() => {
+    if (!isAdmin) return;
+    
+    // Filter orders based on admin filters
+    const filteredOrdersForMetrics = confirmationOrders.filter(order => {
+      // Date range filter
+      if (adminFilters.dateFrom && adminFilters.dateTo) {
+        const orderDate = order.timestamp ? order.timestamp.slice(0, 10) : ''; // YYYY-MM-DD
+        if (orderDate < adminFilters.dateFrom || orderDate > adminFilters.dateTo) {
+          return false;
+        }
+      }
+      
+      // Province filter
+      if (adminFilters.province !== 'all') {
+        const orderProvinceCode = order.region?.province;
+        if (orderProvinceCode !== adminFilters.province) {
+          return false;
+        }
+      }
+      
+      // City filter (multi-select)
+      if (adminSelectedCityCodes.size > 0) {
+        const orderCity = order.region?.municipality;
+        // Find matching city code from phCities
+        const matchingCity = phCities.find(c => c.name === orderCity);
+        if (!matchingCity || !adminSelectedCityCodes.has(matchingCity.code)) {
+          return false;
+        }
+      }
+      
+      // Shop name (seller) filter
+      if (adminFilters.seller !== 'all') {
+        const orderSellerIds = order.sellerIds || [];
+        const isSeller = orderSellerIds.includes(adminFilters.seller);
+        if (!isSeller) {
+          return false;
+        }
+      }
+      
+      return true;
+    });
+    
+    // Calculate metrics from filtered orders
+    const totalOrders = filteredOrdersForMetrics.length;
+    
+    // Count orders with "completed" status as delivered
+    const deliveredOrders = filteredOrdersForMetrics.filter(order => order.status === 'completed').length;
+    
+    // Count orders that have been shipped (based on statusHistory having "shipping" status)
+    const shippedOrders = filteredOrdersForMetrics.filter(order => {
+      // Check if order has statusHistory with "shipping" status
+      if (order.statusHistory && Array.isArray(order.statusHistory)) {
+        return order.statusHistory.some(history => 
+          history.status === 'shipping' || history.status === 'shipped'
+        );
+      }
+      // Fallback: check current status if no statusHistory
+      return order.status === 'shipping' || order.status === 'shipped';
+    }).length;
+    
+    setAdminMetrics({ totalOrders, deliveredOrders, shippedOrders });
+    console.log('[Dashboard] Admin metrics calculated:', { 
+      totalOrders, 
+      deliveredOrders, 
+      shippedOrders,
+      filters: adminFilters,
+      selectedCities: Array.from(adminSelectedCityCodes),
+      totalBeforeFilter: confirmationOrders.length 
+    });
+  }, [isAdmin, confirmationOrders, adminFilters, adminSelectedCityCodes, phCities]);
+
   // Seller date picker refs/state (fix ReferenceError)
   const sellerDateDropdownRef = useRef<HTMLDivElement | null>(null);
   const [showSellerDatePicker, setShowSellerDatePicker] = useState(false);
@@ -1642,18 +1724,12 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
     return () => document.removeEventListener('mousedown', handler);
   }, [showSellerDatePicker]);
 
-  // Admin city selection: allow multi-select via checkboxes when a province is chosen
-  const [adminSelectedCityCodes, setAdminSelectedCityCodes] = useState<Set<string>>(new Set());
-
   // Reset selected cities when province changes
   useEffect(() => {
-
     setAdminSelectedCityCodes(new Set());
   }, [adminFilters.province]);
 
-  // Admin City dropdown popover state
-  const adminCityDropdownRef = useRef<HTMLDivElement | null>(null);
-  const [showAdminCityDropdown, setShowAdminCityDropdown] = useState(false);
+  // Admin City dropdown popover useEffect
   useEffect(() => {
     if (!showAdminCityDropdown) return;
     const handler = (e: MouseEvent) => {

@@ -224,7 +224,12 @@ export const getProvinces = async (): Promise<Province[]> => {
   return list ?? provinces.slice();
 };
 
+const citiesCache = new Map<string, City[]>();
 export const getCitiesByProvinceAsync = async (provinceCode: string): Promise<City[]> => {
+  // Return from memory cache if available
+  if (citiesCache.has(provinceCode)) {
+    return citiesCache.get(provinceCode)!;
+  }
   try {
     // Try to load cities directly from select-philippines-address for this province
     const selectMod: any = await import('select-philippines-address');
@@ -239,6 +244,7 @@ export const getCitiesByProvinceAsync = async (provinceCode: string): Promise<Ci
       })).sort((a: City, b: City) => a.name.localeCompare(b.name));
       
       console.log('[phLocations] Loaded cities for province', provinceCode, ':', citiesList.length);
+      citiesCache.set(provinceCode, citiesList);
       return citiesList;
     }
   } catch (e) {
