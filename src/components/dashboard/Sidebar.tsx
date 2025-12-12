@@ -38,7 +38,6 @@ const menuItems = [
   { id: "notifications", label: "Notifications", icon: Bell },
   { id: "add-product", label: "Add Product", icon: PlusSquare },
   { id: "product-qc", label: "QC Product", icon: CheckCircle },
-  { id: "warranty", label: "Warranty", icon: ShieldCheck },
   { id: "categories", label: "Categories", icon: FolderTree },
   { id: "confirmation", label: "Confirmation", icon: CheckCircle },
   { id: "withdrawal", label: "Withdrawal", icon: CreditCard },

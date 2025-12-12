@@ -79,7 +79,7 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
   const [phProvinces, setPhProvinces] = useState<Array<{ code: string; name: string }>>([]);
   const [phCities, setPhCities] = useState<Array<{ code: string; name: string; provinceCode: string }>>([]);
   // Admin sellers list for filtering & export table
-  const [adminSellers, setAdminSellers] = useState<Array<{ uid: string; name?: string; shopName?: string }>>([]);
+  const [adminSellers, setAdminSellers] = useState<Array<{ uid: string; name?: string; shopName?: string; storeName?: string }>>([]);
   // Admin metrics from Firebase (orders)
   const [adminMetrics, setAdminMetrics] = useState<{ totalOrders: number; deliveredOrders: number; shippedOrders: number }>({ totalOrders: 0, deliveredOrders: 0, shippedOrders: 0 });
   // Admin city selection: allow multi-select via checkboxes when a province is chosen
@@ -104,7 +104,7 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
     tx: 'Total Transaction',
     logistic: 'Logistic Fee',
     payment: 'Payment Fee',
-    inquiry: 'Inquiry Fee',
+    inquiry: 'Platform Fee',
   };
   const visibleColumnKeys = Object.keys(exportColumnVisibility).filter(k => exportColumnVisibility[k]);
   const [showExportColumnMenu, setShowExportColumnMenu] = useState(false);
@@ -216,7 +216,7 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
     ).sort((a, b) => a.localeCompare(b));
   }, [confirmationOrders]);
 
-  const isPaidStatus = (s: Order['status']) => ['to_ship','processing','completed'].includes(s);
+  const isPaidStatus = (s: Order['status']) => ['to_ship','processing','completed','shipping'].includes(s);
   const getAmount = (o: Order) => typeof o.total === 'number' ? o.total : ((o.items || []).reduce((s, it) => s + ((it.price || 0) * (it.quantity || 0)), 0) || 0);
 
   const filteredOrders = useMemo(() => {
@@ -288,8 +288,7 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
     return { receipts, totalRevenue, avgSalePerTxn, logisticsDue, avgPackMins, avgHandoverMins };
   }, [paidOrders]);
 
-  // NEW: Financial metrics calculated from raw order data (for sellers only)
-  // Only include PAID orders in financial calculations
+  // Financial metrics calculated directly from orders (same as Reports tab)
   const financialMetrics = useMemo(() => {
     if (!confirmationOrders || confirmationOrders.length === 0) {
       return {
@@ -301,44 +300,80 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
       };
     }
 
+    // Date filtering helper (same as Reports tab)
+    const parseDate = (s?: string) => {
+      if (!s) return null;
+      const d = new Date(s);
+      return isNaN(d.getTime()) ? null : d;
+    };
+    
+    const withinLastDays = (s?: string, key?: string) => {
+      if (!s) return false;
+      const d = parseDate(s);
+      if (!d) return false;
+      const now = new Date();
+      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      let days = 30;
+      switch (key) {
+        case 'last-7': days = 7; break;
+        case 'last-30': days = 30; break;
+        case 'last-90': days = 90; break;
+        case 'last-365': days = 365; break;
+        default: days = 30;
+      }
+      const from = new Date(today.getTime() - (days - 1) * 86400000);
+      return d >= from && d <= new Date(today.getTime() + 86399999);
+    };
+
     let totalPaymentProcessingFee = 0;
     let totalPlatformFee = 0;
     let totalShippingCharge = 0;
     let totalNetPayout = 0;
     let totalGross = 0;
+    let matchedOrders = 0;
 
     confirmationOrders.forEach((order: any) => {
-      // Only count PAID orders (to-ship, processing, completed)
-      if (!isPaidStatus(order.status)) return;
+      // Only count PAID orders (same as Reports tab)
+      if (!isPaidStatus(order.status)) {
+        return;
+      }
 
-      // Only count orders that match the current seller
-      const sellerId = uid || (isSubAccount && parentId ? parentId : null);
-      if (!sellerId) return;
-      
-      // Check if this order belongs to the seller
-      const orderSellerIds = order.sellerIds || [];
-      const orderSellerId = order.sellerId;
-      
-      // Check if seller matches
-      const isSeller = Array.isArray(orderSellerIds) 
-        ? orderSellerIds.includes(sellerId)
-        : orderSellerId === sellerId;
-      
-      if (!isSeller) return;
+      // Apply date range filter
+      if (!withinLastDays(order.timestamp, sellerFilters.dateRange)) {
+        return;
+      }
 
-      // Extract fees from order.feesBreakdown (mapped from Firestore)
-      const feesData = order.feesBreakdown || {};
-      totalPaymentProcessingFee += Number(feesData.paymentProcessingFee || 0);
-      totalPlatformFee += Number(feesData.platformFee || 0);
-
-      // Extract shipping charge from order.summary
+      // Extract gross sales from order.summary.subtotal (same as Reports tab)
       const summary = order.summary || {};
-      totalShippingCharge += Number(summary.sellerShippingCharge || 0);
-      totalGross += Number(summary.subtotal || 0);
+      const subtotal = Number(summary.subtotal || 0);
+      
+      if (subtotal > 0) {
+        totalGross += subtotal;
+        matchedOrders++;
+        
+        // Extract fees
+        const feesData = order.feesBreakdown || {};
+        totalPaymentProcessingFee += Number(feesData.paymentProcessingFee || 0);
+        totalPlatformFee += Number(feesData.platformFee || 0);
+        
+        // Extract shipping charge
+        totalShippingCharge += Number(summary.sellerShippingCharge || 0);
+        
+        // Extract net payout
+        const payout = order.payout || {};
+        totalNetPayout += Number(payout.netPayoutToSeller || 0);
+      }
+    });
 
-      // Extract net payout from order.payout
-      const payout = order.payout || {};
-      totalNetPayout += Number(payout.netPayoutToSeller || 0);
+    console.log('[Dashboard] Financial metrics calculated:', {
+      totalGross,
+      totalNetPayout,
+      totalPaymentProcessingFee,
+      totalPlatformFee,
+      totalShippingCharge,
+      matchedOrders,
+      totalOrders: confirmationOrders.length,
+      dateRange: sellerFilters.dateRange,
     });
 
     return {
@@ -348,7 +383,7 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
       totalNetPayout,
       totalGross,
     };
-  }, [confirmationOrders, uid, isSubAccount, parentId]);
+  }, [confirmationOrders, sellerFilters.dateRange]);
 
   // Initialize active tab from query string (e.g., /?tab=inventory)
   useEffect(() => {
@@ -653,15 +688,46 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
     try {
       const headers = visibleColumnKeys.map(k => columnLabels[k]);
       const rows = adminSellersDisplayed.map(s => {
-        // TODO: Replace with real aggregated data
-        const gross = 0;
-        const avgOrder = 0;
-        const tx = 0;
-        const logistic = 0;
-        const payment = 0;
-        const inquiry = 0;
+        const sellerOrders = confirmationOrders.filter(o => {
+          const orderSellerIds = o.sellerIds || [];
+          if (!orderSellerIds.includes(s.uid)) return false;
+          
+          // Date range filter
+          if (adminFilters.dateFrom && adminFilters.dateTo) {
+            const orderDate = o.timestamp ? o.timestamp.slice(0, 10) : '';
+            if (orderDate < adminFilters.dateFrom || orderDate > adminFilters.dateTo) return false;
+          }
+          
+          // Province filter - skip if order has no region data
+          if (adminFilters.province !== 'all') {
+            if (o.region && o.region.province) {
+              const orderProvinceCode = o.region.province;
+              if (orderProvinceCode !== adminFilters.province) return false;
+            }
+            // If no region data, include the order
+          }
+          
+          // City filter - skip if order has no region data
+          if (adminSelectedCityCodes.size > 0) {
+            if (o.region && o.region.municipality) {
+              const orderCity = o.region.municipality;
+              const matchingCity = phCities.find(c => c.name === orderCity);
+              if (!matchingCity || !adminSelectedCityCodes.has(matchingCity.code)) return false;
+            }
+            // If no region data, include the order
+          }
+          
+          if (!isPaidStatus(o.status)) return false;
+          return true;
+        });
+        const gross = sellerOrders.reduce((sum, o) => sum + (Number(o.summary?.subtotal) || 0), 0);
+        const tx = sellerOrders.length;
+        const avgOrder = tx > 0 ? gross / tx : 0;
+        const logistic = sellerOrders.reduce((sum, o) => sum + (Number(o.summary?.sellerShippingCharge) || 0), 0);
+        const payment = sellerOrders.reduce((sum, o) => sum + (Number(o.feesBreakdown?.paymentProcessingFee) || 0), 0);
+        const inquiry = sellerOrders.reduce((sum, o) => sum + (Number(o.feesBreakdown?.platformFee) || 0), 0);
         const cellByKey: Record<string, any> = {
-          seller: s.shopName || s.name || s.uid,
+          seller: s.storeName || s.shopName || s.name || s.uid,
           gross: gross,
           avg: avgOrder,
           tx: tx,
@@ -715,23 +781,54 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
       // Prepare table data
       const headers = visibleColumnKeys.map(k => columnLabels[k]);
       const rows = adminSellersDisplayed.map(s => {
-        // TODO: Replace with real aggregated data
-        const gross = 0;
-        const avgOrder = 0;
-        const tx = 0;
-        const logistic = 0;
-        const payment = 0;
-        const inquiry = 0;
+        const sellerOrders = confirmationOrders.filter(o => {
+          const orderSellerIds = o.sellerIds || [];
+          if (!orderSellerIds.includes(s.uid)) return false;
+          
+          // Date range filter
+          if (adminFilters.dateFrom && adminFilters.dateTo) {
+            const orderDate = o.timestamp ? o.timestamp.slice(0, 10) : '';
+            if (orderDate < adminFilters.dateFrom || orderDate > adminFilters.dateTo) return false;
+          }
+          
+          // Province filter - skip if order has no region data
+          if (adminFilters.province !== 'all') {
+            if (o.region && o.region.province) {
+              const orderProvinceCode = o.region.province;
+              if (orderProvinceCode !== adminFilters.province) return false;
+            }
+            // If no region data, include the order
+          }
+          
+          // City filter - skip if order has no region data
+          if (adminSelectedCityCodes.size > 0) {
+            if (o.region && o.region.municipality) {
+              const orderCity = o.region.municipality;
+              const matchingCity = phCities.find(c => c.name === orderCity);
+              if (!matchingCity || !adminSelectedCityCodes.has(matchingCity.code)) return false;
+            }
+            // If no region data, include the order
+          }
+          
+          if (!isPaidStatus(o.status)) return false;
+          return true;
+        });
+        const gross = sellerOrders.reduce((sum, o) => sum + (Number(o.summary?.subtotal) || 0), 0);
+        const tx = sellerOrders.length;
+        const avgOrder = tx > 0 ? gross / tx : 0;
+        const logistic = sellerOrders.reduce((sum, o) => sum + (Number(o.summary?.sellerShippingCharge) || 0), 0);
+        const payment = sellerOrders.reduce((sum, o) => sum + (Number(o.feesBreakdown?.paymentProcessingFee) || 0), 0);
+        const inquiry = sellerOrders.reduce((sum, o) => sum + (Number(o.feesBreakdown?.platformFee) || 0), 0);
         const cellByKey: Record<string, any> = {
-          seller: s.shopName || s.name || s.uid,
-          gross: gross.toLocaleString(),
-          avg: avgOrder.toLocaleString(),
-          tx: tx.toLocaleString(),
-          logistic: logistic.toLocaleString(),
-          payment: payment.toLocaleString(),
-          inquiry: inquiry.toLocaleString(),
+          seller: s.storeName || s.shopName || s.name || s.uid,
+          gross: gross,
+          avg: avgOrder,
+          tx: tx,
+          logistic: logistic,
+          payment: payment,
+          inquiry: inquiry,
         };
-        return visibleColumnKeys.map(k => cellByKey[k]);
+        return visibleColumnKeys.map(k => typeof cellByKey[k] === 'number' ? cellByKey[k].toLocaleString() : cellByKey[k]);
       });
 
       autoTable(doc, {
@@ -970,8 +1067,8 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
             {/* Top Section - Metrics Cards (3) */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               {/* Order Shipped Card */}
-              <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
-                <div className="flex items-center justify-between">
+              {/* <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100"> */}
+                {/* <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm font-medium text-gray-600 mb-1">ORDER SHIPPED</p>
                     <p className="text-sm text-gray-500 mb-2">TOTAL ORDERS SHIPPED</p>
@@ -981,10 +1078,10 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
                   <div className="w-12 h-12 bg-teal-50 rounded-xl flex items-center justify-center">
                     <ShoppingCart className="w-6 h-6 text-teal-600" />
                   </div>
-                </div>
-              </div>
+                </div> */}
+              {/* </div> */}
               {/* Total Transactions Card */}
-              <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
+              {/* <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm font-medium text-gray-600 mb-1">TOTAL NUMBER OF</p>
@@ -996,7 +1093,7 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
                     <TrendingUp className="w-6 h-6 text-blue-600" />
                   </div>
                 </div>
-              </div>
+              </div> */}
             </div>
             {/* Horizontal Filters Bar */}
             <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100">
@@ -1181,7 +1278,7 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
                   </div>
                 </div>
                 {/* Shop Name (Seller) */}
-                <div className="flex-1 min-w-[160px]">
+                {/* <div className="flex-1 min-w-[160px]">
                   <label className="block text-xs font-medium text-gray-700 mb-1">SHOP NAME</label>
                   <select
                     value={adminFilters.seller}
@@ -1193,7 +1290,7 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
                       <option key={s.uid} value={s.uid}>{s.shopName || s.name || s.uid}</option>
                     ))}
                   </select>
-                </div>
+                </div> */}
                 {/* Apply / Reset */}
                 <div className="flex items-end gap-2 pt-2">
                   <button className="px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white text-xs font-medium rounded-lg shadow-sm transition">Apply</button>
@@ -1306,31 +1403,234 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
                       </tr>
                     )}
                     {adminSellersDisplayed.map(s => {
-                      // TODO: replace with real aggregation filtered by date/province/cities
-                      const gross = 0;
-                      const avgOrder = 0;
-                      const tx = 0;
-                      const logistic = 0;
-                      const payment = 0;
-                      const inquiry = 0;
+                      // Calculate gross sales from real-time orders with ALL admin filters
+                      const sellerOrders = confirmationOrders.filter(o => {
+                        // Check if order belongs to this seller
+                        const orderSellerIds = o.sellerIds || [];
+                        if (!orderSellerIds.includes(s.uid)) return false;
+                        
+                        // Apply date range filter
+                        if (adminFilters.dateFrom && adminFilters.dateTo) {
+                          const orderDate = o.timestamp ? o.timestamp.slice(0, 10) : '';
+                          if (orderDate < adminFilters.dateFrom || orderDate > adminFilters.dateTo) {
+                            return false;
+                          }
+                        }
+                        
+                        // Apply province filter - skip if order has no region data
+                        if (adminFilters.province !== 'all') {
+                          // If order has no region data, include it anyway (don't filter it out)
+                          if (o.region && o.region.province) {
+                            const orderProvinceCode = o.region.province;
+                            
+                            // DEBUG: Log order region data for first order
+                            if (s === adminSellersDisplayed[0] && o === confirmationOrders[0]) {
+                              console.log('[PROVINCE FILTER DEBUG]', {
+                                filterProvinceCode: adminFilters.province,
+                                orderProvinceCode: orderProvinceCode,
+                                orderRegion: o.region,
+                                orderFullData: { id: o.id, sellerIds: o.sellerIds, region: o.region },
+                                match: orderProvinceCode === adminFilters.province,
+                              });
+                            }
+                            
+                            // Only filter out if province doesn't match
+                            if (orderProvinceCode !== adminFilters.province) {
+                              return false;
+                            }
+                          }
+                          // If no region data, we include the order (don't filter it out)
+                        }
+                        
+                        // Apply city filter (multi-select) - skip if order has no region data
+                        if (adminSelectedCityCodes.size > 0) {
+                          // If order has no region data, include it anyway (don't filter it out)
+                          if (o.region && o.region.municipality) {
+                            const orderCity = o.region.municipality;
+                            // Find matching city code from phCities
+                            const matchingCity = phCities.find(c => c.name === orderCity);
+                            if (!matchingCity || !adminSelectedCityCodes.has(matchingCity.code)) {
+                              return false;
+                            }
+                          }
+                          // If no region data, we include the order (don't filter it out)
+                        }
+                        
+                        // Only count PAID orders
+                        if (!isPaidStatus(o.status)) return false;
+                        
+                        return true;
+                      });
+                      
+                      const gross = sellerOrders.reduce((sum, o) => {
+                        const summary = o.summary || {};
+                        const subtotal = Number(summary.subtotal) || 0;
+                        return sum + subtotal;
+                      }, 0);
+                      
+                      // Calculate average order value
+                      const tx = sellerOrders.length;
+                      const avgOrder = tx > 0 ? gross / tx : 0;
+                      
+                      // Calculate fees from actual order data
+                      const logistic = sellerOrders.reduce((sum, o) => {
+                        const summary = o.summary || {};
+                        return sum + (Number(summary.sellerShippingCharge) || 0);
+                      }, 0);
+                      
+                      const payment = sellerOrders.reduce((sum, o) => {
+                        const fees = o.feesBreakdown || {};
+                        return sum + (Number(fees.paymentProcessingFee) || 0);
+                      }, 0);
+                      
+                      const inquiry = sellerOrders.reduce((sum, o) => {
+                        const fees = o.feesBreakdown || {};
+                        return sum + (Number(fees.platformFee) || 0);
+                      }, 0);
+                      
+                      // Debug logging for first seller - COMPREHENSIVE CHECK
+                      if (s === adminSellersDisplayed[0]) {
+                        console.log('========================================');
+                        console.log('[Export Table] COMPREHENSIVE DEBUG');
+                        console.log('========================================');
+                        
+                        // All sellers we're checking
+                        console.log('1. ALL SELLERS IN SYSTEM:', adminSellersDisplayed.map(seller => ({
+                          uid: seller.uid,
+                          shopName: seller.shopName || seller.name,
+                        })));
+                        
+                        // All orders and their sellerIds with seller name lookup
+                        console.log('2. ALL ORDERS AND THEIR SELLERIDS:', confirmationOrders.map(o => {
+                          const orderSellerIds = o.sellerIds || [];
+                          const sellerNames = orderSellerIds.map(sid => {
+                            const seller = adminSellersDisplayed.find(s => s.uid === sid);
+                            return seller ? (seller.shopName || seller.name) : 'UNKNOWN SELLER';
+                          });
+                          const paidStatuses = ['to_ship', 'processing', 'completed'];
+                          return {
+                            orderId: o.id,
+                            sellerIds: o.sellerIds,
+                            sellerNames: sellerNames,
+                            sellerIdsType: Array.isArray(o.sellerIds) ? 'array' : typeof o.sellerIds,
+                            sellerIdsLength: Array.isArray(o.sellerIds) ? o.sellerIds.length : 'N/A',
+                            status: o.status,
+                            isPaid: isPaidStatus(o.status),
+                            isPaidCheck: paidStatuses.includes(o.status),
+                            timestamp: o.timestamp,
+                            subtotal: o.summary?.subtotal,
+                          };
+                        }));
+                        
+                        // Match summary: which sellers have orders
+                        const sellerOrderCounts = adminSellersDisplayed.map(seller => {
+                          const count = confirmationOrders.filter(o => {
+                            const orderSellerIds = o.sellerIds || [];
+                            return orderSellerIds.includes(seller.uid) && isPaidStatus(o.status);
+                          }).length;
+                          return {
+                            shopName: seller.shopName || seller.name,
+                            uid: seller.uid,
+                            paidOrderCount: count,
+                          };
+                        }).filter(x => x.paidOrderCount > 0);
+                        
+                        console.log('3. SELLERS WITH PAID ORDERS:', sellerOrderCounts);
+                        
+                        // First seller match attempt
+                        console.log('4. FIRST SELLER MATCH ATTEMPT:', {
+                          sellerName: s.shopName || s.name || s.uid,
+                          sellerUid: s.uid,
+                          sellerUidType: typeof s.uid,
+                          totalOrders: confirmationOrders.length,
+                          matchedOrders: sellerOrders.length,
+                          firstOrderSellerIds: confirmationOrders[0]?.sellerIds,
+                          doesMatch: confirmationOrders[0]?.sellerIds?.includes(s.uid),
+                        });
+                        
+                        console.log('========================================');
+                      }
+                      
                       const cellByKey: Record<string, any> = {
-                        seller: s.shopName || s.name || s.uid,
-                        gross: gross.toLocaleString(),
-                        avg: avgOrder.toLocaleString(),
-                        tx: tx.toLocaleString(),
-                        logistic: logistic.toLocaleString(),
-                        payment: payment.toLocaleString(),
-                        inquiry: inquiry.toLocaleString(),
+                        seller: s.storeName || s.shopName || s.name || s.uid,
+                        gross: gross,
+                        avg: avgOrder,
+                        tx: tx,
+                        logistic: logistic,
+                        payment: payment,
+                        inquiry: inquiry,
                       };
+                      
+                      // Calculate row total (sum of numeric visible columns, excluding 'seller')
+                      const rowTotal = visibleColumnKeys.reduce((sum, k) => {
+                        if (k === 'seller') return sum;
+                        return sum + (typeof cellByKey[k] === 'number' ? cellByKey[k] : 0);
+                      }, 0);
+                      
                       return (
                         <tr key={s.uid} className="border-t last:border-b-0 hover:bg-gray-50">
                           {visibleColumnKeys.map(k => (
-                            <td key={k} className={`px-4 py-3 text-gray-700 ${k === 'seller' ? 'font-medium text-gray-900' : ''}`}>{cellByKey[k]}</td>
+                            <td key={k} className={`px-4 py-3 text-gray-700 ${k === 'seller' ? 'font-medium text-gray-900' : ''}`}>
+                              {typeof cellByKey[k] === 'number' ? cellByKey[k].toLocaleString() : cellByKey[k]}
+                            </td>
                           ))}
                         </tr>
                       );
                     })}
                   </tbody>
+                  <tfoot className="bg-gray-50 border-t-2 border-gray-300">
+                    <tr className="text-[11px] font-bold">
+                      {visibleColumnKeys.map((k, idx) => {
+                        if (k === 'seller') {
+                          return <td key={k} className="px-4 py-3 text-gray-900">TOTAL</td>;
+                        }
+                        // Calculate column total with ALL admin filters
+                        const columnTotal = adminSellersDisplayed.reduce((sum, s) => {
+                          const sellerOrders = confirmationOrders.filter(o => {
+                            const orderSellerIds = o.sellerIds || [];
+                            if (!orderSellerIds.includes(s.uid)) return false;
+                            
+                            // Date range filter
+                            if (adminFilters.dateFrom && adminFilters.dateTo) {
+                              const orderDate = o.timestamp ? o.timestamp.slice(0, 10) : '';
+                              if (orderDate < adminFilters.dateFrom || orderDate > adminFilters.dateTo) return false;
+                            }
+                            
+                            // Province filter - skip if order has no region data
+                            if (adminFilters.province !== 'all') {
+                              if (o.region && o.region.province) {
+                                const orderProvinceCode = o.region.province;
+                                if (orderProvinceCode !== adminFilters.province) return false;
+                              }
+                              // If no region data, include the order
+                            }
+                            
+                            // City filter - skip if order has no region data
+                            if (adminSelectedCityCodes.size > 0) {
+                              if (o.region && o.region.municipality) {
+                                const orderCity = o.region.municipality;
+                                const matchingCity = phCities.find(c => c.name === orderCity);
+                                if (!matchingCity || !adminSelectedCityCodes.has(matchingCity.code)) return false;
+                              }
+                              // If no region data, include the order
+                            }
+                            
+                            if (!isPaidStatus(o.status)) return false;
+                            return true;
+                          });
+                          const gross = sellerOrders.reduce((s, o) => s + (Number(o.summary?.subtotal) || 0), 0);
+                          const tx = sellerOrders.length;
+                          const avgOrder = tx > 0 ? gross / tx : 0;
+                          const logistic = sellerOrders.reduce((s, o) => s + (Number(o.summary?.sellerShippingCharge) || 0), 0);
+                          const payment = sellerOrders.reduce((s, o) => s + (Number(o.feesBreakdown?.paymentProcessingFee) || 0), 0);
+                          const inquiry = sellerOrders.reduce((s, o) => s + (Number(o.feesBreakdown?.platformFee) || 0), 0);
+                          const values: Record<string, number> = { gross, avg: avgOrder, tx, logistic, payment, inquiry };
+                          return sum + (values[k] || 0);
+                        }, 0);
+                        return <td key={k} className="px-4 py-3 text-gray-900">{columnTotal.toLocaleString()}</td>;
+                      })}
+                    </tr>
+                  </tfoot>
                 </table>
               </div>
               <div className="px-4 py-3 border-t border-gray-100 flex items-center justify-between text-xs text-gray-600">
@@ -1536,17 +1836,45 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
 
   // Live Orders subscription for Orders tab
   useEffect(() => {
-    if (!uid) return;
+    if (!uid) {
+      console.log('[Dashboard] No UID, skipping order subscription');
+      return;
+    }
+    console.log('[Dashboard] Setting up order subscription for:', { uid, isAdmin, isSubAccount, parentId });
     let unsub: (() => void) | undefined;
     if (isAdmin) {
-      unsub = OrdersService.listenAll(setConfirmationOrders);
+      console.log('[Dashboard] Subscribing to ALL orders (admin)');
+      unsub = OrdersService.listenAll((orders) => {
+        console.log('[Dashboard] Received orders (admin):', orders.length, orders);
+        
+        // DEBUG: Log all order region data
+        console.log('[Dashboard] ORDER REGION DATA:', orders.map(o => ({
+          id: o.id,
+          region: o.region,
+          hasRegion: !!o.region,
+          province: o.region?.province,
+          municipality: o.region?.municipality,
+        })));
+        
+        setConfirmationOrders(orders);
+      });
     } else if (isSubAccount && parentId) {
-      unsub = OrdersService.listenBySeller(parentId, setConfirmationOrders);
+      console.log('[Dashboard] Subscribing to parent seller orders:', parentId);
+      unsub = OrdersService.listenBySeller(parentId, (orders) => {
+        console.log('[Dashboard] Received orders (sub-account):', orders.length, orders);
+        setConfirmationOrders(orders);
+      });
     } else {
-      // Fix: main seller accounts should subscribe to their own orders
-      unsub = OrdersService.listenBySeller(uid, setConfirmationOrders);
+      console.log('[Dashboard] Subscribing to seller orders:', uid);
+      unsub = OrdersService.listenBySeller(uid, (orders) => {
+        console.log('[Dashboard] Received orders (seller):', orders.length, orders);
+        setConfirmationOrders(orders);
+      });
     }
-    return () => unsub && unsub();
+    return () => {
+      console.log('[Dashboard] Unsubscribing from orders');
+      unsub && unsub();
+    };
   }, [isAdmin, isSubAccount, parentId, uid]);
   
   // Load provinces (Philippines) - admin only
@@ -1576,17 +1904,37 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
     (async () => {
       try {
         const sellersSnap = await getDocs(collection(db, 'Seller'));
-        const sellers = sellersSnap.docs.map(doc => {
+        console.log('[Dashboard] Total Seller documents fetched:', sellersSnap.docs.length);
+        
+        const allSellers = sellersSnap.docs.map(doc => {
           const data = doc.data();
+          // Extract storeName from vendor.company.storeName path
+          const storeName = data.vendor?.company?.storeName || '';
+          // Extract role directly from root level (not from permissions)
+          const role = data.role || '';
+          
           return {
             uid: doc.id,
             name: data.name || data.ownerName || data.displayName || '',
             shopName: data.shopName || data.storeName || data.businessName || '',
+            storeName: storeName, // This is what we'll display
+            role: role,
           };
         });
+        
+        // Filter OUT admins - only show sellers (role !== 'admin')
+        const sellers = allSellers.filter(seller => seller.role !== 'admin');
+        
+        console.log('[Dashboard] All sellers:', allSellers.length);
+        console.log('[Dashboard] Filtered sellers (excluding admins):', sellers.length);
+        console.log('[Dashboard] Seller details:', sellers.map(s => ({ 
+          uid: s.uid, 
+          storeName: s.storeName, 
+          role: s.role 
+        })));
+        
         if (!cancelled) {
           setAdminSellers(sellers);
-          console.log('[Dashboard] Loaded sellers from Firebase:', sellers.length);
         }
       } catch (error) {
         console.error('[Dashboard] Error loading sellers:', error);
