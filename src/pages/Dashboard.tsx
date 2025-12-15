@@ -96,6 +96,7 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
     logistic: true,
     payment: true,
     inquiry: true,
+    orderSummary: true, // NEW: Order Summary column (moved to last)
   });
   const columnLabels: Record<string, string> = {
     seller: 'Seller Store',
@@ -105,6 +106,7 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
     logistic: 'Logistic Fee',
     payment: 'Payment Fee',
     inquiry: 'Platform Fee',
+    orderSummary: 'Order Summary', // NEW (moved to last)
   };
   const visibleColumnKeys = Object.keys(exportColumnVisibility).filter(k => exportColumnVisibility[k]);
   const [showExportColumnMenu, setShowExportColumnMenu] = useState(false);
@@ -112,6 +114,12 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
   // Export dropdown state
   const [showExportMenu, setShowExportMenu] = useState(false);
   const exportMenuRef = useRef<HTMLDivElement | null>(null);
+  // Order Summary Modal state
+  const [showOrderSummaryModal, setShowOrderSummaryModal] = useState(false);
+  const [selectedSellerForOrders, setSelectedSellerForOrders] = useState<{ uid: string; name: string } | null>(null);
+  const [sellerOrders, setSellerOrders] = useState<Order[]>([]);
+  // Track which orders have expanded item details
+  const [expandedOrderIds, setExpandedOrderIds] = useState<Set<string>>(new Set());
   useEffect(() => {
     if (!showExportColumnMenu) return;
     const handler = (e: MouseEvent) => {
@@ -698,23 +706,23 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
             if (orderDate < adminFilters.dateFrom || orderDate > adminFilters.dateTo) return false;
           }
           
-          // Province filter - skip if order has no region data
+          // Province filter - EXCLUDE orders without region data when filter is active
           if (adminFilters.province !== 'all') {
-            if (o.region && o.region.province) {
-              const orderProvinceCode = o.region.province;
-              if (orderProvinceCode !== adminFilters.province) return false;
+            if (!o.region || !o.region.province) {
+              return false;
             }
-            // If no region data, include the order
+            const orderProvinceCode = o.region.province;
+            if (orderProvinceCode !== adminFilters.province) return false;
           }
           
-          // City filter - skip if order has no region data
+          // City filter - EXCLUDE orders without region data when filter is active
           if (adminSelectedCityCodes.size > 0) {
-            if (o.region && o.region.municipality) {
-              const orderCity = o.region.municipality;
-              const matchingCity = phCities.find(c => c.name === orderCity);
-              if (!matchingCity || !adminSelectedCityCodes.has(matchingCity.code)) return false;
+            if (!o.region || !o.region.municipality) {
+              return false;
             }
-            // If no region data, include the order
+            const orderCity = o.region.municipality;
+            const matchingCity = phCities.find(c => c.name === orderCity);
+            if (!matchingCity || !adminSelectedCityCodes.has(matchingCity.code)) return false;
           }
           
           if (!isPaidStatus(o.status)) return false;
@@ -845,6 +853,50 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
       console.error('PDF export failed:', err);
       setError('Failed to export PDF. Please try again.');
     }
+  };
+
+  // Handler to open Order Summary modal for a seller
+  const handleOpenOrderSummary = (seller: { uid: string; storeName?: string; shopName?: string; name?: string }) => {
+    const sellerName = seller.storeName || seller.shopName || seller.name || seller.uid;
+    
+    // Filter orders for this seller with admin filters applied
+    const filteredSellerOrders = confirmationOrders.filter(order => {
+      // Must belong to this seller
+      const orderSellerIds = order.sellerIds || [];
+      if (!orderSellerIds.includes(seller.uid)) return false;
+      
+      // Apply admin filters
+      // Date range filter
+      if (adminFilters.dateFrom && adminFilters.dateTo) {
+        const orderDate = order.timestamp ? order.timestamp.slice(0, 10) : '';
+        if (orderDate < adminFilters.dateFrom || orderDate > adminFilters.dateTo) return false;
+      }
+      
+      // Province filter - EXCLUDE orders without region data when filter is active
+      if (adminFilters.province !== 'all') {
+        if (!order.region || !order.region.province) {
+          return false;
+        }
+        const orderProvinceCode = order.region.province;
+        if (orderProvinceCode !== adminFilters.province) return false;
+      }
+      
+      // City filter - EXCLUDE orders without region data when filter is active
+      if (adminSelectedCityCodes.size > 0) {
+        if (!order.region || !order.region.municipality) {
+          return false;
+        }
+        const orderCity = order.region.municipality;
+        const matchingCity = phCities.find(c => c.name === orderCity);
+        if (!matchingCity || !adminSelectedCityCodes.has(matchingCity.code)) return false;
+      }
+      
+      return true;
+    });
+    
+    setSelectedSellerForOrders({ uid: seller.uid, name: sellerName });
+    setSellerOrders(filteredSellerOrders);
+    setShowOrderSummaryModal(true);
   };
 
   console.log("Dashboard component rendered for user:", user);
@@ -1417,43 +1469,45 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
                           }
                         }
                         
-                        // Apply province filter - skip if order has no region data
+                        // Apply province filter - EXCLUDE orders without region data when filter is active
                         if (adminFilters.province !== 'all') {
-                          // If order has no region data, include it anyway (don't filter it out)
-                          if (o.region && o.region.province) {
-                            const orderProvinceCode = o.region.province;
-                            
-                            // DEBUG: Log order region data for first order
-                            if (s === adminSellersDisplayed[0] && o === confirmationOrders[0]) {
-                              console.log('[PROVINCE FILTER DEBUG]', {
-                                filterProvinceCode: adminFilters.province,
-                                orderProvinceCode: orderProvinceCode,
-                                orderRegion: o.region,
-                                orderFullData: { id: o.id, sellerIds: o.sellerIds, region: o.region },
-                                match: orderProvinceCode === adminFilters.province,
-                              });
-                            }
-                            
-                            // Only filter out if province doesn't match
-                            if (orderProvinceCode !== adminFilters.province) {
-                              return false;
-                            }
+                          // If order has no region data, EXCLUDE it (filter it out)
+                          if (!o.region || !o.region.province) {
+                            return false;
                           }
-                          // If no region data, we include the order (don't filter it out)
+                          
+                          const orderProvinceCode = o.region.province;
+                          
+                          // DEBUG: Log order region data for first order
+                          if (s === adminSellersDisplayed[0] && o === confirmationOrders[0]) {
+                            console.log('[PROVINCE FILTER DEBUG]', {
+                              filterProvinceCode: adminFilters.province,
+                              orderProvinceCode: orderProvinceCode,
+                              orderRegion: o.region,
+                              orderFullData: { id: o.id, sellerIds: o.sellerIds, region: o.region },
+                              match: orderProvinceCode === adminFilters.province,
+                            });
+                          }
+                          
+                          // Filter out if province doesn't match
+                          if (orderProvinceCode !== adminFilters.province) {
+                            return false;
+                          }
                         }
                         
-                        // Apply city filter (multi-select) - skip if order has no region data
+                        // Apply city filter (multi-select) - EXCLUDE orders without region data when filter is active
                         if (adminSelectedCityCodes.size > 0) {
-                          // If order has no region data, include it anyway (don't filter it out)
-                          if (o.region && o.region.municipality) {
-                            const orderCity = o.region.municipality;
-                            // Find matching city code from phCities
-                            const matchingCity = phCities.find(c => c.name === orderCity);
-                            if (!matchingCity || !adminSelectedCityCodes.has(matchingCity.code)) {
-                              return false;
-                            }
+                          // If order has no region data, EXCLUDE it (filter it out)
+                          if (!o.region || !o.region.municipality) {
+                            return false;
                           }
-                          // If no region data, we include the order (don't filter it out)
+                          
+                          const orderCity = o.region.municipality;
+                          // Find matching city code from phCities
+                          const matchingCity = phCities.find(c => c.name === orderCity);
+                          if (!matchingCity || !adminSelectedCityCodes.has(matchingCity.code)) {
+                            return false;
+                          }
                         }
                         
                         // Only count PAID orders
@@ -1556,14 +1610,15 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
                         gross: gross,
                         avg: avgOrder,
                         tx: tx,
+                        orderSummary: tx, // NEW: Order count for the summary
                         logistic: logistic,
                         payment: payment,
                         inquiry: inquiry,
                       };
                       
-                      // Calculate row total (sum of numeric visible columns, excluding 'seller')
+                      // Calculate row total (sum of numeric visible columns, excluding 'seller' and 'orderSummary')
                       const rowTotal = visibleColumnKeys.reduce((sum, k) => {
-                        if (k === 'seller') return sum;
+                        if (k === 'seller' || k === 'orderSummary') return sum;
                         return sum + (typeof cellByKey[k] === 'number' ? cellByKey[k] : 0);
                       }, 0);
                       
@@ -1571,7 +1626,17 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
                         <tr key={s.uid} className="border-t last:border-b-0 hover:bg-gray-50">
                           {visibleColumnKeys.map(k => (
                             <td key={k} className={`px-4 py-3 text-gray-700 ${k === 'seller' ? 'font-medium text-gray-900' : ''}`}>
-                              {typeof cellByKey[k] === 'number' ? cellByKey[k].toLocaleString() : cellByKey[k]}
+                              {k === 'orderSummary' ? (
+                                <button
+                                  onClick={() => handleOpenOrderSummary(s)}
+                                  className="text-teal-600 hover:text-teal-700 font-medium underline cursor-pointer"
+                                  title="View order details"
+                                >
+                                  {tx} {tx === 1 ? 'order' : 'orders'}
+                                </button>
+                              ) : (
+                                typeof cellByKey[k] === 'number' ? cellByKey[k].toLocaleString() : cellByKey[k]
+                              )}
                             </td>
                           ))}
                         </tr>
@@ -1583,6 +1648,43 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
                       {visibleColumnKeys.map((k, idx) => {
                         if (k === 'seller') {
                           return <td key={k} className="px-4 py-3 text-gray-900">TOTAL</td>;
+                        }
+                        // Skip orderSummary in totals (it's not a sum-able metric)
+                        if (k === 'orderSummary') {
+                          const totalOrders = adminSellersDisplayed.reduce((sum, s) => {
+                            const sellerOrders = confirmationOrders.filter(o => {
+                              const orderSellerIds = o.sellerIds || [];
+                              if (!orderSellerIds.includes(s.uid)) return false;
+                              
+                              // Date range filter
+                              if (adminFilters.dateFrom && adminFilters.dateTo) {
+                                const orderDate = o.timestamp ? o.timestamp.slice(0, 10) : '';
+                                if (orderDate < adminFilters.dateFrom || orderDate > adminFilters.dateTo) return false;
+                              }
+                              
+                              // Province filter
+                              if (adminFilters.province !== 'all') {
+                                if (o.region && o.region.province) {
+                                  const orderProvinceCode = o.region.province;
+                                  if (orderProvinceCode !== adminFilters.province) return false;
+                                }
+                              }
+                              
+                              // City filter
+                              if (adminSelectedCityCodes.size > 0) {
+                                if (o.region && o.region.municipality) {
+                                  const orderCity = o.region.municipality;
+                                  const matchingCity = phCities.find(c => c.name === orderCity);
+                                  if (!matchingCity || !adminSelectedCityCodes.has(matchingCity.code)) return false;
+                                }
+                              }
+                              
+                              if (!isPaidStatus(o.status)) return false;
+                              return true;
+                            });
+                            return sum + sellerOrders.length;
+                          }, 0);
+                          return <td key={k} className="px-4 py-3 text-gray-900">{totalOrders} {totalOrders === 1 ? 'order' : 'orders'}</td>;
                         }
                         // Calculate column total with ALL admin filters
                         const columnTotal = adminSellersDisplayed.reduce((sum, s) => {
@@ -1596,23 +1698,23 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
                               if (orderDate < adminFilters.dateFrom || orderDate > adminFilters.dateTo) return false;
                             }
                             
-                            // Province filter - skip if order has no region data
+                            // Province filter - EXCLUDE orders without region data when filter is active
                             if (adminFilters.province !== 'all') {
-                              if (o.region && o.region.province) {
-                                const orderProvinceCode = o.region.province;
-                                if (orderProvinceCode !== adminFilters.province) return false;
+                              if (!o.region || !o.region.province) {
+                                return false;
                               }
-                              // If no region data, include the order
+                              const orderProvinceCode = o.region.province;
+                              if (orderProvinceCode !== adminFilters.province) return false;
                             }
                             
-                            // City filter - skip if order has no region data
+                            // City filter - EXCLUDE orders without region data when filter is active
                             if (adminSelectedCityCodes.size > 0) {
-                              if (o.region && o.region.municipality) {
-                                const orderCity = o.region.municipality;
-                                const matchingCity = phCities.find(c => c.name === orderCity);
-                                if (!matchingCity || !adminSelectedCityCodes.has(matchingCity.code)) return false;
+                              if (!o.region || !o.region.municipality) {
+                                return false;
                               }
-                              // If no region data, include the order
+                              const orderCity = o.region.municipality;
+                              const matchingCity = phCities.find(c => c.name === orderCity);
+                              if (!matchingCity || !adminSelectedCityCodes.has(matchingCity.code)) return false;
                             }
                             
                             if (!isPaidStatus(o.status)) return false;
@@ -1648,6 +1750,313 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
                 </div>
               </div>
             </div>
+            
+            {/* Order Summary Modal */}
+            {showOrderSummaryModal && selectedSellerForOrders && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in">
+                <div className="relative w-full max-w-6xl max-h-[90vh] bg-white rounded-2xl shadow-2xl overflow-hidden">
+                  {/* Header */}
+                  <div className="bg-gradient-to-r from-teal-600 to-teal-500 px-6 py-4 flex items-center justify-between">
+                    <div>
+                      <h3 className="text-xl font-semibold text-white">Order Summary</h3>
+                      <p className="text-sm text-white/80 mt-1">{selectedSellerForOrders.name}</p>
+                    </div>
+                    <button
+                      onClick={() => {
+                        setShowOrderSummaryModal(false);
+                        setSelectedSellerForOrders(null);
+                        setSellerOrders([]);
+                        setExpandedOrderIds(new Set()); // Reset expanded items
+                      }}
+                      className="text-white/80 hover:text-white transition p-2 hover:bg-white/10 rounded-lg"
+                    >
+                      <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </div>
+                  
+                  {/* Content */}
+                  <div className="p-6 overflow-y-auto max-h-[calc(90vh-200px)]">
+                    {sellerOrders.length === 0 ? (
+                      <div className="text-center py-12">
+                        <div className="w-16 h-16 mx-auto mb-4 bg-gray-100 rounded-full flex items-center justify-center">
+                          <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" />
+                          </svg>
+                        </div>
+                        <p className="text-gray-600 font-medium">No orders found</p>
+                        <p className="text-sm text-gray-500 mt-1">This seller has no orders matching the current filters</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-4">
+                        <div className="flex items-center justify-between mb-4">
+                          <p className="text-sm text-gray-600">
+                            Showing <span className="font-semibold text-gray-900">{sellerOrders.length}</span> {sellerOrders.length === 1 ? 'order' : 'orders'}
+                          </p>
+                        </div>
+                        
+                        <div className="space-y-4">
+                          {sellerOrders.map((order) => (
+                            <div key={order.id} className="border border-gray-200 rounded-xl overflow-hidden hover:shadow-md transition-shadow bg-white">
+                              {/* Order Header */}
+                              <div className="bg-gray-50 px-4 py-3 border-b border-gray-200">
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center gap-3">
+                                    <span className="font-semibold text-gray-900">#{order.id}</span>
+                                    <span className={`px-2 py-1 text-xs font-medium rounded-full ${
+                                      order.status === 'completed' ? 'bg-green-100 text-green-700' :
+                                      order.status === 'processing' || order.status === 'to_ship' ? 'bg-blue-100 text-blue-700' :
+                                      order.status === 'shipped' || order.status === 'shipping' ? 'bg-purple-100 text-purple-700' :
+                                      order.status === 'cancelled' ? 'bg-red-100 text-red-700' :
+                                      'bg-gray-100 text-gray-700'
+                                    }`}>
+                                      {order.status.replace(/_/g, ' ').toUpperCase()}
+                                    </span>
+                                  </div>
+                                  <div className="text-right">
+                                    <div className="text-lg font-bold text-gray-900">
+                                      ₱{(order.summary?.subtotal || order.total || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Order Details */}
+                              <div className="p-4">
+                                <div className="grid grid-cols-3 gap-4 mb-4 text-sm">
+                                  <div>
+                                    <span className="text-gray-500 text-xs">Customer</span>
+                                    <p className="text-gray-900 font-medium">{order.customer?.name || 'N/A'}</p>
+                                  </div>
+                                  <div>
+                                    <span className="text-gray-500 text-xs">Date</span>
+                                    <p className="text-gray-900 font-medium">
+                                      {order.timestamp ? new Date(order.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'N/A'}
+                                    </p>
+                                  </div>
+                                  <div>
+                                    <span className="text-gray-500 text-xs">Payment</span>
+                                    <p className="text-gray-900 font-medium">{order.feesBreakdown?.paymentMethod || order.paymentType || 'N/A'}</p>
+                                  </div>
+                                </div>
+
+                                {order.region && (
+                                  <div className="mb-4 text-sm">
+                                    <span className="text-gray-500 text-xs">Location</span>
+                                    <p className="text-gray-900 font-medium">
+                                      {[order.region.municipality, order.region.province].filter(Boolean).join(', ') || 'N/A'}
+                                    </p>
+                                  </div>
+                                )}
+
+                                {/* Items List - Collapsible */}
+                                {order.items && order.items.length > 0 && (
+                                  <div className="mt-4">
+                                    <button
+                                      onClick={() => {
+                                        setExpandedOrderIds(prev => {
+                                          const newSet = new Set(prev);
+                                          if (newSet.has(order.id)) {
+                                            newSet.delete(order.id);
+                                          } else {
+                                            newSet.add(order.id);
+                                          }
+                                          return newSet;
+                                        });
+                                      }}
+                                      className="w-full flex items-center justify-between text-xs font-semibold text-gray-700 hover:text-teal-600 transition py-2 px-3 rounded-lg hover:bg-gray-50"
+                                    >
+                                      <span>Order Items ({order.items.length})</span>
+                                      <svg 
+                                        className={`w-4 h-4 transition-transform ${expandedOrderIds.has(order.id) ? 'rotate-180' : ''}`}
+                                        fill="none" 
+                                        stroke="currentColor" 
+                                        viewBox="0 0 24 24"
+                                      >
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                      </svg>
+                                    </button>
+                                    {expandedOrderIds.has(order.id) && (
+                                      <div className="space-y-2 mt-2 animate-fade-in">
+                                        {order.items.map((item, idx) => (
+                                          <div key={idx} className="flex items-center gap-3 bg-gray-50 rounded-lg p-3 border border-gray-100">
+                                            {/* Product Image */}
+                                            {item.imageUrl && (
+                                              <div className="flex-shrink-0 w-16 h-16 bg-white rounded-lg border border-gray-200 overflow-hidden">
+                                                <img 
+                                                  src={item.imageUrl} 
+                                                  alt={item.name || 'Product'} 
+                                                  className="w-full h-full object-cover"
+                                                  onError={(e) => {
+                                                    // Fallback to placeholder if image fails to load
+                                                    e.currentTarget.src = '/placeholder.svg';
+                                                  }}
+                                                />
+                                              </div>
+                                            )}
+                                            {/* Product Details */}
+                                            <div className="flex-1 min-w-0">
+                                              <p className="text-sm font-medium text-gray-900 truncate">{item.name || 'Unnamed Item'}</p>
+                                              <div className="flex items-center gap-3 mt-1 flex-wrap">
+                                                {item.category && (
+                                                  <span className="text-xs text-gray-500">
+                                                    <span className="font-medium">Category:</span> {item.category}
+                                                  </span>
+                                                )}
+                                                {item.subcategory && (
+                                                  <span className="text-xs text-gray-500">
+                                                    <span className="font-medium">Type:</span> {item.subcategory}
+                                                  </span>
+                                                )}
+                                              </div>
+                                            </div>
+                                            {/* Pricing */}
+                                            <div className="text-right flex-shrink-0 ml-4">
+                                              <p className="text-sm font-semibold text-gray-900 whitespace-nowrap">
+                                                ₱{((item.price || 0) * (item.quantity || 1)).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                              </p>
+                                              <p className="text-xs text-gray-500">
+                                                {item.quantity || 1}x ₱{(item.price || 0).toFixed(2)}
+                                              </p>
+                                            </div>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+
+                                {/* Fees Breakdown */}
+                                <div className="mt-4 pt-4 border-t border-gray-200">
+                                  <div className="space-y-2 text-sm">
+                                    <div className="flex justify-between text-gray-600">
+                                      <span>Subtotal</span>
+                                      <span>₱{(order.summary?.subtotal || 0).toFixed(2)}</span>
+                                    </div>
+                                    {order.summary?.sellerShippingCharge !== undefined && (
+                                      <div className="flex justify-between text-gray-600">
+                                        <span>Shipping Charge</span>
+                                        <span>₱{(order.summary.sellerShippingCharge || 0).toFixed(2)}</span>
+                                      </div>
+                                    )}
+                                    {order.feesBreakdown?.paymentProcessingFee !== undefined && (
+                                      <div className="flex justify-between text-red-600 text-xs">
+                                        <span>Payment Processing Fee</span>
+                                        <span>-₱{(order.feesBreakdown.paymentProcessingFee || 0).toFixed(2)}</span>
+                                      </div>
+                                    )}
+                                    {order.feesBreakdown?.platformFee !== undefined && (
+                                      <div className="flex justify-between text-red-600 text-xs">
+                                        <span>Platform Fee</span>
+                                        <span>-₱{(order.feesBreakdown.platformFee || 0).toFixed(2)}</span>
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                  
+                  {/* Footer */}
+                  <div className="border-t border-gray-200 px-6 py-4 bg-gray-50 flex items-center justify-between">
+                    <button
+                      onClick={() => {
+                        // Export orders to CSV with seller info and timestamp header
+                        const now = new Date();
+                        const exportDate = now.toLocaleDateString('en-US', { 
+                          year: 'numeric', 
+                          month: 'long', 
+                          day: 'numeric' 
+                        });
+                        const exportTime = now.toLocaleTimeString('en-US', { 
+                          hour: '2-digit', 
+                          minute: '2-digit', 
+                          second: '2-digit',
+                          hour12: true 
+                        });
+                        
+                        // Calculate summary totals
+                        const totalOrders = sellerOrders.length;
+                        const totalRevenue = sellerOrders.reduce((sum, o) => sum + (o.summary?.subtotal || 0), 0);
+                        const totalShipping = sellerOrders.reduce((sum, o) => sum + (o.summary?.sellerShippingCharge || 0), 0);
+                        const totalPaymentFees = sellerOrders.reduce((sum, o) => sum + (o.feesBreakdown?.paymentProcessingFee || 0), 0);
+                        const totalPlatformFees = sellerOrders.reduce((sum, o) => sum + (o.feesBreakdown?.platformFee || 0), 0);
+                        
+                        // Header section with seller info and metadata
+                        const headerSection = [
+                          ['Order Summary Report'],
+                          [''],
+                          ['Seller:', selectedSellerForOrders.name],
+                          ['Export Date:', exportDate],
+                          ['Export Time:', exportTime],
+                          ['Total Orders:', totalOrders.toString()],
+                          [''],
+                          ['Summary:'],
+                          ['Total Revenue:', `₱${totalRevenue.toFixed(2)}`],
+                          ['Total Shipping:', `₱${totalShipping.toFixed(2)}`],
+                          ['Total Payment Fees:', `₱${totalPaymentFees.toFixed(2)}`],
+                          ['Total Platform Fees:', `₱${totalPlatformFees.toFixed(2)}`],
+                          ['Net Amount:', `₱${(totalRevenue - totalPaymentFees - totalPlatformFees).toFixed(2)}`],
+                          [''],
+                          [''], // Extra blank line before table
+                        ];
+                        
+                        const headers = ['Order ID', 'Status', 'Customer', 'Date', 'Items', 'Payment', 'Location', 'Subtotal', 'Shipping', 'Payment Fee', 'Platform Fee'];
+                        const rows = sellerOrders.map(o => [
+                          o.id,
+                          o.status,
+                          o.customer?.name || 'N/A',
+                          o.timestamp ? new Date(o.timestamp).toLocaleDateString() : 'N/A',
+                          o.items?.map(i => `${i.name} (${i.quantity}x)`).join('; ') || 'N/A',
+                          o.feesBreakdown?.paymentMethod || o.paymentType || 'N/A',
+                          o.region ? [o.region.municipality, o.region.province].filter(Boolean).join(', ') : 'N/A',
+                          (o.summary?.subtotal || 0).toFixed(2),
+                          (o.summary?.sellerShippingCharge || 0).toFixed(2),
+                          (o.feesBreakdown?.paymentProcessingFee || 0).toFixed(2),
+                          (o.feesBreakdown?.platformFee || 0).toFixed(2),
+                        ]);
+                        
+                        // Combine header section with data table
+                        const csvContent = [
+                          ...headerSection.map(row => row.map(cell => `"${cell}"`).join(',')),
+                          headers.map(cell => `"${cell}"`).join(','),
+                          ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
+                        ].join('\n');
+                        
+                        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+                        const link = document.createElement('a');
+                        link.href = URL.createObjectURL(blob);
+                        link.download = `order-summary-${selectedSellerForOrders.name.replace(/[^a-z0-9]/gi, '-')}-${new Date().toISOString().slice(0,10)}.csv`;
+                        link.click();
+                      }}
+                      disabled={sellerOrders.length === 0}
+                      className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-teal-700 bg-teal-50 border border-teal-200 rounded-lg hover:bg-teal-100 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <Download className="w-4 h-4" />
+                      Export CSV
+                    </button>
+                    <div className="flex items-center gap-3">
+                      <button
+                        onClick={() => {
+                          setShowOrderSummaryModal(false);
+                          setSelectedSellerForOrders(null);
+                          setSellerOrders([]);
+                          setExpandedOrderIds(new Set()); // Reset expanded items
+                        }}
+                        className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition"
+                      >
+                        Close
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         );
       case 'seller-orders':
@@ -1882,6 +2291,20 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
     if (!isAdmin) return;
     (async () => {
       const rows = await getPhProvinces();
+      
+      // Add "Metro Manila" as a special entry if not already present
+      const hasMetroManila = rows.some(p => 
+        p.name.toLowerCase().includes('metro manila') || 
+        p.code === 'NCR' ||
+        p.code === 'METRO_MANILA'
+      );
+      
+      if (!hasMetroManila) {
+        // Add Metro Manila at the beginning
+        rows.unshift({ code: 'METRO_MANILA', name: 'Metro Manila' });
+        console.log('[Dashboard] Added Metro Manila to province list');
+      }
+      
       setPhProvinces(rows);
     })();
   }, [isAdmin]);
@@ -1891,9 +2314,43 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
     if (!isAdmin) return;
     const provinceCode = adminFilters.province;
     if (!provinceCode || provinceCode === 'all') { setPhCities([]); return; }
+    
     (async () => {
-      const rows = await getPhCitiesAsync(provinceCode);
-      setPhCities(rows);
+      // Special handling for Metro Manila - use static city list
+      if (provinceCode === 'METRO_MANILA') {
+        const metroCities = [
+          { code: "MNL", name: "Manila", provinceCode: "NCR" },
+          { code: "MAC", name: "Makati", provinceCode: "NCR" },
+          { code: "TAG", name: "Taguig", provinceCode: "NCR" },
+          { code: "QSZ", name: "Quezon City", provinceCode: "NCR" },
+          { code: "PAS", name: "Pasay", provinceCode: "NCR" },
+          { code: "PAR", name: "Parañaque", provinceCode: "NCR" },
+          { code: "MAN", name: "Mandaluyong", provinceCode: "NCR" },
+          { code: "SAN", name: "San Juan", provinceCode: "NCR" },
+          { code: "CAL", name: "Caloocan", provinceCode: "NCR" },
+          { code: "VAL", name: "Valenzuela", provinceCode: "NCR" },
+          { code: "NAV", name: "Navotas", provinceCode: "NCR" },
+          { code: "MUN", name: "Muntinlupa", provinceCode: "NCR" },
+          { code: "LAS", name: "Las Piñas", provinceCode: "NCR" },
+          { code: "MAR", name: "Marikina", provinceCode: "NCR" },
+          { code: "PAT", name: "Pateros", provinceCode: "NCR" },
+          { code: "PAS2", name: "Pasig", provinceCode: "NCR" },
+        ].sort((a, b) => a.name.localeCompare(b.name));
+        
+        console.log(`[Dashboard] Loaded ${metroCities.length} cities for Metro Manila`);
+        setPhCities(metroCities);
+        return;
+      }
+      
+      // For other provinces, use the async loader
+      try {
+        const rows = await getPhCitiesAsync(provinceCode);
+        console.log(`[Dashboard] Loaded ${rows.length} cities for province ${provinceCode}`);
+        setPhCities(rows);
+      } catch (error) {
+        console.error('[Dashboard] Failed to load cities:', error);
+        setPhCities([]);
+      }
     })();
   }, [adminFilters.province, isAdmin]);
 
