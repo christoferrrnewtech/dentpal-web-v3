@@ -2,9 +2,11 @@ import { useState, useEffect } from "react";
 import AuthLayout from "@/components/auth/AuthLayout";
 import LoginForm from "@/components/auth/LoginForm";
 import SignupForm from "@/components/auth/SignupForm";
+import ForgotPasswordForm from "@/components/auth/ForgotPasswordForm";
 
 const Auth = () => {
   const [isLogin, setIsLogin] = useState(true);
+  const [showForgotPassword, setShowForgotPassword] = useState(false);
 
   // Clear any tab query parameter when on auth page
   // This ensures users start fresh at dashboard after login
@@ -35,12 +37,20 @@ const Auth = () => {
 
   return (
     <AuthLayout
-      title={isLogin ? "Welcome" : "Create Account"}
-      subtitle={isLogin ? "Sign in to your dental dashboard" : "Join DentPal today"}
+      title={showForgotPassword ? "Reset Password" : isLogin ? "Welcome" : "Create Account"}
+      subtitle={showForgotPassword ? "We'll help you get back to your account" : isLogin ? "Sign in to your dental dashboard" : "Join DentPal today"}
     >
-      {isLogin ? (
+      {showForgotPassword ? (
+        <ForgotPasswordForm
+          onBackToLogin={() => {
+            setShowForgotPassword(false);
+            setIsLogin(true);
+          }}
+        />
+      ) : isLogin ? (
         <LoginForm
           onLoginSuccess={handleLoginSuccess}
+          onForgotPassword={() => setShowForgotPassword(true)}
         />
       ) : (
         <SignupForm

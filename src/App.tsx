@@ -7,6 +7,7 @@ import Index from "./pages/index";
 import NotFound from "./pages/NotFound";
 import AddProduct from "./pages/AddProduct";
 import WarrantyManager from "./pages/admin/WarrantyManager";
+import ResetPassword from "./pages/ResetPassword";
 
 const queryClient = new QueryClient();
 
@@ -18,6 +19,7 @@ const App = () => (
       <BrowserRouter>
         <Routes>
           <Route path="/" element={<Index />} />
+          <Route path="/reset-password" element={<ResetPassword />} />
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
           <Route path="/inventory/new" element={<AddProduct />} />
           <Route path="/admin/warranty" element={<WarrantyManager />} />
