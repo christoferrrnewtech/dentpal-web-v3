@@ -532,7 +532,7 @@ export const OrderTab: React.FC<OrderTabProps> = ({
             onMoveToToShip={handleMoveToToShip}
           />
         )
-        : (!loading && pagedOrders.length === 0
+        : (!loading && pagedOrders.length === 0 && activeSubTab !== 'return-refund'
           ? (
             <div className="bg-white rounded-xl border border-gray-200 p-12 text-center">
               <div className="w-16 h-16 mx-auto mb-4 bg-gray-100 rounded-full flex items-center justify-center">

@@ -1,35 +1,39 @@
 # User Province Filtering Implementation
 
 ## Overview
+
 Added province-based filtering to the Admin Users tab, similar to the dashboard export table. This allows admins to filter users by their province location from their Firebase address data.
 
 ## Implementation Details
 
 ### Data Source Hierarchy
+
 The system checks user addresses in the following order:
 
 1. **Primary**: `User > addresses` array (Firebase standard)
    - Looks for `isDefault: true` address first
    - Falls back to first address with province data
-   
 2. **Fallback**: `User > shippingAddresses` array (legacy)
    - Checks for default address with province
    - Falls back to first address object with province
 
 ### Province Code Mapping
+
 Supports both field names:
+
 - `provinceCode` (preferred, matches select-philippines-address format)
 - `province` (fallback for legacy data)
 
 ### Address Structure
+
 ```typescript
 interface UserAddress {
   city?: string;
   cityName?: string;
   addressLine1?: string;
   province?: string;
-  provinceCode?: string;  // Matches province codes from API
-  isDefault?: boolean;     // Prioritized in filtering
+  provinceCode?: string; // Matches province codes from API
+  isDefault?: boolean; // Prioritized in filtering
   [key: string]: any;
 }
 ```
@@ -37,24 +41,29 @@ interface UserAddress {
 ## Files Modified
 
 ### 1. **types.ts** - Type Definitions
+
 **Location**: `/src/components/users/types.ts`
 
 **Changes:**
+
 - Added `UserAddress` interface
 - Updated `User.addresses` field to support address objects
 - Changed filter from `location` to `province`
 - Updated `Filters` type: `location: string` → `province: string`
 
 ### 2. **UserFilters.tsx** - Filter UI Component
+
 **Location**: `/src/components/users/UserFilters.tsx`
 
 **Changes:**
+
 - Replaced "Location" dropdown with "Province" dropdown
 - Now accepts `provinces: Array<{ code: string; name: string }>` prop
 - Uses province codes (e.g., `"0128"` for Metro Manila) as values
 - Displays province names (e.g., "Metro Manila") to users
 
 **UI Update:**
+
 ```tsx
 // Before: Location dropdown with city names
 <Label>Location</Label>
@@ -70,9 +79,11 @@ interface UserAddress {
 ```
 
 ### 3. **UsersTab.tsx** - Main Logic Component
+
 **Location**: `/src/components/users/UsersTab.tsx`
 
 **Changes:**
+
 - Imported `getProvinces` from `@/lib/phLocations`
 - Added `phProvinces` state to store loaded provinces
 - Added `useEffect` to load provinces on mount
@@ -84,14 +95,17 @@ interface UserAddress {
 **Key Functions:**
 
 #### `getUserProvince(user: User): string | null`
+
 Extracts user's province code with the following logic:
 
 1. Check `user.addresses` array:
+
    - Find address with `isDefault: true`
    - Extract `provinceCode` or `province`
    - If no default, use first address with province data
 
 2. Fallback to `user.shippingAddresses`:
+
    - Find default address
    - Extract province from first available address object
 
@@ -100,21 +114,25 @@ Extracts user's province code with the following logic:
 ## Benefits
 
 ### ✅ **Standardized Filtering**
+
 - Consistent with admin dashboard export table
 - Uses province codes instead of free-text city names
 - Reduces ambiguity (e.g., multiple cities with same name)
 
 ### ✅ **Default Address Priority**
+
 - Respects `isDefault: true` flag in addresses
 - More accurate representation of user's primary location
 - Falls back gracefully to first available address
 
 ### ✅ **Backward Compatible**
+
 - Supports both `addresses` and `shippingAddresses` fields
 - Handles both `provinceCode` and `province` field names
 - Works with existing user data
 
 ### ✅ **Better UX**
+
 - Dropdown shows readable province names
 - Stores efficient province codes internally
 - Matches familiar location selection pattern
@@ -124,43 +142,45 @@ Extracts user's province code with the following logic:
 ### Test Cases
 
 1. **User with default address:**
+
    ```javascript
    {
      addresses: [
        { city: "Manila", provinceCode: "0128", isDefault: true },
-       { city: "Quezon City", provinceCode: "0128", isDefault: false }
-     ]
+       { city: "Quezon City", provinceCode: "0128", isDefault: false },
+     ];
    }
    ```
+
    Expected: Uses "0128" (Metro Manila) from default address
 
 2. **User with no default address:**
+
    ```javascript
    {
      addresses: [
        { city: "Cebu", provinceCode: "0722" },
-       { city: "Manila", provinceCode: "0128" }
-     ]
+       { city: "Manila", provinceCode: "0128" },
+     ];
    }
    ```
+
    Expected: Uses "0722" (Cebu) from first address
 
 3. **User with legacy shippingAddresses:**
+
    ```javascript
    {
-     shippingAddresses: [
-       { city: "Davao", province: "1182" }
-     ]
+     shippingAddresses: [{ city: "Davao", province: "1182" }];
    }
    ```
+
    Expected: Uses "1182" (Davao del Sur) from fallback field
 
 4. **User with no province data:**
    ```javascript
    {
-     addresses: [
-       { city: "Unknown City" }
-     ]
+     addresses: [{ city: "Unknown City" }];
    }
    ```
    Expected: Excluded when province filter is active, included when filter is "All"
@@ -182,6 +202,7 @@ Extracts user's province code with the following logic:
 ## Province Code Reference
 
 Common province codes (from `select-philippines-address`):
+
 - `0128` - Metro Manila (NCR)
 - `0314` - Cavite
 - `0410` - Batangas
@@ -193,6 +214,7 @@ Full list loaded from `@/lib/phLocations` API.
 ## Database Schema Reference
 
 ### Firebase Structure
+
 ```
 User (collection)
 ├── {userId}

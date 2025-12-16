@@ -28,6 +28,7 @@ type Props = {
   onTogglePassword: () => void;
   onCloseError: () => void;
   onSubmit: (e: React.FormEvent) => void;
+  onForgotPassword?: () => void;
 };
 
 export default function LoginFormView({
@@ -45,6 +46,7 @@ export default function LoginFormView({
   onTogglePassword,
   onCloseError,
   onSubmit,
+  onForgotPassword,
 }: Props) {
   return (
     <form onSubmit={onSubmit} noValidate className="space-y-6">
@@ -113,7 +115,12 @@ export default function LoginFormView({
       </Button>
 
       <div className="text-center">
-        <button type="button" className="text-sm text-teal-600 hover:text-teal-700 font-medium" disabled={loading}>
+        <button 
+          type="button" 
+          onClick={onForgotPassword}
+          className="text-sm text-teal-600 hover:text-teal-700 font-medium" 
+          disabled={loading}
+        >
           Forgot Password?
         </button>
       </div>

@@ -3,9 +3,10 @@ import { useLoginForm } from "./useLoginForm";
 
 type Props = {
   onLoginSuccess: () => void;
+  onForgotPassword?: () => void;
 };
 
-export default function LoginForm({ onLoginSuccess }: Props) {
+export default function LoginForm({ onLoginSuccess, onForgotPassword }: Props) {
   const { state, action } = useLoginForm({ onLoginSuccess });
   return (
     <LoginFormView
@@ -23,6 +24,7 @@ export default function LoginForm({ onLoginSuccess }: Props) {
       onTogglePassword={() => action.setShowPassword(!state.showPassword)}
       onCloseError={() => action.setShowErrorDialog(false)}
       onSubmit={action.handleSubmit}
+      onForgotPassword={onForgotPassword}
     />
   );
 }
