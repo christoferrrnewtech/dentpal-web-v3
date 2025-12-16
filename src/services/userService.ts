@@ -19,15 +19,47 @@ function computeSellerApproval(raw: any): User['sellerApprovalStatus'] {
   return 'not_requested';
 }
 
-async function fetchUserAddresses(userId: string): Promise<string[]> {
+interface UserAddressData {
+  city?: string;
+  cityName?: string;
+  state?: string;
+  province?: string;
+  provinceCode?: string;
+  isDefault?: boolean;
+  addressLine1?: string;
+  addressLine2?: string;
+  country?: string;
+  postalCode?: string;
+}
+
+async function fetchUserAddresses(userId: string): Promise<UserAddressData[]> {
   try {
     const addrCol = collection(doc(db, USERS_COLLECTION, userId), 'Address');
     const snap = await getDocs(addrCol);
-    const cities = snap.docs
-      .map(d => d.data() as any)
-      .map(a => a?.city || a?.cityName || a?.addressLine1 || '')
-      .filter(Boolean);
-    return cities;
+    console.log(`[fetchUserAddresses] User ${userId}: Found ${snap.docs.length} addresses`);
+    
+    const addresses = snap.docs.map(d => {
+      const data = d.data() as any;
+      console.log(`[fetchUserAddresses] Address data for ${userId}:`, {
+        city: data?.city,
+        state: data?.state,
+        province: data?.province,
+        provinceCode: data?.provinceCode,
+        isDefault: data?.isDefault
+      });
+      return {
+        city: data?.city || data?.cityName,
+        state: data?.state, // "Metro Manila", etc.
+        province: data?.province,
+        provinceCode: data?.provinceCode,
+        isDefault: data?.isDefault === true,
+        addressLine1: data?.addressLine1,
+        addressLine2: data?.addressLine2,
+        country: data?.country,
+        postalCode: data?.postalCode
+      };
+    });
+    return addresses;
   } catch (e) {
     console.warn('Failed to fetch Address subcollection for user', userId, e);
     return [];

@@ -77,6 +77,23 @@ export default function UserTable({
     return digits.slice(0,2) + '******' + digits.slice(-3);
   };
 
+  // Mask user name for privacy: "Michael John Garcia" -> "M**** J*** G****"
+  const maskName = (firstName?: string, lastName?: string) => {
+    const maskWord = (word: string) => {
+      if (!word || word.length === 0) return '';
+      if (word.length === 1) return word; // Single letter stays visible
+      return word[0] + '*'.repeat(word.length - 1);
+    };
+    
+    const first = maskWord(firstName?.trim() || '');
+    const last = maskWord(lastName?.trim() || '');
+    
+    if (!first && !last) return 'Unknown User';
+    if (!last) return first;
+    if (!first) return last;
+    return `${first} ${last}`;
+  };
+
   const fmtDate = (val: any) => {
     if (!val) return '—';
     try {
@@ -127,11 +144,11 @@ export default function UserTable({
               <TableCell>
                 <div className="flex items-center gap-3">
                   <Avatar className="h-8 w-8">
-                    <AvatarImage src={(u as any).photoURL} alt={`${u.firstName} ${u.lastName}`} />
+                    <AvatarImage src={(u as any).photoURL} alt={maskName(u.firstName, u.lastName)} />
                     <AvatarFallback>{(u.firstName?.[0] ?? 'U')}{(u.lastName?.[0] ?? '')}</AvatarFallback>
                   </Avatar>
                   <div className="flex flex-col">
-                    <span className="font-medium leading-tight">{u.firstName} {u.lastName}</span>
+                    <span className="font-medium leading-tight">{maskName(u.firstName, u.lastName)}</span>
                     <span className="text-xs text-muted-foreground leading-tight">{u.email}</span>
                   </div>
                 </div>
@@ -197,7 +214,7 @@ export default function UserTable({
                 <div className="flex items-start gap-5">
                   <div className="relative">
                     <Avatar className="h-20 w-20 rounded-2xl ring-4 ring-white/30 shadow-lg">
-                      <AvatarImage src={viewUserData?.photoURL} alt={viewUserData?.name || viewUserData?.email} />
+                      <AvatarImage src={viewUserData?.photoURL} alt={maskName(viewUserData?.firstName, viewUserData?.lastName)} />
                       <AvatarFallback className="text-lg bg-white/20 text-white font-semibold">
                         {(viewUserData?.firstName?.[0] ?? 'U')}{(viewUserData?.lastName?.[0] ?? '')}
                       </AvatarFallback>
@@ -209,7 +226,7 @@ export default function UserTable({
                     )}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <h2 className="text-xl font-semibold leading-tight truncate">{viewUserData?.firstName} {viewUserData?.lastName}</h2>
+                    <h2 className="text-xl font-semibold leading-tight truncate">{maskName(viewUserData?.firstName, viewUserData?.lastName)}</h2>
                     <p className="text-sm text-white/80 truncate">{viewUserData?.email}</p>
                     <div className="mt-2 inline-flex items-center gap-2 text-xs bg-white/15 backdrop-blur px-3 py-1 rounded-full">
                       <span className="font-medium tracking-wide">ID</span>

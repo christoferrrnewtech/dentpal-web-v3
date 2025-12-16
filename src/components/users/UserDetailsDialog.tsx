@@ -11,6 +11,23 @@ import { StatusBadge } from "./badges";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { updateUserRewardPoints, updateUserSellerApproval } from "@/services/userService";
 
+// Mask user name for privacy: "Michael John Garcia" -> "M**** J*** G****"
+const maskName = (firstName?: string, middleName?: string, lastName?: string) => {
+  const maskWord = (word: string) => {
+    if (!word || word.length === 0) return '';
+    if (word.length === 1) return word; // Single letter stays visible
+    return word[0] + '*'.repeat(word.length - 1);
+  };
+  
+  const parts = [
+    maskWord(firstName?.trim() || ''),
+    maskWord(middleName?.trim() || ''),
+    maskWord(lastName?.trim() || '')
+  ].filter(Boolean);
+  
+  return parts.length > 0 ? parts.join(' ') : 'Unknown User';
+};
+
 
 export default function UserDetailsDialog ({ user, open, onClose }: { user: User | null; open: boolean ; onClose: () => void}) {
   const [saving, setSaving] = useState(false);
@@ -24,7 +41,7 @@ export default function UserDetailsDialog ({ user, open, onClose }: { user: User
 
   if (!user) return null;
 
-  const fullName = `${user.firstName ?? ''} ${user.middleName ? user.middleName + ' ' : ''}${user.lastName ?? ''}`.trim();
+  const fullName = maskName(user.firstName, user.middleName, user.lastName);
 
   const handleSave = async () => {
     setSaving(true);

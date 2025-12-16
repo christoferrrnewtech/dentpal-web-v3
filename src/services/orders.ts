@@ -530,6 +530,16 @@ const OrdersService = {
           }
 
           await updateDoc(docRef, updateData);
+          
+          // NEW: Sync to seller reports when status changes
+          const updatedOrder = { ...currentData, ...updateData, id: orderId };
+          try {
+            const ReportsService = (await import('./reports')).default;
+            await ReportsService.syncOrderToReport(updatedOrder);
+          } catch (err) {
+            console.warn('[OrdersService] Failed to sync to reports:', err);
+          }
+          
           return;
         }
       }

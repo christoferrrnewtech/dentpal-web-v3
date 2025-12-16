@@ -79,7 +79,7 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
   const [phProvinces, setPhProvinces] = useState<Array<{ code: string; name: string }>>([]);
   const [phCities, setPhCities] = useState<Array<{ code: string; name: string; provinceCode: string }>>([]);
   // Admin sellers list for filtering & export table
-  const [adminSellers, setAdminSellers] = useState<Array<{ uid: string; name?: string; shopName?: string }>>([]);
+  const [adminSellers, setAdminSellers] = useState<Array<{ uid: string; name?: string; shopName?: string; storeName?: string }>>([]);
   // Admin metrics from Firebase (orders)
   const [adminMetrics, setAdminMetrics] = useState<{ totalOrders: number; deliveredOrders: number; shippedOrders: number }>({ totalOrders: 0, deliveredOrders: 0, shippedOrders: 0 });
   // Admin city selection: allow multi-select via checkboxes when a province is chosen
@@ -96,6 +96,7 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
     logistic: true,
     payment: true,
     inquiry: true,
+    orderSummary: true, // NEW: Order Summary column (moved to last)
   });
   const columnLabels: Record<string, string> = {
     seller: 'Seller Store',
@@ -104,7 +105,8 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
     tx: 'Total Transaction',
     logistic: 'Logistic Fee',
     payment: 'Payment Fee',
-    inquiry: 'Inquiry Fee',
+    inquiry: 'Platform Fee',
+    orderSummary: 'Order Summary', // NEW (moved to last)
   };
   const visibleColumnKeys = Object.keys(exportColumnVisibility).filter(k => exportColumnVisibility[k]);
   const [showExportColumnMenu, setShowExportColumnMenu] = useState(false);
@@ -112,6 +114,12 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
   // Export dropdown state
   const [showExportMenu, setShowExportMenu] = useState(false);
   const exportMenuRef = useRef<HTMLDivElement | null>(null);
+  // Order Summary Modal state
+  const [showOrderSummaryModal, setShowOrderSummaryModal] = useState(false);
+  const [selectedSellerForOrders, setSelectedSellerForOrders] = useState<{ uid: string; name: string } | null>(null);
+  const [sellerOrders, setSellerOrders] = useState<Order[]>([]);
+  // Track which orders have expanded item details
+  const [expandedOrderIds, setExpandedOrderIds] = useState<Set<string>>(new Set());
   useEffect(() => {
     if (!showExportColumnMenu) return;
     const handler = (e: MouseEvent) => {
@@ -216,7 +224,7 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
     ).sort((a, b) => a.localeCompare(b));
   }, [confirmationOrders]);
 
-  const isPaidStatus = (s: Order['status']) => ['to_ship','processing','completed'].includes(s);
+  const isPaidStatus = (s: Order['status']) => ['to_ship','processing','completed','shipping'].includes(s);
   const getAmount = (o: Order) => typeof o.total === 'number' ? o.total : ((o.items || []).reduce((s, it) => s + ((it.price || 0) * (it.quantity || 0)), 0) || 0);
 
   const filteredOrders = useMemo(() => {
@@ -288,8 +296,7 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
     return { receipts, totalRevenue, avgSalePerTxn, logisticsDue, avgPackMins, avgHandoverMins };
   }, [paidOrders]);
 
-  // NEW: Financial metrics calculated from raw order data (for sellers only)
-  // Only include PAID orders in financial calculations
+  // Financial metrics calculated directly from orders (same as Reports tab)
   const financialMetrics = useMemo(() => {
     if (!confirmationOrders || confirmationOrders.length === 0) {
       return {
@@ -301,44 +308,80 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
       };
     }
 
+    // Date filtering helper (same as Reports tab)
+    const parseDate = (s?: string) => {
+      if (!s) return null;
+      const d = new Date(s);
+      return isNaN(d.getTime()) ? null : d;
+    };
+    
+    const withinLastDays = (s?: string, key?: string) => {
+      if (!s) return false;
+      const d = parseDate(s);
+      if (!d) return false;
+      const now = new Date();
+      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      let days = 30;
+      switch (key) {
+        case 'last-7': days = 7; break;
+        case 'last-30': days = 30; break;
+        case 'last-90': days = 90; break;
+        case 'last-365': days = 365; break;
+        default: days = 30;
+      }
+      const from = new Date(today.getTime() - (days - 1) * 86400000);
+      return d >= from && d <= new Date(today.getTime() + 86399999);
+    };
+
     let totalPaymentProcessingFee = 0;
     let totalPlatformFee = 0;
     let totalShippingCharge = 0;
     let totalNetPayout = 0;
     let totalGross = 0;
+    let matchedOrders = 0;
 
     confirmationOrders.forEach((order: any) => {
-      // Only count PAID orders (to-ship, processing, completed)
-      if (!isPaidStatus(order.status)) return;
+      // Only count PAID orders (same as Reports tab)
+      if (!isPaidStatus(order.status)) {
+        return;
+      }
 
-      // Only count orders that match the current seller
-      const sellerId = uid || (isSubAccount && parentId ? parentId : null);
-      if (!sellerId) return;
-      
-      // Check if this order belongs to the seller
-      const orderSellerIds = order.sellerIds || [];
-      const orderSellerId = order.sellerId;
-      
-      // Check if seller matches
-      const isSeller = Array.isArray(orderSellerIds) 
-        ? orderSellerIds.includes(sellerId)
-        : orderSellerId === sellerId;
-      
-      if (!isSeller) return;
+      // Apply date range filter
+      if (!withinLastDays(order.timestamp, sellerFilters.dateRange)) {
+        return;
+      }
 
-      // Extract fees from order.feesBreakdown (mapped from Firestore)
-      const feesData = order.feesBreakdown || {};
-      totalPaymentProcessingFee += Number(feesData.paymentProcessingFee || 0);
-      totalPlatformFee += Number(feesData.platformFee || 0);
-
-      // Extract shipping charge from order.summary
+      // Extract gross sales from order.summary.subtotal (same as Reports tab)
       const summary = order.summary || {};
-      totalShippingCharge += Number(summary.sellerShippingCharge || 0);
-      totalGross += Number(summary.subtotal || 0);
+      const subtotal = Number(summary.subtotal || 0);
+      
+      if (subtotal > 0) {
+        totalGross += subtotal;
+        matchedOrders++;
+        
+        // Extract fees
+        const feesData = order.feesBreakdown || {};
+        totalPaymentProcessingFee += Number(feesData.paymentProcessingFee || 0);
+        totalPlatformFee += Number(feesData.platformFee || 0);
+        
+        // Extract shipping charge
+        totalShippingCharge += Number(summary.sellerShippingCharge || 0);
+        
+        // Extract net payout
+        const payout = order.payout || {};
+        totalNetPayout += Number(payout.netPayoutToSeller || 0);
+      }
+    });
 
-      // Extract net payout from order.payout
-      const payout = order.payout || {};
-      totalNetPayout += Number(payout.netPayoutToSeller || 0);
+    console.log('[Dashboard] Financial metrics calculated:', {
+      totalGross,
+      totalNetPayout,
+      totalPaymentProcessingFee,
+      totalPlatformFee,
+      totalShippingCharge,
+      matchedOrders,
+      totalOrders: confirmationOrders.length,
+      dateRange: sellerFilters.dateRange,
     });
 
     return {
@@ -348,7 +391,7 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
       totalNetPayout,
       totalGross,
     };
-  }, [confirmationOrders, uid, isSubAccount, parentId]);
+  }, [confirmationOrders, sellerFilters.dateRange]);
 
   // Initialize active tab from query string (e.g., /?tab=inventory)
   useEffect(() => {
@@ -653,15 +696,46 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
     try {
       const headers = visibleColumnKeys.map(k => columnLabels[k]);
       const rows = adminSellersDisplayed.map(s => {
-        // TODO: Replace with real aggregated data
-        const gross = 0;
-        const avgOrder = 0;
-        const tx = 0;
-        const logistic = 0;
-        const payment = 0;
-        const inquiry = 0;
+        const sellerOrders = confirmationOrders.filter(o => {
+          const orderSellerIds = o.sellerIds || [];
+          if (!orderSellerIds.includes(s.uid)) return false;
+          
+          // Date range filter
+          if (adminFilters.dateFrom && adminFilters.dateTo) {
+            const orderDate = o.timestamp ? o.timestamp.slice(0, 10) : '';
+            if (orderDate < adminFilters.dateFrom || orderDate > adminFilters.dateTo) return false;
+          }
+          
+          // Province filter - EXCLUDE orders without region data when filter is active
+          if (adminFilters.province !== 'all') {
+            if (!o.region || !o.region.province) {
+              return false;
+            }
+            const orderProvinceCode = o.region.province;
+            if (orderProvinceCode !== adminFilters.province) return false;
+          }
+          
+          // City filter - EXCLUDE orders without region data when filter is active
+          if (adminSelectedCityCodes.size > 0) {
+            if (!o.region || !o.region.municipality) {
+              return false;
+            }
+            const orderCity = o.region.municipality;
+            const matchingCity = phCities.find(c => c.name === orderCity);
+            if (!matchingCity || !adminSelectedCityCodes.has(matchingCity.code)) return false;
+          }
+          
+          if (!isPaidStatus(o.status)) return false;
+          return true;
+        });
+        const gross = sellerOrders.reduce((sum, o) => sum + (Number(o.summary?.subtotal) || 0), 0);
+        const tx = sellerOrders.length;
+        const avgOrder = tx > 0 ? gross / tx : 0;
+        const logistic = sellerOrders.reduce((sum, o) => sum + (Number(o.summary?.sellerShippingCharge) || 0), 0);
+        const payment = sellerOrders.reduce((sum, o) => sum + (Number(o.feesBreakdown?.paymentProcessingFee) || 0), 0);
+        const inquiry = sellerOrders.reduce((sum, o) => sum + (Number(o.feesBreakdown?.platformFee) || 0), 0);
         const cellByKey: Record<string, any> = {
-          seller: s.shopName || s.name || s.uid,
+          seller: s.storeName || s.shopName || s.name || s.uid,
           gross: gross,
           avg: avgOrder,
           tx: tx,
@@ -715,23 +789,54 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
       // Prepare table data
       const headers = visibleColumnKeys.map(k => columnLabels[k]);
       const rows = adminSellersDisplayed.map(s => {
-        // TODO: Replace with real aggregated data
-        const gross = 0;
-        const avgOrder = 0;
-        const tx = 0;
-        const logistic = 0;
-        const payment = 0;
-        const inquiry = 0;
+        const sellerOrders = confirmationOrders.filter(o => {
+          const orderSellerIds = o.sellerIds || [];
+          if (!orderSellerIds.includes(s.uid)) return false;
+          
+          // Date range filter
+          if (adminFilters.dateFrom && adminFilters.dateTo) {
+            const orderDate = o.timestamp ? o.timestamp.slice(0, 10) : '';
+            if (orderDate < adminFilters.dateFrom || orderDate > adminFilters.dateTo) return false;
+          }
+          
+          // Province filter - skip if order has no region data
+          if (adminFilters.province !== 'all') {
+            if (o.region && o.region.province) {
+              const orderProvinceCode = o.region.province;
+              if (orderProvinceCode !== adminFilters.province) return false;
+            }
+            // If no region data, include the order
+          }
+          
+          // City filter - skip if order has no region data
+          if (adminSelectedCityCodes.size > 0) {
+            if (o.region && o.region.municipality) {
+              const orderCity = o.region.municipality;
+              const matchingCity = phCities.find(c => c.name === orderCity);
+              if (!matchingCity || !adminSelectedCityCodes.has(matchingCity.code)) return false;
+            }
+            // If no region data, include the order
+          }
+          
+          if (!isPaidStatus(o.status)) return false;
+          return true;
+        });
+        const gross = sellerOrders.reduce((sum, o) => sum + (Number(o.summary?.subtotal) || 0), 0);
+        const tx = sellerOrders.length;
+        const avgOrder = tx > 0 ? gross / tx : 0;
+        const logistic = sellerOrders.reduce((sum, o) => sum + (Number(o.summary?.sellerShippingCharge) || 0), 0);
+        const payment = sellerOrders.reduce((sum, o) => sum + (Number(o.feesBreakdown?.paymentProcessingFee) || 0), 0);
+        const inquiry = sellerOrders.reduce((sum, o) => sum + (Number(o.feesBreakdown?.platformFee) || 0), 0);
         const cellByKey: Record<string, any> = {
-          seller: s.shopName || s.name || s.uid,
-          gross: gross.toLocaleString(),
-          avg: avgOrder.toLocaleString(),
-          tx: tx.toLocaleString(),
-          logistic: logistic.toLocaleString(),
-          payment: payment.toLocaleString(),
-          inquiry: inquiry.toLocaleString(),
+          seller: s.storeName || s.shopName || s.name || s.uid,
+          gross: gross,
+          avg: avgOrder,
+          tx: tx,
+          logistic: logistic,
+          payment: payment,
+          inquiry: inquiry,
         };
-        return visibleColumnKeys.map(k => cellByKey[k]);
+        return visibleColumnKeys.map(k => typeof cellByKey[k] === 'number' ? cellByKey[k].toLocaleString() : cellByKey[k]);
       });
 
       autoTable(doc, {
@@ -748,6 +853,50 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
       console.error('PDF export failed:', err);
       setError('Failed to export PDF. Please try again.');
     }
+  };
+
+  // Handler to open Order Summary modal for a seller
+  const handleOpenOrderSummary = (seller: { uid: string; storeName?: string; shopName?: string; name?: string }) => {
+    const sellerName = seller.storeName || seller.shopName || seller.name || seller.uid;
+    
+    // Filter orders for this seller with admin filters applied
+    const filteredSellerOrders = confirmationOrders.filter(order => {
+      // Must belong to this seller
+      const orderSellerIds = order.sellerIds || [];
+      if (!orderSellerIds.includes(seller.uid)) return false;
+      
+      // Apply admin filters
+      // Date range filter
+      if (adminFilters.dateFrom && adminFilters.dateTo) {
+        const orderDate = order.timestamp ? order.timestamp.slice(0, 10) : '';
+        if (orderDate < adminFilters.dateFrom || orderDate > adminFilters.dateTo) return false;
+      }
+      
+      // Province filter - EXCLUDE orders without region data when filter is active
+      if (adminFilters.province !== 'all') {
+        if (!order.region || !order.region.province) {
+          return false;
+        }
+        const orderProvinceCode = order.region.province;
+        if (orderProvinceCode !== adminFilters.province) return false;
+      }
+      
+      // City filter - EXCLUDE orders without region data when filter is active
+      if (adminSelectedCityCodes.size > 0) {
+        if (!order.region || !order.region.municipality) {
+          return false;
+        }
+        const orderCity = order.region.municipality;
+        const matchingCity = phCities.find(c => c.name === orderCity);
+        if (!matchingCity || !adminSelectedCityCodes.has(matchingCity.code)) return false;
+      }
+      
+      return true;
+    });
+    
+    setSelectedSellerForOrders({ uid: seller.uid, name: sellerName });
+    setSellerOrders(filteredSellerOrders);
+    setShowOrderSummaryModal(true);
   };
 
   console.log("Dashboard component rendered for user:", user);
@@ -970,8 +1119,8 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
             {/* Top Section - Metrics Cards (3) */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               {/* Order Shipped Card */}
-              <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
-                <div className="flex items-center justify-between">
+              {/* <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100"> */}
+                {/* <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm font-medium text-gray-600 mb-1">ORDER SHIPPED</p>
                     <p className="text-sm text-gray-500 mb-2">TOTAL ORDERS SHIPPED</p>
@@ -981,10 +1130,10 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
                   <div className="w-12 h-12 bg-teal-50 rounded-xl flex items-center justify-center">
                     <ShoppingCart className="w-6 h-6 text-teal-600" />
                   </div>
-                </div>
-              </div>
+                </div> */}
+              {/* </div> */}
               {/* Total Transactions Card */}
-              <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
+              {/* <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm font-medium text-gray-600 mb-1">TOTAL NUMBER OF</p>
@@ -996,7 +1145,7 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
                     <TrendingUp className="w-6 h-6 text-blue-600" />
                   </div>
                 </div>
-              </div>
+              </div> */}
             </div>
             {/* Horizontal Filters Bar */}
             <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100">
@@ -1181,7 +1330,7 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
                   </div>
                 </div>
                 {/* Shop Name (Seller) */}
-                <div className="flex-1 min-w-[160px]">
+                {/* <div className="flex-1 min-w-[160px]">
                   <label className="block text-xs font-medium text-gray-700 mb-1">SHOP NAME</label>
                   <select
                     value={adminFilters.seller}
@@ -1193,7 +1342,7 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
                       <option key={s.uid} value={s.uid}>{s.shopName || s.name || s.uid}</option>
                     ))}
                   </select>
-                </div>
+                </div> */}
                 {/* Apply / Reset */}
                 <div className="flex items-end gap-2 pt-2">
                   <button className="px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white text-xs font-medium rounded-lg shadow-sm transition">Apply</button>
@@ -1306,31 +1455,284 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
                       </tr>
                     )}
                     {adminSellersDisplayed.map(s => {
-                      // TODO: replace with real aggregation filtered by date/province/cities
-                      const gross = 0;
-                      const avgOrder = 0;
-                      const tx = 0;
-                      const logistic = 0;
-                      const payment = 0;
-                      const inquiry = 0;
+                      // Calculate gross sales from real-time orders with ALL admin filters
+                      const sellerOrders = confirmationOrders.filter(o => {
+                        // Check if order belongs to this seller
+                        const orderSellerIds = o.sellerIds || [];
+                        if (!orderSellerIds.includes(s.uid)) return false;
+                        
+                        // Apply date range filter
+                        if (adminFilters.dateFrom && adminFilters.dateTo) {
+                          const orderDate = o.timestamp ? o.timestamp.slice(0, 10) : '';
+                          if (orderDate < adminFilters.dateFrom || orderDate > adminFilters.dateTo) {
+                            return false;
+                          }
+                        }
+                        
+                        // Apply province filter - EXCLUDE orders without region data when filter is active
+                        if (adminFilters.province !== 'all') {
+                          // If order has no region data, EXCLUDE it (filter it out)
+                          if (!o.region || !o.region.province) {
+                            return false;
+                          }
+                          
+                          const orderProvinceCode = o.region.province;
+                          
+                          // DEBUG: Log order region data for first order
+                          if (s === adminSellersDisplayed[0] && o === confirmationOrders[0]) {
+                            console.log('[PROVINCE FILTER DEBUG]', {
+                              filterProvinceCode: adminFilters.province,
+                              orderProvinceCode: orderProvinceCode,
+                              orderRegion: o.region,
+                              orderFullData: { id: o.id, sellerIds: o.sellerIds, region: o.region },
+                              match: orderProvinceCode === adminFilters.province,
+                            });
+                          }
+                          
+                          // Filter out if province doesn't match
+                          if (orderProvinceCode !== adminFilters.province) {
+                            return false;
+                          }
+                        }
+                        
+                        // Apply city filter (multi-select) - EXCLUDE orders without region data when filter is active
+                        if (adminSelectedCityCodes.size > 0) {
+                          // If order has no region data, EXCLUDE it (filter it out)
+                          if (!o.region || !o.region.municipality) {
+                            return false;
+                          }
+                          
+                          const orderCity = o.region.municipality;
+                          // Find matching city code from phCities
+                          const matchingCity = phCities.find(c => c.name === orderCity);
+                          if (!matchingCity || !adminSelectedCityCodes.has(matchingCity.code)) {
+                            return false;
+                          }
+                        }
+                        
+                        // Only count PAID orders
+                        if (!isPaidStatus(o.status)) return false;
+                        
+                        return true;
+                      });
+                      
+                      const gross = sellerOrders.reduce((sum, o) => {
+                        const summary = o.summary || {};
+                        const subtotal = Number(summary.subtotal) || 0;
+                        return sum + subtotal;
+                      }, 0);
+                      
+                      // Calculate average order value
+                      const tx = sellerOrders.length;
+                      const avgOrder = tx > 0 ? gross / tx : 0;
+                      
+                      // Calculate fees from actual order data
+                      const logistic = sellerOrders.reduce((sum, o) => {
+                        const summary = o.summary || {};
+                        return sum + (Number(summary.sellerShippingCharge) || 0);
+                      }, 0);
+                      
+                      const payment = sellerOrders.reduce((sum, o) => {
+                        const fees = o.feesBreakdown || {};
+                        return sum + (Number(fees.paymentProcessingFee) || 0);
+                      }, 0);
+                      
+                      const inquiry = sellerOrders.reduce((sum, o) => {
+                        const fees = o.feesBreakdown || {};
+                        return sum + (Number(fees.platformFee) || 0);
+                      }, 0);
+                      
+                      // Debug logging for first seller - COMPREHENSIVE CHECK
+                      if (s === adminSellersDisplayed[0]) {
+                        console.log('========================================');
+                        console.log('[Export Table] COMPREHENSIVE DEBUG');
+                        console.log('========================================');
+                        
+                        // All sellers we're checking
+                        console.log('1. ALL SELLERS IN SYSTEM:', adminSellersDisplayed.map(seller => ({
+                          uid: seller.uid,
+                          shopName: seller.shopName || seller.name,
+                        })));
+                        
+                        // All orders and their sellerIds with seller name lookup
+                        console.log('2. ALL ORDERS AND THEIR SELLERIDS:', confirmationOrders.map(o => {
+                          const orderSellerIds = o.sellerIds || [];
+                          const sellerNames = orderSellerIds.map(sid => {
+                            const seller = adminSellersDisplayed.find(s => s.uid === sid);
+                            return seller ? (seller.shopName || seller.name) : 'UNKNOWN SELLER';
+                          });
+                          const paidStatuses = ['to_ship', 'processing', 'completed'];
+                          return {
+                            orderId: o.id,
+                            sellerIds: o.sellerIds,
+                            sellerNames: sellerNames,
+                            sellerIdsType: Array.isArray(o.sellerIds) ? 'array' : typeof o.sellerIds,
+                            sellerIdsLength: Array.isArray(o.sellerIds) ? o.sellerIds.length : 'N/A',
+                            status: o.status,
+                            isPaid: isPaidStatus(o.status),
+                            isPaidCheck: paidStatuses.includes(o.status),
+                            timestamp: o.timestamp,
+                            subtotal: o.summary?.subtotal,
+                          };
+                        }));
+                        
+                        // Match summary: which sellers have orders
+                        const sellerOrderCounts = adminSellersDisplayed.map(seller => {
+                          const count = confirmationOrders.filter(o => {
+                            const orderSellerIds = o.sellerIds || [];
+                            return orderSellerIds.includes(seller.uid) && isPaidStatus(o.status);
+                          }).length;
+                          return {
+                            shopName: seller.shopName || seller.name,
+                            uid: seller.uid,
+                            paidOrderCount: count,
+                          };
+                        }).filter(x => x.paidOrderCount > 0);
+                        
+                        console.log('3. SELLERS WITH PAID ORDERS:', sellerOrderCounts);
+                        
+                        // First seller match attempt
+                        console.log('4. FIRST SELLER MATCH ATTEMPT:', {
+                          sellerName: s.shopName || s.name || s.uid,
+                          sellerUid: s.uid,
+                          sellerUidType: typeof s.uid,
+                          totalOrders: confirmationOrders.length,
+                          matchedOrders: sellerOrders.length,
+                          firstOrderSellerIds: confirmationOrders[0]?.sellerIds,
+                          doesMatch: confirmationOrders[0]?.sellerIds?.includes(s.uid),
+                        });
+                        
+                        console.log('========================================');
+                      }
+                      
                       const cellByKey: Record<string, any> = {
-                        seller: s.shopName || s.name || s.uid,
-                        gross: gross.toLocaleString(),
-                        avg: avgOrder.toLocaleString(),
-                        tx: tx.toLocaleString(),
-                        logistic: logistic.toLocaleString(),
-                        payment: payment.toLocaleString(),
-                        inquiry: inquiry.toLocaleString(),
+                        seller: s.storeName || s.shopName || s.name || s.uid,
+                        gross: gross,
+                        avg: avgOrder,
+                        tx: tx,
+                        orderSummary: tx, // NEW: Order count for the summary
+                        logistic: logistic,
+                        payment: payment,
+                        inquiry: inquiry,
                       };
+                      
+                      // Calculate row total (sum of numeric visible columns, excluding 'seller' and 'orderSummary')
+                      const rowTotal = visibleColumnKeys.reduce((sum, k) => {
+                        if (k === 'seller' || k === 'orderSummary') return sum;
+                        return sum + (typeof cellByKey[k] === 'number' ? cellByKey[k] : 0);
+                      }, 0);
+                      
                       return (
                         <tr key={s.uid} className="border-t last:border-b-0 hover:bg-gray-50">
                           {visibleColumnKeys.map(k => (
-                            <td key={k} className={`px-4 py-3 text-gray-700 ${k === 'seller' ? 'font-medium text-gray-900' : ''}`}>{cellByKey[k]}</td>
+                            <td key={k} className={`px-4 py-3 text-gray-700 ${k === 'seller' ? 'font-medium text-gray-900' : ''}`}>
+                              {k === 'orderSummary' ? (
+                                <button
+                                  onClick={() => handleOpenOrderSummary(s)}
+                                  className="text-teal-600 hover:text-teal-700 font-medium underline cursor-pointer"
+                                  title="View order details"
+                                >
+                                  {tx} {tx === 1 ? 'order' : 'orders'}
+                                </button>
+                              ) : (
+                                typeof cellByKey[k] === 'number' ? cellByKey[k].toLocaleString() : cellByKey[k]
+                              )}
+                            </td>
                           ))}
                         </tr>
                       );
                     })}
                   </tbody>
+                  <tfoot className="bg-gray-50 border-t-2 border-gray-300">
+                    <tr className="text-[11px] font-bold">
+                      {visibleColumnKeys.map((k, idx) => {
+                        if (k === 'seller') {
+                          return <td key={k} className="px-4 py-3 text-gray-900">TOTAL</td>;
+                        }
+                        // Skip orderSummary in totals (it's not a sum-able metric)
+                        if (k === 'orderSummary') {
+                          const totalOrders = adminSellersDisplayed.reduce((sum, s) => {
+                            const sellerOrders = confirmationOrders.filter(o => {
+                              const orderSellerIds = o.sellerIds || [];
+                              if (!orderSellerIds.includes(s.uid)) return false;
+                              
+                              // Date range filter
+                              if (adminFilters.dateFrom && adminFilters.dateTo) {
+                                const orderDate = o.timestamp ? o.timestamp.slice(0, 10) : '';
+                                if (orderDate < adminFilters.dateFrom || orderDate > adminFilters.dateTo) return false;
+                              }
+                              
+                              // Province filter
+                              if (adminFilters.province !== 'all') {
+                                if (o.region && o.region.province) {
+                                  const orderProvinceCode = o.region.province;
+                                  if (orderProvinceCode !== adminFilters.province) return false;
+                                }
+                              }
+                              
+                              // City filter
+                              if (adminSelectedCityCodes.size > 0) {
+                                if (o.region && o.region.municipality) {
+                                  const orderCity = o.region.municipality;
+                                  const matchingCity = phCities.find(c => c.name === orderCity);
+                                  if (!matchingCity || !adminSelectedCityCodes.has(matchingCity.code)) return false;
+                                }
+                              }
+                              
+                              if (!isPaidStatus(o.status)) return false;
+                              return true;
+                            });
+                            return sum + sellerOrders.length;
+                          }, 0);
+                          return <td key={k} className="px-4 py-3 text-gray-900">{totalOrders} {totalOrders === 1 ? 'order' : 'orders'}</td>;
+                        }
+                        // Calculate column total with ALL admin filters
+                        const columnTotal = adminSellersDisplayed.reduce((sum, s) => {
+                          const sellerOrders = confirmationOrders.filter(o => {
+                            const orderSellerIds = o.sellerIds || [];
+                            if (!orderSellerIds.includes(s.uid)) return false;
+                            
+                            // Date range filter
+                            if (adminFilters.dateFrom && adminFilters.dateTo) {
+                              const orderDate = o.timestamp ? o.timestamp.slice(0, 10) : '';
+                              if (orderDate < adminFilters.dateFrom || orderDate > adminFilters.dateTo) return false;
+                            }
+                            
+                            // Province filter - EXCLUDE orders without region data when filter is active
+                            if (adminFilters.province !== 'all') {
+                              if (!o.region || !o.region.province) {
+                                return false;
+                              }
+                              const orderProvinceCode = o.region.province;
+                              if (orderProvinceCode !== adminFilters.province) return false;
+                            }
+                            
+                            // City filter - EXCLUDE orders without region data when filter is active
+                            if (adminSelectedCityCodes.size > 0) {
+                              if (!o.region || !o.region.municipality) {
+                                return false;
+                              }
+                              const orderCity = o.region.municipality;
+                              const matchingCity = phCities.find(c => c.name === orderCity);
+                              if (!matchingCity || !adminSelectedCityCodes.has(matchingCity.code)) return false;
+                            }
+                            
+                            if (!isPaidStatus(o.status)) return false;
+                            return true;
+                          });
+                          const gross = sellerOrders.reduce((s, o) => s + (Number(o.summary?.subtotal) || 0), 0);
+                          const tx = sellerOrders.length;
+                          const avgOrder = tx > 0 ? gross / tx : 0;
+                          const logistic = sellerOrders.reduce((s, o) => s + (Number(o.summary?.sellerShippingCharge) || 0), 0);
+                          const payment = sellerOrders.reduce((s, o) => s + (Number(o.feesBreakdown?.paymentProcessingFee) || 0), 0);
+                          const inquiry = sellerOrders.reduce((s, o) => s + (Number(o.feesBreakdown?.platformFee) || 0), 0);
+                          const values: Record<string, number> = { gross, avg: avgOrder, tx, logistic, payment, inquiry };
+                          return sum + (values[k] || 0);
+                        }, 0);
+                        return <td key={k} className="px-4 py-3 text-gray-900">{columnTotal.toLocaleString()}</td>;
+                      })}
+                    </tr>
+                  </tfoot>
                 </table>
               </div>
               <div className="px-4 py-3 border-t border-gray-100 flex items-center justify-between text-xs text-gray-600">
@@ -1348,6 +1750,313 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
                 </div>
               </div>
             </div>
+            
+            {/* Order Summary Modal */}
+            {showOrderSummaryModal && selectedSellerForOrders && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in">
+                <div className="relative w-full max-w-6xl max-h-[90vh] bg-white rounded-2xl shadow-2xl overflow-hidden">
+                  {/* Header */}
+                  <div className="bg-gradient-to-r from-teal-600 to-teal-500 px-6 py-4 flex items-center justify-between">
+                    <div>
+                      <h3 className="text-xl font-semibold text-white">Order Summary</h3>
+                      <p className="text-sm text-white/80 mt-1">{selectedSellerForOrders.name}</p>
+                    </div>
+                    <button
+                      onClick={() => {
+                        setShowOrderSummaryModal(false);
+                        setSelectedSellerForOrders(null);
+                        setSellerOrders([]);
+                        setExpandedOrderIds(new Set()); // Reset expanded items
+                      }}
+                      className="text-white/80 hover:text-white transition p-2 hover:bg-white/10 rounded-lg"
+                    >
+                      <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </div>
+                  
+                  {/* Content */}
+                  <div className="p-6 overflow-y-auto max-h-[calc(90vh-200px)]">
+                    {sellerOrders.length === 0 ? (
+                      <div className="text-center py-12">
+                        <div className="w-16 h-16 mx-auto mb-4 bg-gray-100 rounded-full flex items-center justify-center">
+                          <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" />
+                          </svg>
+                        </div>
+                        <p className="text-gray-600 font-medium">No orders found</p>
+                        <p className="text-sm text-gray-500 mt-1">This seller has no orders matching the current filters</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-4">
+                        <div className="flex items-center justify-between mb-4">
+                          <p className="text-sm text-gray-600">
+                            Showing <span className="font-semibold text-gray-900">{sellerOrders.length}</span> {sellerOrders.length === 1 ? 'order' : 'orders'}
+                          </p>
+                        </div>
+                        
+                        <div className="space-y-4">
+                          {sellerOrders.map((order) => (
+                            <div key={order.id} className="border border-gray-200 rounded-xl overflow-hidden hover:shadow-md transition-shadow bg-white">
+                              {/* Order Header */}
+                              <div className="bg-gray-50 px-4 py-3 border-b border-gray-200">
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center gap-3">
+                                    <span className="font-semibold text-gray-900">#{order.id}</span>
+                                    <span className={`px-2 py-1 text-xs font-medium rounded-full ${
+                                      order.status === 'completed' ? 'bg-green-100 text-green-700' :
+                                      order.status === 'processing' || order.status === 'to_ship' ? 'bg-blue-100 text-blue-700' :
+                                      order.status === 'shipped' || order.status === 'shipping' ? 'bg-purple-100 text-purple-700' :
+                                      order.status === 'cancelled' ? 'bg-red-100 text-red-700' :
+                                      'bg-gray-100 text-gray-700'
+                                    }`}>
+                                      {order.status.replace(/_/g, ' ').toUpperCase()}
+                                    </span>
+                                  </div>
+                                  <div className="text-right">
+                                    <div className="text-lg font-bold text-gray-900">
+                                      ₱{(order.summary?.subtotal || order.total || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Order Details */}
+                              <div className="p-4">
+                                <div className="grid grid-cols-3 gap-4 mb-4 text-sm">
+                                  <div>
+                                    <span className="text-gray-500 text-xs">Customer</span>
+                                    <p className="text-gray-900 font-medium">{order.customer?.name || 'N/A'}</p>
+                                  </div>
+                                  <div>
+                                    <span className="text-gray-500 text-xs">Date</span>
+                                    <p className="text-gray-900 font-medium">
+                                      {order.timestamp ? new Date(order.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'N/A'}
+                                    </p>
+                                  </div>
+                                  <div>
+                                    <span className="text-gray-500 text-xs">Payment</span>
+                                    <p className="text-gray-900 font-medium">{order.feesBreakdown?.paymentMethod || order.paymentType || 'N/A'}</p>
+                                  </div>
+                                </div>
+
+                                {order.region && (
+                                  <div className="mb-4 text-sm">
+                                    <span className="text-gray-500 text-xs">Location</span>
+                                    <p className="text-gray-900 font-medium">
+                                      {[order.region.municipality, order.region.province].filter(Boolean).join(', ') || 'N/A'}
+                                    </p>
+                                  </div>
+                                )}
+
+                                {/* Items List - Collapsible */}
+                                {order.items && order.items.length > 0 && (
+                                  <div className="mt-4">
+                                    <button
+                                      onClick={() => {
+                                        setExpandedOrderIds(prev => {
+                                          const newSet = new Set(prev);
+                                          if (newSet.has(order.id)) {
+                                            newSet.delete(order.id);
+                                          } else {
+                                            newSet.add(order.id);
+                                          }
+                                          return newSet;
+                                        });
+                                      }}
+                                      className="w-full flex items-center justify-between text-xs font-semibold text-gray-700 hover:text-teal-600 transition py-2 px-3 rounded-lg hover:bg-gray-50"
+                                    >
+                                      <span>Order Items ({order.items.length})</span>
+                                      <svg 
+                                        className={`w-4 h-4 transition-transform ${expandedOrderIds.has(order.id) ? 'rotate-180' : ''}`}
+                                        fill="none" 
+                                        stroke="currentColor" 
+                                        viewBox="0 0 24 24"
+                                      >
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                      </svg>
+                                    </button>
+                                    {expandedOrderIds.has(order.id) && (
+                                      <div className="space-y-2 mt-2 animate-fade-in">
+                                        {order.items.map((item, idx) => (
+                                          <div key={idx} className="flex items-center gap-3 bg-gray-50 rounded-lg p-3 border border-gray-100">
+                                            {/* Product Image */}
+                                            {item.imageUrl && (
+                                              <div className="flex-shrink-0 w-16 h-16 bg-white rounded-lg border border-gray-200 overflow-hidden">
+                                                <img 
+                                                  src={item.imageUrl} 
+                                                  alt={item.name || 'Product'} 
+                                                  className="w-full h-full object-cover"
+                                                  onError={(e) => {
+                                                    // Fallback to placeholder if image fails to load
+                                                    e.currentTarget.src = '/placeholder.svg';
+                                                  }}
+                                                />
+                                              </div>
+                                            )}
+                                            {/* Product Details */}
+                                            <div className="flex-1 min-w-0">
+                                              <p className="text-sm font-medium text-gray-900 truncate">{item.name || 'Unnamed Item'}</p>
+                                              <div className="flex items-center gap-3 mt-1 flex-wrap">
+                                                {item.category && (
+                                                  <span className="text-xs text-gray-500">
+                                                    <span className="font-medium">Category:</span> {item.category}
+                                                  </span>
+                                                )}
+                                                {item.subcategory && (
+                                                  <span className="text-xs text-gray-500">
+                                                    <span className="font-medium">Type:</span> {item.subcategory}
+                                                  </span>
+                                                )}
+                                              </div>
+                                            </div>
+                                            {/* Pricing */}
+                                            <div className="text-right flex-shrink-0 ml-4">
+                                              <p className="text-sm font-semibold text-gray-900 whitespace-nowrap">
+                                                ₱{((item.price || 0) * (item.quantity || 1)).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                              </p>
+                                              <p className="text-xs text-gray-500">
+                                                {item.quantity || 1}x ₱{(item.price || 0).toFixed(2)}
+                                              </p>
+                                            </div>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+
+                                {/* Fees Breakdown */}
+                                <div className="mt-4 pt-4 border-t border-gray-200">
+                                  <div className="space-y-2 text-sm">
+                                    <div className="flex justify-between text-gray-600">
+                                      <span>Subtotal</span>
+                                      <span>₱{(order.summary?.subtotal || 0).toFixed(2)}</span>
+                                    </div>
+                                    {order.summary?.sellerShippingCharge !== undefined && (
+                                      <div className="flex justify-between text-gray-600">
+                                        <span>Shipping Charge</span>
+                                        <span>₱{(order.summary.sellerShippingCharge || 0).toFixed(2)}</span>
+                                      </div>
+                                    )}
+                                    {order.feesBreakdown?.paymentProcessingFee !== undefined && (
+                                      <div className="flex justify-between text-red-600 text-xs">
+                                        <span>Payment Processing Fee</span>
+                                        <span>-₱{(order.feesBreakdown.paymentProcessingFee || 0).toFixed(2)}</span>
+                                      </div>
+                                    )}
+                                    {order.feesBreakdown?.platformFee !== undefined && (
+                                      <div className="flex justify-between text-red-600 text-xs">
+                                        <span>Platform Fee</span>
+                                        <span>-₱{(order.feesBreakdown.platformFee || 0).toFixed(2)}</span>
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                  
+                  {/* Footer */}
+                  <div className="border-t border-gray-200 px-6 py-4 bg-gray-50 flex items-center justify-between">
+                    <button
+                      onClick={() => {
+                        // Export orders to CSV with seller info and timestamp header
+                        const now = new Date();
+                        const exportDate = now.toLocaleDateString('en-US', { 
+                          year: 'numeric', 
+                          month: 'long', 
+                          day: 'numeric' 
+                        });
+                        const exportTime = now.toLocaleTimeString('en-US', { 
+                          hour: '2-digit', 
+                          minute: '2-digit', 
+                          second: '2-digit',
+                          hour12: true 
+                        });
+                        
+                        // Calculate summary totals
+                        const totalOrders = sellerOrders.length;
+                        const totalRevenue = sellerOrders.reduce((sum, o) => sum + (o.summary?.subtotal || 0), 0);
+                        const totalShipping = sellerOrders.reduce((sum, o) => sum + (o.summary?.sellerShippingCharge || 0), 0);
+                        const totalPaymentFees = sellerOrders.reduce((sum, o) => sum + (o.feesBreakdown?.paymentProcessingFee || 0), 0);
+                        const totalPlatformFees = sellerOrders.reduce((sum, o) => sum + (o.feesBreakdown?.platformFee || 0), 0);
+                        
+                        // Header section with seller info and metadata
+                        const headerSection = [
+                          ['Order Summary Report'],
+                          [''],
+                          ['Seller:', selectedSellerForOrders.name],
+                          ['Export Date:', exportDate],
+                          ['Export Time:', exportTime],
+                          ['Total Orders:', totalOrders.toString()],
+                          [''],
+                          ['Summary:'],
+                          ['Total Revenue:', `₱${totalRevenue.toFixed(2)}`],
+                          ['Total Shipping:', `₱${totalShipping.toFixed(2)}`],
+                          ['Total Payment Fees:', `₱${totalPaymentFees.toFixed(2)}`],
+                          ['Total Platform Fees:', `₱${totalPlatformFees.toFixed(2)}`],
+                          ['Net Amount:', `₱${(totalRevenue - totalPaymentFees - totalPlatformFees).toFixed(2)}`],
+                          [''],
+                          [''], // Extra blank line before table
+                        ];
+                        
+                        const headers = ['Order ID', 'Status', 'Customer', 'Date', 'Items', 'Payment', 'Location', 'Subtotal', 'Shipping', 'Payment Fee', 'Platform Fee'];
+                        const rows = sellerOrders.map(o => [
+                          o.id,
+                          o.status,
+                          o.customer?.name || 'N/A',
+                          o.timestamp ? new Date(o.timestamp).toLocaleDateString() : 'N/A',
+                          o.items?.map(i => `${i.name} (${i.quantity}x)`).join('; ') || 'N/A',
+                          o.feesBreakdown?.paymentMethod || o.paymentType || 'N/A',
+                          o.region ? [o.region.municipality, o.region.province].filter(Boolean).join(', ') : 'N/A',
+                          (o.summary?.subtotal || 0).toFixed(2),
+                          (o.summary?.sellerShippingCharge || 0).toFixed(2),
+                          (o.feesBreakdown?.paymentProcessingFee || 0).toFixed(2),
+                          (o.feesBreakdown?.platformFee || 0).toFixed(2),
+                        ]);
+                        
+                        // Combine header section with data table
+                        const csvContent = [
+                          ...headerSection.map(row => row.map(cell => `"${cell}"`).join(',')),
+                          headers.map(cell => `"${cell}"`).join(','),
+                          ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
+                        ].join('\n');
+                        
+                        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+                        const link = document.createElement('a');
+                        link.href = URL.createObjectURL(blob);
+                        link.download = `order-summary-${selectedSellerForOrders.name.replace(/[^a-z0-9]/gi, '-')}-${new Date().toISOString().slice(0,10)}.csv`;
+                        link.click();
+                      }}
+                      disabled={sellerOrders.length === 0}
+                      className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-teal-700 bg-teal-50 border border-teal-200 rounded-lg hover:bg-teal-100 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <Download className="w-4 h-4" />
+                      Export CSV
+                    </button>
+                    <div className="flex items-center gap-3">
+                      <button
+                        onClick={() => {
+                          setShowOrderSummaryModal(false);
+                          setSelectedSellerForOrders(null);
+                          setSellerOrders([]);
+                          setExpandedOrderIds(new Set()); // Reset expanded items
+                        }}
+                        className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition"
+                      >
+                        Close
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         );
       case 'seller-orders':
@@ -1536,17 +2245,45 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
 
   // Live Orders subscription for Orders tab
   useEffect(() => {
-    if (!uid) return;
+    if (!uid) {
+      console.log('[Dashboard] No UID, skipping order subscription');
+      return;
+    }
+    console.log('[Dashboard] Setting up order subscription for:', { uid, isAdmin, isSubAccount, parentId });
     let unsub: (() => void) | undefined;
     if (isAdmin) {
-      unsub = OrdersService.listenAll(setConfirmationOrders);
+      console.log('[Dashboard] Subscribing to ALL orders (admin)');
+      unsub = OrdersService.listenAll((orders) => {
+        console.log('[Dashboard] Received orders (admin):', orders.length, orders);
+        
+        // DEBUG: Log all order region data
+        console.log('[Dashboard] ORDER REGION DATA:', orders.map(o => ({
+          id: o.id,
+          region: o.region,
+          hasRegion: !!o.region,
+          province: o.region?.province,
+          municipality: o.region?.municipality,
+        })));
+        
+        setConfirmationOrders(orders);
+      });
     } else if (isSubAccount && parentId) {
-      unsub = OrdersService.listenBySeller(parentId, setConfirmationOrders);
+      console.log('[Dashboard] Subscribing to parent seller orders:', parentId);
+      unsub = OrdersService.listenBySeller(parentId, (orders) => {
+        console.log('[Dashboard] Received orders (sub-account):', orders.length, orders);
+        setConfirmationOrders(orders);
+      });
     } else {
-      // Fix: main seller accounts should subscribe to their own orders
-      unsub = OrdersService.listenBySeller(uid, setConfirmationOrders);
+      console.log('[Dashboard] Subscribing to seller orders:', uid);
+      unsub = OrdersService.listenBySeller(uid, (orders) => {
+        console.log('[Dashboard] Received orders (seller):', orders.length, orders);
+        setConfirmationOrders(orders);
+      });
     }
-    return () => unsub && unsub();
+    return () => {
+      console.log('[Dashboard] Unsubscribing from orders');
+      unsub && unsub();
+    };
   }, [isAdmin, isSubAccount, parentId, uid]);
   
   // Load provinces (Philippines) - admin only
@@ -1554,6 +2291,20 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
     if (!isAdmin) return;
     (async () => {
       const rows = await getPhProvinces();
+      
+      // Add "Metro Manila" as a special entry if not already present
+      const hasMetroManila = rows.some(p => 
+        p.name.toLowerCase().includes('metro manila') || 
+        p.code === 'NCR' ||
+        p.code === 'METRO_MANILA'
+      );
+      
+      if (!hasMetroManila) {
+        // Add Metro Manila at the beginning
+        rows.unshift({ code: 'METRO_MANILA', name: 'Metro Manila' });
+        console.log('[Dashboard] Added Metro Manila to province list');
+      }
+      
       setPhProvinces(rows);
     })();
   }, [isAdmin]);
@@ -1563,9 +2314,43 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
     if (!isAdmin) return;
     const provinceCode = adminFilters.province;
     if (!provinceCode || provinceCode === 'all') { setPhCities([]); return; }
+    
     (async () => {
-      const rows = await getPhCitiesAsync(provinceCode);
-      setPhCities(rows);
+      // Special handling for Metro Manila - use static city list
+      if (provinceCode === 'METRO_MANILA') {
+        const metroCities = [
+          { code: "MNL", name: "Manila", provinceCode: "NCR" },
+          { code: "MAC", name: "Makati", provinceCode: "NCR" },
+          { code: "TAG", name: "Taguig", provinceCode: "NCR" },
+          { code: "QSZ", name: "Quezon City", provinceCode: "NCR" },
+          { code: "PAS", name: "Pasay", provinceCode: "NCR" },
+          { code: "PAR", name: "Parañaque", provinceCode: "NCR" },
+          { code: "MAN", name: "Mandaluyong", provinceCode: "NCR" },
+          { code: "SAN", name: "San Juan", provinceCode: "NCR" },
+          { code: "CAL", name: "Caloocan", provinceCode: "NCR" },
+          { code: "VAL", name: "Valenzuela", provinceCode: "NCR" },
+          { code: "NAV", name: "Navotas", provinceCode: "NCR" },
+          { code: "MUN", name: "Muntinlupa", provinceCode: "NCR" },
+          { code: "LAS", name: "Las Piñas", provinceCode: "NCR" },
+          { code: "MAR", name: "Marikina", provinceCode: "NCR" },
+          { code: "PAT", name: "Pateros", provinceCode: "NCR" },
+          { code: "PAS2", name: "Pasig", provinceCode: "NCR" },
+        ].sort((a, b) => a.name.localeCompare(b.name));
+        
+        console.log(`[Dashboard] Loaded ${metroCities.length} cities for Metro Manila`);
+        setPhCities(metroCities);
+        return;
+      }
+      
+      // For other provinces, use the async loader
+      try {
+        const rows = await getPhCitiesAsync(provinceCode);
+        console.log(`[Dashboard] Loaded ${rows.length} cities for province ${provinceCode}`);
+        setPhCities(rows);
+      } catch (error) {
+        console.error('[Dashboard] Failed to load cities:', error);
+        setPhCities([]);
+      }
     })();
   }, [adminFilters.province, isAdmin]);
 
@@ -1576,17 +2361,37 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
     (async () => {
       try {
         const sellersSnap = await getDocs(collection(db, 'Seller'));
-        const sellers = sellersSnap.docs.map(doc => {
+        console.log('[Dashboard] Total Seller documents fetched:', sellersSnap.docs.length);
+        
+        const allSellers = sellersSnap.docs.map(doc => {
           const data = doc.data();
+          // Extract storeName from vendor.company.storeName path
+          const storeName = data.vendor?.company?.storeName || '';
+          // Extract role directly from root level (not from permissions)
+          const role = data.role || '';
+          
           return {
             uid: doc.id,
             name: data.name || data.ownerName || data.displayName || '',
             shopName: data.shopName || data.storeName || data.businessName || '',
+            storeName: storeName, // This is what we'll display
+            role: role,
           };
         });
+        
+        // Filter OUT admins - only show sellers (role !== 'admin')
+        const sellers = allSellers.filter(seller => seller.role !== 'admin');
+        
+        console.log('[Dashboard] All sellers:', allSellers.length);
+        console.log('[Dashboard] Filtered sellers (excluding admins):', sellers.length);
+        console.log('[Dashboard] Seller details:', sellers.map(s => ({ 
+          uid: s.uid, 
+          storeName: s.storeName, 
+          role: s.role 
+        })));
+        
         if (!cancelled) {
           setAdminSellers(sellers);
-          console.log('[Dashboard] Loaded sellers from Firebase:', sellers.length);
         }
       } catch (error) {
         console.error('[Dashboard] Error loading sellers:', error);
