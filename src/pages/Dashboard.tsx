@@ -79,7 +79,7 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
   const [phProvinces, setPhProvinces] = useState<Array<{ code: string; name: string }>>([]);
   const [phCities, setPhCities] = useState<Array<{ code: string; name: string; provinceCode: string }>>([]);
   // Admin sellers list for filtering & export table
-  const [adminSellers, setAdminSellers] = useState<Array<{ uid: string; name?: string; shopName?: string; storeName?: string }>>([]);
+  const [adminSellers, setAdminSellers] = useState<Array<{ uid: string; name?: string; shopName?: string; storeName?: string; province?: string; city?: string; zipCode?: string; address?: any }>>([]);
   // Admin metrics from Firebase (orders)
   const [adminMetrics, setAdminMetrics] = useState<{ totalOrders: number; deliveredOrders: number; shippedOrders: number }>({ totalOrders: 0, deliveredOrders: 0, shippedOrders: 0 });
   // Admin city selection: allow multi-select via checkboxes when a province is chosen
@@ -1367,6 +1367,29 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
             </div>
             {/* NEW: Export + Seller Metrics Table */}
             <div className="bg-white rounded-2xl border border-gray-200 shadow-sm">
+              {/* Filter indicator banner */}
+              {(adminFilters.dateFrom || adminFilters.dateTo || adminFilters.province !== 'all' || adminSelectedCityCodes.size > 0) && (
+                <div className="px-6 py-3 bg-blue-50 border-b border-blue-100 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Filter className="w-4 h-4 text-blue-600" />
+                    <span className="text-xs font-medium text-blue-700">
+                      Filters active: Showing sellers with orders in selected {adminFilters.dateFrom && adminFilters.dateTo ? `date range (${adminFilters.dateFrom} to ${adminFilters.dateTo})` : 'criteria'}
+                      {adminFilters.province !== 'all' && ', province'}
+                      {adminSelectedCityCodes.size > 0 && ', city'}
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setAdminFilters({ dateFrom: '', dateTo: '', province: 'all', city: 'all', seller: 'all' });
+                      setAdminSelectedCityCodes(new Set());
+                      setAdminRange({ start: null, end: null });
+                    }}
+                    className="text-xs text-blue-600 hover:text-blue-700 font-medium underline"
+                  >
+                    Clear all filters
+                  </button>
+                </div>
+              )}
               <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
                 <h3 className="text-sm font-semibold text-gray-800 tracking-wide">EXPORT</h3>
                 <div className="flex items-center gap-2">
@@ -2369,6 +2392,11 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
           const storeName = data.vendor?.company?.storeName || '';
           // Extract role directly from root level (not from permissions)
           const role = data.role || '';
+          // Extract address from vendor.company.address
+          const address = data.vendor?.company?.address || {};
+          const province = address.province || '';
+          const city = address.city || address.municipality || '';
+          const zipCode = address.zipCode || address.zip || '';
           
           return {
             uid: doc.id,
@@ -2376,6 +2404,10 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
             shopName: data.shopName || data.storeName || data.businessName || '',
             storeName: storeName, // This is what we'll display
             role: role,
+            province: province,
+            city: city,
+            zipCode: zipCode,
+            address: address, // Keep full address object for reference
           };
         });
         
@@ -2384,10 +2416,13 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
         
         console.log('[Dashboard] All sellers:', allSellers.length);
         console.log('[Dashboard] Filtered sellers (excluding admins):', sellers.length);
-        console.log('[Dashboard] Seller details:', sellers.map(s => ({ 
+        console.log('[Dashboard] Seller details with addresses:', sellers.map(s => ({ 
           uid: s.uid, 
           storeName: s.storeName, 
-          role: s.role 
+          role: s.role,
+          province: s.province,
+          city: s.city,
+          zipCode: s.zipCode
         })));
         
         if (!cancelled) {
@@ -2547,10 +2582,79 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
 
   // Derived admin seller rows based on Shop Name filter
   const adminSellersDisplayed = useMemo(() => {
+    // If no date filter is applied, show all sellers (or filtered by seller dropdown)
+    const hasDateFilter = adminFilters.dateFrom && adminFilters.dateTo;
+    const hasProvinceFilter = adminFilters.province !== 'all';
+    const hasCityFilter = adminSelectedCityCodes.size > 0;
+    const hasAnyFilter = hasDateFilter || hasProvinceFilter || hasCityFilter;
+    
+    // Start with all sellers or filtered by seller dropdown
+    let sellers = adminSellers;
     const sel = adminFilters.seller;
-    if (!sel || sel === 'all') return adminSellers;
-    return adminSellers.filter(s => s.uid === sel);
-  }, [adminFilters.seller, adminSellers]);
+    if (sel && sel !== 'all') {
+      sellers = adminSellers.filter(s => s.uid === sel);
+    }
+    
+    // Apply province/city filter on sellers FIRST (based on seller address)
+    if (hasProvinceFilter) {
+      sellers = sellers.filter(seller => {
+        // Match by province name (case-insensitive)
+        const sellerProvince = seller.province || '';
+        const filterProvince = phProvinces.find(p => p.code === adminFilters.province)?.name || '';
+        return sellerProvince.toLowerCase() === filterProvince.toLowerCase();
+      });
+      console.log('[Dashboard] After province filter:', sellers.length, 'sellers');
+    }
+    
+    if (hasCityFilter) {
+      sellers = sellers.filter(seller => {
+        const sellerCity = seller.city || '';
+        // Check if seller's city matches any selected city
+        return Array.from(adminSelectedCityCodes).some(cityCode => {
+          const city = phCities.find(c => c.code === cityCode);
+          return city && sellerCity.toLowerCase() === city.name.toLowerCase();
+        });
+      });
+      console.log('[Dashboard] After city filter:', sellers.length, 'sellers');
+    }
+    
+    // If date filter is applied, further filter sellers who have orders in that date range
+    if (hasDateFilter) {
+      sellers = sellers.filter(seller => {
+        // Check if this seller has any orders matching the date filter
+        const hasMatchingOrders = confirmationOrders.some(o => {
+          // Check if order belongs to this seller
+          const orderSellerIds = o.sellerIds || [];
+          if (!orderSellerIds.includes(seller.uid)) return false;
+          
+          // Apply date range filter
+          if (adminFilters.dateFrom && adminFilters.dateTo) {
+            const orderDate = o.timestamp ? o.timestamp.slice(0, 10) : '';
+            if (orderDate < adminFilters.dateFrom || orderDate > adminFilters.dateTo) {
+              return false;
+            }
+          }
+          
+          // Only count PAID orders
+          if (!isPaidStatus(o.status)) return false;
+          
+          return true;
+        });
+        
+        return hasMatchingOrders;
+      });
+      console.log('[Dashboard] After date filter:', sellers.length, 'sellers');
+    }
+    
+    console.log('[Dashboard] Final filtered sellers:', sellers.map(s => ({
+      uid: s.uid,
+      name: s.storeName || s.name,
+      province: s.province,
+      city: s.city
+    })));
+    
+    return sellers;
+  }, [adminFilters.seller, adminFilters.dateFrom, adminFilters.dateTo, adminFilters.province, adminSelectedCityCodes, adminSellers, confirmationOrders, phCities, phProvinces]);
 
   return (
     <div className="min-h-screen bg-background flex">
