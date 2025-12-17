@@ -1,4 +1,4 @@
-import {collection, getDocs, onSnapshot, query, orderBy, doc, updateDoc, deleteDoc} from 'firebase/firestore';
+import {collection, getDocs, onSnapshot, query, orderBy, doc, updateDoc, deleteDoc, where} from 'firebase/firestore';
 import {db } from '@/lib/firebase';
 import type {User } from '@/components/users/types';
 
@@ -66,14 +66,105 @@ async function fetchUserAddresses(userId: string): Promise<UserAddressData[]> {
   }
 }
 
+// NEW: Count actual orders from Firebase Order collection for a user
+async function countUserOrders(userId: string): Promise<number> {
+  try {
+    const ordersCol = collection(db, 'Order');
+    // Query by userId (primary) or customerId (fallback) - try both
+    const qUserId = query(ordersCol, where('userId', '==', userId));
+    const qCustomerId = query(ordersCol, where('customerId', '==', userId));
+    
+    const [snapUserId, snapCustomerId] = await Promise.all([
+      getDocs(qUserId),
+      getDocs(qCustomerId)
+    ]);
+    
+    // Combine unique order IDs from both queries to avoid duplicates
+    const orderIds = new Set([
+      ...snapUserId.docs.map(d => d.id),
+      ...snapCustomerId.docs.map(d => d.id)
+    ]);
+    
+    return orderIds.size;
+  } catch (e) {
+    console.warn('Failed to count orders for user', userId, e);
+    return 0;
+  }
+}
+
+// NEW: Batch count orders for all users at once (more efficient)
+async function countAllUsersOrders(userIds: string[]): Promise<Map<string, number>> {
+  const orderCounts = new Map<string, number>();
+  
+  try {
+    // Initialize all users with 0 orders
+    userIds.forEach(id => orderCounts.set(id, 0));
+    
+    // Fetch all orders at once
+    const ordersCol = collection(db, 'Order');
+    const snap = await getDocs(ordersCol);
+    
+    // Count orders per userId (primary field) or customerId (fallback)
+    let userIdCount = 0;
+    let customerIdCount = 0;
+    snap.docs.forEach(doc => {
+      const data = doc.data();
+      const userId = data.userId || data.customerId; // Check both fields
+      
+      if (data.userId) userIdCount++;
+      if (data.customerId) customerIdCount++;
+      
+      if (userId && orderCounts.has(userId)) {
+        orderCounts.set(userId, (orderCounts.get(userId) || 0) + 1);
+      }
+    });
+    
+    console.log('[countAllUsersOrders] Counted orders for', userIds.length, 'users. Total orders:', snap.size);
+    console.log('[countAllUsersOrders] Field usage - userId:', userIdCount, 'customerId:', customerIdCount);
+  } catch (e) {
+    console.error('Failed to count orders for users', e);
+  }
+  
+  return orderCounts;
+}
+
 export async function fetchUsers(): Promise<User []> {
   // Use createdAt based on Firestore screenshot; fallback to unsorted if field missing at runtime.
   const q = query(collection(db, USERS_COLLECTION), orderBy('createdAt', 'desc'));
   const snap = await getDocs(q);
   const base = snap.docs.map(d=> ({ id: d.id, ...(d.data() as any) }));
+  
+  console.log('[fetchUsers] Sample raw user data with specialty field (array from Firebase):', 
+    base.slice(0, 3).map(u => ({ 
+      id: u.id, 
+      email: u.email, 
+      specialty: u.specialty,
+      specialtyType: Array.isArray(u.specialty) ? 'array' : typeof u.specialty,
+      specialtyLength: Array.isArray(u.specialty) ? u.specialty.length : 'N/A'
+    }))
+  );
+  
+  console.log('[fetchUsers] Loading addresses and counting orders for', base.length, 'users...');
+  
+  // Batch count orders for all users at once (more efficient than per-user queries)
+  const orderCounts = await countAllUsersOrders(base.map(u => u.id));
+  
   const withAddresses = await Promise.all(
     base.map(async (raw: any) => {
       const shippingAddresses = await fetchUserAddresses(raw.id);
+      
+      // Get order count from batch result
+      const orderCount = orderCounts.get(raw.id) || 0;
+      
+      // Parse specialty field - it's an array in Firebase
+      let specialtyArray: string[] = [];
+      if (Array.isArray(raw.specialty)) {
+        specialtyArray = raw.specialty.filter((s: any) => typeof s === 'string' && s.trim() !== '');
+      } else if (typeof raw.specialty === 'string' && raw.specialty.trim() !== '') {
+        // Fallback: if it's a string, convert to array
+        specialtyArray = [raw.specialty.trim()];
+      }
+      
       const user: User = {
         id: raw.id,
         accountId: raw.accountId ?? raw.uid ?? raw.id,
@@ -83,8 +174,8 @@ export async function fetchUsers(): Promise<User []> {
         email: raw.email ?? '',
         contactNumber: raw.contactNumber ?? '',
         shippingAddresses,
-        specialty: raw.specialty ?? '',
-        totalTransactions: Number(raw.totalTransactions ?? 0),
+        specialty: specialtyArray,
+        totalTransactions: orderCount, // Use actual order count from Firebase
         totalSpent: Number(raw.totalSpent ?? 0),
         registrationDate: (raw.registrationDate ?? raw.createdAt ?? '').toString(),
         lastActivity: (raw.lastActivity ?? raw.updatedAt ?? '').toString(),
@@ -97,6 +188,15 @@ export async function fetchUsers(): Promise<User []> {
       return user;
     })
   );
+  
+  console.log('[fetchUsers] Completed loading users with order counts. Sample:', 
+    withAddresses.slice(0, 3).map(u => ({ 
+      id: u.id, 
+      email: u.email, 
+      totalTransactions: u.totalTransactions 
+    }))
+  );
+  
   return withAddresses;
 }
 
@@ -106,9 +206,26 @@ export function listenUsers(onChange: (users: User[]) => void) {
     q,
     async snap => {
       const base = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
+      
+      // Batch count orders for all users
+      const orderCounts = await countAllUsersOrders(base.map(u => u.id));
+      
       const users = await Promise.all(
         base.map(async (raw: any) => {
           const shippingAddresses = await fetchUserAddresses(raw.id);
+          
+          // Get order count from batch result
+          const orderCount = orderCounts.get(raw.id) || 0;
+          
+          // Parse specialty field - it's an array in Firebase
+          let specialtyArray: string[] = [];
+          if (Array.isArray(raw.specialty)) {
+            specialtyArray = raw.specialty.filter((s: any) => typeof s === 'string' && s.trim() !== '');
+          } else if (typeof raw.specialty === 'string' && raw.specialty.trim() !== '') {
+            // Fallback: if it's a string, convert to array
+            specialtyArray = [raw.specialty.trim()];
+          }
+          
           const user: User = {
             id: raw.id,
             accountId: raw.accountId ?? raw.uid ?? raw.id,
@@ -118,8 +235,8 @@ export function listenUsers(onChange: (users: User[]) => void) {
             email: raw.email ?? '',
             contactNumber: raw.contactNumber ?? '',
             shippingAddresses,
-            specialty: raw.specialty ?? '',
-            totalTransactions: Number(raw.totalTransactions ?? 0),
+            specialty: specialtyArray,
+            totalTransactions: orderCount, // Use actual order count from Firebase
             totalSpent: Number(raw.totalSpent ?? 0),
             registrationDate: (raw.registrationDate ?? raw.createdAt ?? '').toString(),
             lastActivity: (raw.lastActivity ?? raw.updatedAt ?? '').toString(),

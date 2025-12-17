@@ -13,7 +13,8 @@ export interface Order {
     contact: string;
   };
   // Optional identifiers for reporting
-  customerId?: string;
+  userId?: string; // Primary field: User ID who placed the order
+  customerId?: string; // Legacy/alternative field name
   sellerIds?: string[];
   // Region info derived from shipping address
   region?: {
@@ -110,6 +111,14 @@ export interface Order {
       pickupSchedule?: string;
       courier?: string;
     };
+  };
+  // NEW: PayMongo payment information
+  paymongo?: {
+    paymentStatus?: string; // e.g., "paid", "pending", "failed"
+    checkoutSessionId?: string;
+    paymentIntentId?: string;
+    amount?: number;
+    currency?: string;
   };
 }
 

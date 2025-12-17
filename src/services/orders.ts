@@ -300,6 +300,14 @@ const mapDocToOrder = (id: string, data: any): Order => {
         courier: data.shippingInfo.jrs.courier ? String(data.shippingInfo.jrs.courier) : undefined,
       }
     } : undefined,
+    // NEW: Map PayMongo payment information
+    paymongo: data.paymongo ? {
+      paymentStatus: data.paymongo.paymentStatus ? String(data.paymongo.paymentStatus) : undefined,
+      checkoutSessionId: data.paymongo.checkoutSessionId ? String(data.paymongo.checkoutSessionId) : undefined,
+      paymentIntentId: data.paymongo.paymentIntentId ? String(data.paymongo.paymentIntentId) : undefined,
+      amount: data.paymongo.amount != null ? Number(data.paymongo.amount) : undefined,
+      currency: data.paymongo.currency ? String(data.paymongo.currency) : undefined,
+    } : undefined,
   };
 };
 
