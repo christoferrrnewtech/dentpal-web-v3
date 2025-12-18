@@ -6,7 +6,7 @@ import UserDetailsDialog from "./UserDetailsDialog";
 import ResetPointsDialog from "./ResetPointsDialog";
 import { User, Filters } from "./types";
 import { useUserRealtime } from "@/hooks/useUser";
-import { updateUserSellerApproval, deleteUser } from "@/services/userService";
+import { updateUserSellerApproval, deleteUser, updateUserStatus } from "@/services/userService";
 import { getProvinces as getPhProvinces } from '@/lib/phLocations';
 
 
@@ -65,6 +65,15 @@ export default function UsersTab() {
       await updateUserSellerApproval(id, status);
     } catch (e) {
       console.error('Failed to update seller approval status', e);
+    }
+  };
+
+  const handleToggleUserStatus = async (id: string, currentStatus: User['status']) => {
+    try {
+      const newStatus: User['status'] = currentStatus === 'active' ? 'inactive' : 'active';
+      await updateUserStatus(id, newStatus);
+    } catch (e) {
+      console.error('Failed to toggle user status', e);
     }
   };
 
@@ -253,6 +262,7 @@ export default function UsersTab() {
         onEdit={onEdit}
         onDelete={handleDeleteUser}
         onChangeSellerApproval={handleChangeSellerApproval}
+        onToggleStatus={handleToggleUserStatus}
       />
       <UserDetailsDialog user={selectedUser} open={!!selectedUser} onClose={()=>setSelectedUser(null)} />
       <ResetPointsDialog open={isResetOpen} label={selected.length ? `${selected.length} users` : 'user'} onCancel={()=>setResetOpen(false)} onConfirm={handleConfirmReset} />

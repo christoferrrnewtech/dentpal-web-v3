@@ -261,6 +261,11 @@ export async function updateUserRewardPoints(userId: string, points: number) {
   await updateDoc(ref, { rewardPoints: points });
 }
 
+export async function updateUserStatus(userId: string, status: User['status']) {
+  const ref = doc(db, USERS_COLLECTION, userId);
+  await updateDoc(ref, { status });
+}
+
 export async function updateUserSellerApproval(userId: string, status: User['sellerApprovalStatus']) {
   const ref = doc(db, USERS_COLLECTION, userId);
   await updateDoc(ref, { sellerApprovalStatus: status });

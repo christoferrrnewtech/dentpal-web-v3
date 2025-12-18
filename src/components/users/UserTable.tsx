@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
 import { User } from "./types";
 import { StatusBadge } from "./badges";
-import { Pencil, Eye, Trash2, Calendar, Phone, User as UserIcon } from "lucide-react";
+import { Pencil, Eye, Trash2, Calendar, Phone, User as UserIcon, Lock, Unlock } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { db } from '@/lib/firebase';
@@ -33,6 +33,7 @@ export default function UserTable({
   onEdit,
   onDelete,
   onChangeSellerApproval,
+  onToggleStatus,
 }: {
   users: User[];
   selected: string[];
@@ -42,6 +43,7 @@ export default function UserTable({
   onEdit: (u: User) => void;
   onDelete: (id: string) => void;
   onChangeSellerApproval: (id: string, status: User["sellerApprovalStatus"]) => void;
+  onToggleStatus: (id: string, currentStatus: User['status']) => void;
 }) {
   // VIEW MODAL STATE
   const [viewUserId, setViewUserId] = useState<string | null>(null);
@@ -181,6 +183,20 @@ export default function UserTable({
                         </Button>
                       </TooltipTrigger>
                       <TooltipContent>View</TooltipContent>
+                    </Tooltip>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button 
+                          size="icon" 
+                          variant="ghost" 
+                          aria-label={u.status === 'active' ? 'Disable Account' : 'Enable Account'}
+                          onClick={() => onToggleStatus(u.id, u.status)}
+                          className={u.status === 'active' ? 'text-amber-600 hover:text-amber-800' : 'text-green-600 hover:text-green-800'}
+                        >
+                          {u.status === 'active' ? <Lock className="w-4 h-4" /> : <Unlock className="w-4 h-4" />}
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>{u.status === 'active' ? 'Disable Account' : 'Enable Account'}</TooltipContent>
                     </Tooltip>
                     <Tooltip>
                       <TooltipTrigger asChild>
