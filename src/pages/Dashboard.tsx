@@ -1864,14 +1864,25 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
                                   </div>
                                 </div>
 
-                                {order.region && (
-                                  <div className="mb-4 text-sm">
-                                    <span className="text-gray-500 text-xs">Location</span>
-                                    <p className="text-gray-900 font-medium">
-                                      {[order.region.municipality, order.region.province].filter(Boolean).join(', ') || 'N/A'}
-                                    </p>
-                                  </div>
-                                )}
+                                <div className="grid grid-cols-2 gap-4 mb-4 text-sm">
+                                  {order.region && (
+                                    <div>
+                                      <span className="text-gray-500 text-xs">Location</span>
+                                      <p className="text-gray-900 font-medium">
+                                        {[order.region.municipality, order.region.province].filter(Boolean).join(', ') || 'N/A'}
+                                      </p>
+                                    </div>
+                                  )}
+                                  
+                                  {order.paymongo?.paymentStatus && (
+                                    <div>
+                                      <span className="text-gray-500 text-xs">Payment Status</span>
+                                      <p className="text-gray-900 font-medium capitalize">
+                                        {order.paymongo.paymentStatus}
+                                      </p>
+                                    </div>
+                                  )}
+                                </div>
 
                                 {/* Items List - Collapsible */}
                                 {order.items && order.items.length > 0 && (

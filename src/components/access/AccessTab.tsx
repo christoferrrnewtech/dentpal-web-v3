@@ -1140,16 +1140,7 @@ const AccessTab = ({ loading = false, error, setError, onTabChange, onEditUser }
                    
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
                       <div className="flex items-center space-x-1">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          title="Edit access"
-                          aria-label="Edit access"
-                          className="text-blue-600 hover:text-blue-800"
-                          onClick={() => handleEditUser(user)}
-                        >
-                          <Edit3 className="w-4 h-4" />
-                        </Button>
+                        {/* Hide edit icon for admin users */}
                         <Button
                           variant="ghost"
                           size="sm"
@@ -1398,7 +1389,7 @@ const AccessTab = ({ loading = false, error, setError, onTabChange, onEditUser }
                     </td>
                     <td className="px-6 py-3">
                       <div className="flex items-center gap-1">
-                        <Button variant="ghost" size="sm" onClick={() => handleEditUser(seller)} className="text-blue-600 hover:text-blue-800"><Edit3 className="w-4 h-4"/></Button>
+                        {/* Hide edit icon for main seller accounts */}
                         <Button variant="ghost" size="sm" onClick={() => handleToggleActive(seller)} className={seller.status==='active'? 'text-amber-600 hover:text-amber-800':'text-green-600 hover:text-green-800'}>{seller.status==='active'? <Lock className="w-4 h-4"/>:<Unlock className="w-4 h-4"/>}</Button>
                         <Button variant="ghost" size="sm" onClick={() => handleResendInvite(seller)} className="text-gray-600 hover:text-gray-800"><Key className="w-4 h-4"/></Button>
                         <Button variant="ghost" size="sm" onClick={() => handleDeleteUser(seller.id)} className="text-red-600 hover:text-red-800"><Trash2 className="w-4 h-4"/></Button>

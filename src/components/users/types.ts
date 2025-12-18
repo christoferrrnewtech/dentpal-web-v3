@@ -22,7 +22,7 @@ export interface User {
   contactNumber: string;
   shippingAddresses: UserAddress[]; // Loaded from Firebase User > Address subcollection
   addresses?: UserAddress[]; // Alternative field name for addresses
-  specialty: string;
+  specialty: string[]; // Array of specialties from Firebase User > specialty
   totalTransactions: number;
   totalSpent: number;
   registrationDate: string;

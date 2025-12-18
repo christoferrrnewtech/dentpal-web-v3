@@ -6,7 +6,7 @@ import UserDetailsDialog from "./UserDetailsDialog";
 import ResetPointsDialog from "./ResetPointsDialog";
 import { User, Filters } from "./types";
 import { useUserRealtime } from "@/hooks/useUser";
-import { updateUserSellerApproval, deleteUser } from "@/services/userService";
+import { updateUserSellerApproval, deleteUser, updateUserStatus } from "@/services/userService";
 import { getProvinces as getPhProvinces } from '@/lib/phLocations';
 
 
@@ -65,6 +65,15 @@ export default function UsersTab() {
       await updateUserSellerApproval(id, status);
     } catch (e) {
       console.error('Failed to update seller approval status', e);
+    }
+  };
+
+  const handleToggleUserStatus = async (id: string, currentStatus: User['status']) => {
+    try {
+      const newStatus: User['status'] = currentStatus === 'active' ? 'inactive' : 'active';
+      await updateUserStatus(id, newStatus);
+    } catch (e) {
+      console.error('Failed to toggle user status', e);
     }
   };
 
@@ -171,10 +180,18 @@ export default function UsersTab() {
     return null;
   };
 
-  const specialties = useMemo(
-    () => Array.from(new Set(users.map(u => u.specialty ?? ''))).filter(Boolean),
-    [users]
-  );
+  const specialties = useMemo(() => {
+    // Flatten all specialty arrays and get unique values
+    const allSpecialties = users.flatMap(u => u.specialty || []);
+    const uniqueSpecialties = Array.from(new Set(allSpecialties)).filter(Boolean);
+    console.log('[UsersTab] Loaded specialties from Firebase User > specialty (array):', uniqueSpecialties);
+    console.log('[UsersTab] Sample users with specialty:', users.slice(0, 3).map(u => ({ 
+      id: u.id, 
+      email: u.email, 
+      specialty: u.specialty 
+    })));
+    return uniqueSpecialties;
+  }, [users]);
 
   const filtered = useMemo(() => {
     const q = (filters.search || '').trim().toLowerCase();
@@ -185,7 +202,17 @@ export default function UsersTab() {
         `${u.firstName ?? ''} ${u.lastName ?? ''}`.toLowerCase().includes(q) ||
         (u.email ?? '').toLowerCase().includes(q);
       const matchesStatus = filters.status === 'all' || u.status === filters.status;
-      const matchesSpecialty = filters.specialty === 'all' || (u.specialty ?? '') === filters.specialty;
+      const matchesSpecialty = filters.specialty === 'all' || (u.specialty || []).includes(filters.specialty);
+      
+      // Debug log for specialty filter (first user when specialty filter active)
+      if (filters.specialty !== 'all' && u === users[0]) {
+        console.log('[UsersTab] Specialty Filter Debug:', {
+          filterSpecialty: filters.specialty,
+          userSpecialties: u.specialty,
+          matches: matchesSpecialty,
+          userEmail: u.email
+        });
+      }
       
       // Province filtering based on User > Address with debug logging
       const userProvince = getUserProvince(u);
@@ -224,7 +251,7 @@ export default function UsersTab() {
 
   return (
     <div className="space-y-6">
-      <UserSummaryCards totalUsers={users.length} activeUsers={users.filter(u=>u.status==='active').length} totalRevenue={users.reduce((s,u)=>s+u.totalSpent,0)} totalOrders={users.reduce((s,u)=>s+u.totalTransactions,0)} />
+      <UserSummaryCards totalUsers={filtered.length} activeUsers={filtered.filter(u=>u.status==='active').length} totalRevenue={filtered.reduce((s,u)=>s+u.totalSpent,0)} totalOrders={filtered.reduce((s,u)=>s+u.totalTransactions,0)} />
       <UserFilters filters={filters} provinces={phProvinces} specialties={specialties} onChange={setFilters} />
       <UserTable
         users={filtered}
@@ -235,6 +262,7 @@ export default function UsersTab() {
         onEdit={onEdit}
         onDelete={handleDeleteUser}
         onChangeSellerApproval={handleChangeSellerApproval}
+        onToggleStatus={handleToggleUserStatus}
       />
       <UserDetailsDialog user={selectedUser} open={!!selectedUser} onClose={()=>setSelectedUser(null)} />
       <ResetPointsDialog open={isResetOpen} label={selected.length ? `${selected.length} users` : 'user'} onCancel={()=>setResetOpen(false)} onConfirm={handleConfirmReset} />
