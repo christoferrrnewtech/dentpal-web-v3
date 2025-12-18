@@ -410,7 +410,7 @@ exports.createJRSShipping = (0, https_1.onRequest)({
     cors: true,
     region: "asia-southeast1",
 }, async (req, res) => {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _0, _1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12, _13, _14, _15, _16, _17, _18, _19, _20, _21, _22, _23, _24, _25, _26, _27, _28, _29, _30, _31, _32, _33;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _0, _1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12, _13, _14, _15, _16, _17, _18, _19, _20, _21, _22, _23, _24, _25, _26, _27, _28, _29, _30, _31, _32, _33, _34, _35, _36, _37, _38, _39, _40;
     // Add explicit CORS headers
     res.set('Access-Control-Allow-Origin', '*');
     res.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -603,13 +603,17 @@ exports.createJRSShipping = (0, https_1.onRequest)({
         // Generate shipment description
         const shipmentDescription = payload.shipmentDescription || generateShipmentDescription(orderData.items || []);
         // COD amount - use order total if cash on delivery
+        // Check multiple possible locations for COD payment method
+        const isCODOrder = ((_9 = orderData.paymentInfo) === null || _9 === void 0 ? void 0 : _9.method) === 'cod' ||
+            ((_10 = orderData.paymongo) === null || _10 === void 0 ? void 0 : _10.paymentMethod) === 'cash_on_delivery' ||
+            ((_11 = orderData.metadata) === null || _11 === void 0 ? void 0 : _11.paymentMethod) === 'cash_on_delivery';
         const codAmount = payload.codAmountToCollect ||
-            (((_9 = orderData.paymentInfo) === null || _9 === void 0 ? void 0 : _9.method) === 'cod' ? ((_10 = orderData.summary) === null || _10 === void 0 ? void 0 : _10.total) || 0 : 0);
+            (isCODOrder ? ((_12 = orderData.summary) === null || _12 === void 0 ? void 0 : _12.total) || 0 : 0);
         // Check if order has fragile items
-        const hasFragileItems = ((_11 = orderData.metadata) === null || _11 === void 0 ? void 0 : _11.hasFragileItems) === true ||
-            ((_12 = orderData.items) === null || _12 === void 0 ? void 0 : _12.some((item) => item.isFragile === true));
+        const hasFragileItems = ((_13 = orderData.metadata) === null || _13 === void 0 ? void 0 : _13.hasFragileItems) === true ||
+            ((_14 = orderData.items) === null || _14 === void 0 ? void 0 : _14.some((item) => item.isFragile === true));
         // Build remarks with FRAGILE prefix if needed
-        let remarks = payload.remarks || ((_13 = orderData.shippingInfo) === null || _13 === void 0 ? void 0 : _13.notes) || "";
+        let remarks = payload.remarks || ((_15 = orderData.shippingInfo) === null || _15 === void 0 ? void 0 : _15.notes) || "";
         if (hasFragileItems && !remarks.toUpperCase().startsWith("FRAGILE")) {
             remarks = remarks ? `FRAGILE - ${remarks}` : "FRAGILE - Handle with care";
         }
@@ -661,10 +665,12 @@ exports.createJRSShipping = (0, https_1.onRequest)({
             orderId: payload.orderId,
             shippingReferenceNo,
             itemCount: shipmentItems.length,
-            codAmount: codAmount > 0,
+            isCODOrder: isCODOrder,
+            codAmount: codAmount,
             hasPickupSchedule: !!payload.requestedPickupSchedule,
             hasFragileItems: hasFragileItems,
             remarks: remarks,
+            paymentMethod: ((_16 = orderData.paymongo) === null || _16 === void 0 ? void 0 : _16.paymentMethod) || ((_17 = orderData.paymentInfo) === null || _17 === void 0 ? void 0 : _17.method) || 'unknown',
         });
         // Make API call to JRS
         let response;
@@ -681,16 +687,16 @@ exports.createJRSShipping = (0, https_1.onRequest)({
         }
         catch (axiosError) {
             logger.error("JRS API error", {
-                status: (_14 = axiosError.response) === null || _14 === void 0 ? void 0 : _14.status,
-                statusText: (_15 = axiosError.response) === null || _15 === void 0 ? void 0 : _15.statusText,
+                status: (_18 = axiosError.response) === null || _18 === void 0 ? void 0 : _18.status,
+                statusText: (_19 = axiosError.response) === null || _19 === void 0 ? void 0 : _19.statusText,
                 orderId: payload.orderId,
                 shippingReferenceNo,
-                errorCode: ((_17 = (_16 = axiosError.response) === null || _16 === void 0 ? void 0 : _16.data) === null || _17 === void 0 ? void 0 : _17.ErrorCode) || axiosError.code,
-                errorMessage: ((_19 = (_18 = axiosError.response) === null || _18 === void 0 ? void 0 : _18.data) === null || _19 === void 0 ? void 0 : _19.ErrorMessage) || "Network error",
+                errorCode: ((_21 = (_20 = axiosError.response) === null || _20 === void 0 ? void 0 : _20.data) === null || _21 === void 0 ? void 0 : _21.ErrorCode) || axiosError.code,
+                errorMessage: ((_23 = (_22 = axiosError.response) === null || _22 === void 0 ? void 0 : _22.data) === null || _23 === void 0 ? void 0 : _23.ErrorMessage) || "Network error",
             });
             res.status(400).json({
                 error: "JRS API request failed",
-                details: ((_20 = axiosError.response) === null || _20 === void 0 ? void 0 : _20.data) || axiosError.message,
+                details: ((_24 = axiosError.response) === null || _24 === void 0 ? void 0 : _24.data) || axiosError.message,
                 shippingReferenceNo,
             });
             return;
@@ -732,11 +738,13 @@ exports.createJRSShipping = (0, https_1.onRequest)({
         logger.info("JRS API success with shipping charges", {
             orderId: payload.orderId,
             shippingReferenceNo,
-            trackingId: (_21 = responseData.ShippingRequestEntityDto) === null || _21 === void 0 ? void 0 : _21.TrackingId,
-            totalShippingAmount: (_22 = responseData.ShippingRequestEntityDto) === null || _22 === void 0 ? void 0 : _22.TotalShippingAmount,
+            trackingId: (_25 = responseData.ShippingRequestEntityDto) === null || _25 === void 0 ? void 0 : _25.TrackingId,
+            totalShippingAmount: (_26 = responseData.ShippingRequestEntityDto) === null || _26 === void 0 ? void 0 : _26.TotalShippingAmount,
             sellerShippingCharge,
             buyerShippingCharge,
             totalShippingCost,
+            isCODOrder: isCODOrder,
+            codAmount: codAmount,
         });
         // Update order in Firestore with JRS response and handle seller shipping charges
         try {
@@ -750,7 +758,7 @@ exports.createJRSShipping = (0, https_1.onRequest)({
                         sellerId: orderData.sellerIds[0],
                         shippingCharge: sellerShippingCharge,
                         shippingReferenceNo,
-                        trackingId: (_23 = responseData.ShippingRequestEntityDto) === null || _23 === void 0 ? void 0 : _23.TrackingId,
+                        trackingId: (_27 = responseData.ShippingRequestEntityDto) === null || _27 === void 0 ? void 0 : _27.TrackingId,
                     });
                     logger.info("Successfully created seller payout adjustment", {
                         orderId: payload.orderId,
@@ -769,9 +777,11 @@ exports.createJRSShipping = (0, https_1.onRequest)({
                     // Don't fail the entire shipping process if payout adjustment fails
                 }
             }
-            const shippingNote = sellerShippingCharge > 0
-                ? `Order shipped via JRS Express. Reference: ${shippingReferenceNo}, Tracking: ${(_24 = responseData.ShippingRequestEntityDto) === null || _24 === void 0 ? void 0 : _24.TrackingId}. Seller shipping charge: ₱${sellerShippingCharge.toFixed(2)}`
-                : `Order shipped via JRS Express. Reference: ${shippingReferenceNo}, Tracking: ${(_25 = responseData.ShippingRequestEntityDto) === null || _25 === void 0 ? void 0 : _25.TrackingId}`;
+            // Build comprehensive shipping note
+            let shippingNote = `Order shipped via JRS Express. Reference: ${shippingReferenceNo}, Tracking: ${(_28 = responseData.ShippingRequestEntityDto) === null || _28 === void 0 ? void 0 : _28.TrackingId}`;
+            if (isCODOrder && codAmount > 0) {
+                shippingNote += `. COD Amount: ₱${codAmount.toFixed(2)}`;
+            }
             const newHistoryEntry = {
                 status: "shipping",
                 note: shippingNote,
@@ -783,10 +793,16 @@ exports.createJRSShipping = (0, https_1.onRequest)({
                     jrs: {
                         response: responseData,
                         shippingReferenceNo: shippingReferenceNo,
-                        trackingId: (_26 = responseData.ShippingRequestEntityDto) === null || _26 === void 0 ? void 0 : _26.TrackingId,
+                        trackingId: (_29 = responseData.ShippingRequestEntityDto) === null || _29 === void 0 ? void 0 : _29.TrackingId,
                         requestedAt: new Date(),
-                        totalShippingAmount: (_27 = responseData.ShippingRequestEntityDto) === null || _27 === void 0 ? void 0 : _27.TotalShippingAmount,
+                        totalShippingAmount: (_30 = responseData.ShippingRequestEntityDto) === null || _30 === void 0 ? void 0 : _30.TotalShippingAmount,
                         pickupSchedule: jrsRequest.apiShippingRequest.requestedPickupSchedule,
+                        // Include COD information
+                        cashOnDelivery: {
+                            isCOD: isCODOrder,
+                            codAmount: codAmount,
+                            paymentMethod: ((_31 = orderData.paymongo) === null || _31 === void 0 ? void 0 : _31.paymentMethod) || ((_32 = orderData.paymentInfo) === null || _32 === void 0 ? void 0 : _32.method) || 'unknown',
+                        },
                         // Include shipping charge allocation info
                         shippingCharges: {
                             sellerCharge: sellerShippingCharge,
@@ -815,7 +831,7 @@ exports.createJRSShipping = (0, https_1.onRequest)({
             logger.info("Order updated successfully in Firestore", {
                 orderId: payload.orderId,
                 collection: orderResult.collection,
-                trackingId: (_28 = responseData.ShippingRequestEntityDto) === null || _28 === void 0 ? void 0 : _28.TrackingId,
+                trackingId: (_33 = responseData.ShippingRequestEntityDto) === null || _33 === void 0 ? void 0 : _33.TrackingId,
             });
         }
         catch (firestoreError) {
@@ -831,7 +847,7 @@ exports.createJRSShipping = (0, https_1.onRequest)({
                 error: "Order shipping succeeded but failed to update order status",
                 message: "JRS shipping request was successful, but we couldn't update the order in our database. Please contact support.",
                 shippingReferenceNo,
-                trackingId: (_29 = responseData.ShippingRequestEntityDto) === null || _29 === void 0 ? void 0 : _29.TrackingId,
+                trackingId: (_34 = responseData.ShippingRequestEntityDto) === null || _34 === void 0 ? void 0 : _34.TrackingId,
                 firestoreError: firestoreError instanceof Error ? firestoreError.message : 'Unknown error'
             });
             return;
@@ -840,30 +856,37 @@ exports.createJRSShipping = (0, https_1.onRequest)({
         res.status(200).json({
             success: true,
             shippingReferenceNo,
-            trackingId: (_30 = responseData.ShippingRequestEntityDto) === null || _30 === void 0 ? void 0 : _30.TrackingId,
-            totalShippingAmount: (_31 = responseData.ShippingRequestEntityDto) === null || _31 === void 0 ? void 0 : _31.TotalShippingAmount,
+            trackingId: (_35 = responseData.ShippingRequestEntityDto) === null || _35 === void 0 ? void 0 : _35.TrackingId,
+            totalShippingAmount: (_36 = responseData.ShippingRequestEntityDto) === null || _36 === void 0 ? void 0 : _36.TotalShippingAmount,
             shippingCharges: {
                 sellerCharge: sellerShippingCharge,
                 buyerCharge: buyerShippingCharge,
                 totalCharge: totalShippingCost,
                 sellerChargeApplied: sellerShippingCharge > 0,
             },
+            cashOnDelivery: {
+                isCOD: isCODOrder,
+                codAmount: codAmount,
+                paymentMethod: ((_37 = orderData.paymongo) === null || _37 === void 0 ? void 0 : _37.paymentMethod) || ((_38 = orderData.paymentInfo) === null || _38 === void 0 ? void 0 : _38.method) || 'unknown',
+            },
             jrsResponse: responseData,
-            message: sellerShippingCharge > 0
-                ? `Shipping request created successfully. Seller shipping charge of ₱${sellerShippingCharge.toFixed(2)} will be deducted from payout.`
-                : "Shipping request created successfully",
+            message: isCODOrder
+                ? `Shipping request created successfully. COD amount of ₱${codAmount.toFixed(2)} will be collected from recipient upon delivery.${sellerShippingCharge > 0 ? ` Seller shipping charge of ₱${sellerShippingCharge.toFixed(2)} will be deducted from payout.` : ''}`
+                : sellerShippingCharge > 0
+                    ? `Shipping request created successfully. Seller shipping charge of ₱${sellerShippingCharge.toFixed(2)} will be deducted from payout.`
+                    : "Shipping request created successfully",
             orderData: {
                 orderId: payload.orderId,
                 recipient: `${recipientInfo.firstName} ${recipientInfo.lastName}`,
                 shipper: `${shipperInfo.firstName} ${shipperInfo.lastName}`,
-                items: ((_32 = orderData.items) === null || _32 === void 0 ? void 0 : _32.length) || 0,
+                items: ((_39 = orderData.items) === null || _39 === void 0 ? void 0 : _39.length) || 0,
             },
         });
     }
     catch (error) {
         logger.error("Error in createJRSShipping", {
             error: error instanceof Error ? error.message : "Unknown error",
-            orderId: (_33 = req.body) === null || _33 === void 0 ? void 0 : _33.orderId,
+            orderId: (_40 = req.body) === null || _40 === void 0 ? void 0 : _40.orderId,
             stack: error instanceof Error ? error.stack : undefined,
         });
         res.status(500).json({

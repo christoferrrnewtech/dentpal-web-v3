@@ -751,8 +751,14 @@ export const createJRSShipping = onRequest({
     const shipmentDescription = payload.shipmentDescription || generateShipmentDescription(orderData.items || []);
 
     // COD amount - use order total if cash on delivery
+    // Check multiple possible locations for COD payment method
+    const isCODOrder = 
+      orderData.paymentInfo?.method === 'cod' || 
+      orderData.paymongo?.paymentMethod === 'cash_on_delivery' ||
+      orderData.metadata?.paymentMethod === 'cash_on_delivery';
+    
     const codAmount = payload.codAmountToCollect || 
-      (orderData.paymentInfo?.method === 'cod' ? orderData.summary?.total || 0 : 0);
+      (isCODOrder ? orderData.summary?.total || 0 : 0);
 
     // Check if order has fragile items
     const hasFragileItems = orderData.metadata?.hasFragileItems === true || 
@@ -814,10 +820,12 @@ export const createJRSShipping = onRequest({
       orderId: payload.orderId,
       shippingReferenceNo,
       itemCount: shipmentItems.length,
-      codAmount: codAmount > 0,
+      isCODOrder: isCODOrder,
+      codAmount: codAmount,
       hasPickupSchedule: !!payload.requestedPickupSchedule,
       hasFragileItems: hasFragileItems,
       remarks: remarks,
+      paymentMethod: orderData.paymongo?.paymentMethod || orderData.paymentInfo?.method || 'unknown',
     });
 
     // Make API call to JRS
@@ -896,6 +904,8 @@ export const createJRSShipping = onRequest({
       sellerShippingCharge,
       buyerShippingCharge,
       totalShippingCost,
+      isCODOrder: isCODOrder,
+      codAmount: codAmount,
     });
 
     // Update order in Firestore with JRS response and handle seller shipping charges
@@ -931,9 +941,12 @@ export const createJRSShipping = onRequest({
         }
       }
 
-      const shippingNote = sellerShippingCharge > 0 
-        ? `Order shipped via JRS Express. Reference: ${shippingReferenceNo}, Tracking: ${responseData.ShippingRequestEntityDto?.TrackingId}. Seller shipping charge: ₱${sellerShippingCharge.toFixed(2)}`
-        : `Order shipped via JRS Express. Reference: ${shippingReferenceNo}, Tracking: ${responseData.ShippingRequestEntityDto?.TrackingId}`;
+      // Build comprehensive shipping note
+      let shippingNote = `Order shipped via JRS Express. Reference: ${shippingReferenceNo}, Tracking: ${responseData.ShippingRequestEntityDto?.TrackingId}`;
+      
+      if (isCODOrder && codAmount > 0) {
+        shippingNote += `. COD Amount: ₱${codAmount.toFixed(2)}`;
+      }
 
       const newHistoryEntry = {
         status: "shipping", 
@@ -951,6 +964,12 @@ export const createJRSShipping = onRequest({
             requestedAt: new Date(),
             totalShippingAmount: responseData.ShippingRequestEntityDto?.TotalShippingAmount,
             pickupSchedule: jrsRequest.apiShippingRequest.requestedPickupSchedule,
+            // Include COD information
+            cashOnDelivery: {
+              isCOD: isCODOrder,
+              codAmount: codAmount,
+              paymentMethod: orderData.paymongo?.paymentMethod || orderData.paymentInfo?.method || 'unknown',
+            },
             // Include shipping charge allocation info
             shippingCharges: {
               sellerCharge: sellerShippingCharge,
@@ -1017,10 +1036,17 @@ export const createJRSShipping = onRequest({
         totalCharge: totalShippingCost,
         sellerChargeApplied: sellerShippingCharge > 0,
       },
+      cashOnDelivery: {
+        isCOD: isCODOrder,
+        codAmount: codAmount,
+        paymentMethod: orderData.paymongo?.paymentMethod || orderData.paymentInfo?.method || 'unknown',
+      },
       jrsResponse: responseData,
-      message: sellerShippingCharge > 0 
-        ? `Shipping request created successfully. Seller shipping charge of ₱${sellerShippingCharge.toFixed(2)} will be deducted from payout.`
-        : "Shipping request created successfully",
+      message: isCODOrder 
+        ? `Shipping request created successfully. COD amount of ₱${codAmount.toFixed(2)} will be collected from recipient upon delivery.${sellerShippingCharge > 0 ? ` Seller shipping charge of ₱${sellerShippingCharge.toFixed(2)} will be deducted from payout.` : ''}`
+        : sellerShippingCharge > 0 
+          ? `Shipping request created successfully. Seller shipping charge of ₱${sellerShippingCharge.toFixed(2)} will be deducted from payout.`
+          : "Shipping request created successfully",
       orderData: {
         orderId: payload.orderId,
         recipient: `${recipientInfo.firstName} ${recipientInfo.lastName}`,
