@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.listPaymongoTransactions = exports.getPaymongoTransaction = exports.getWalletTransactions = exports.checkWithdrawalStatus = exports.processWithdrawal = exports.createJRSShipping = exports.processSellerPayoutAdjustments = exports.getSellerPayoutAdjustments = void 0;
+exports.listPaymongoTransactions = exports.getPaymongoTransaction = exports.getWalletTransactions = exports.checkWithdrawalStatus = exports.processWithdrawal = exports.getSellerReturnRequests = exports.processReturnRequest = exports.createJRSShipping = exports.processSellerPayoutAdjustments = exports.getSellerPayoutAdjustments = void 0;
 const https_1 = require("firebase-functions/v2/https");
 const logger = require("firebase-functions/logger");
 const app_1 = require("firebase-admin/app");
@@ -888,6 +888,568 @@ exports.createJRSShipping = (0, https_1.onRequest)({
             error: error instanceof Error ? error.message : "Unknown error",
             orderId: (_40 = req.body) === null || _40 === void 0 ? void 0 : _40.orderId,
             stack: error instanceof Error ? error.stack : undefined,
+        });
+        res.status(500).json({
+            error: "Internal server error",
+            message: error instanceof Error ? error.message : "Unknown error",
+        });
+    }
+});
+/**
+ * Process a return request - approve or reject
+ * If approved, creates a reverse JRS shipping (buyer → seller)
+ * Only sellers/admins can process return requests
+ */
+exports.processReturnRequest = (0, https_1.onRequest)({
+    cors: true,
+    region: "asia-southeast1",
+}, async (req, res) => {
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _0, _1, _2, _3, _4, _5, _6;
+    // Add explicit CORS headers
+    res.set('Access-Control-Allow-Origin', '*');
+    res.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    res.set('Access-Control-Max-Age', '86400');
+    // Handle preflight OPTIONS request
+    if (req.method === 'OPTIONS') {
+        res.status(200).end();
+        return;
+    }
+    try {
+        // Check for POST method
+        if (req.method !== "POST") {
+            res.status(405).json({ error: "Method not allowed" });
+            return;
+        }
+        // Verify authentication token
+        let decodedToken;
+        try {
+            decodedToken = await verifyAuthToken(req.headers.authorization);
+            logger.info("Authenticated return request processing", {
+                uid: decodedToken.uid,
+                email: decodedToken.email
+            });
+        }
+        catch (authError) {
+            logger.warn("Unauthenticated return request attempt", {
+                ip: req.ip,
+                userAgent: req.headers["user-agent"]
+            });
+            res.status(401).json({
+                error: "Authentication required",
+                message: authError instanceof Error ? authError.message : "Invalid authentication"
+            });
+            return;
+        }
+        const payload = req.body;
+        // Validate required fields
+        if (!payload.returnRequestId || !payload.orderId || !payload.action) {
+            res.status(400).json({
+                error: "Missing required fields",
+                message: "returnRequestId, orderId, and action are required"
+            });
+            return;
+        }
+        if (!['approve', 'reject'].includes(payload.action)) {
+            res.status(400).json({
+                error: "Invalid action",
+                message: "action must be 'approve' or 'reject'"
+            });
+            return;
+        }
+        logger.info("Processing return request", {
+            returnRequestId: payload.returnRequestId,
+            orderId: payload.orderId,
+            action: payload.action,
+            authenticatedUser: decodedToken.uid
+        });
+        // Fetch the return request
+        const returnRequestRef = db.collection("ReturnRequest").doc(payload.returnRequestId);
+        const returnRequestDoc = await returnRequestRef.get();
+        if (!returnRequestDoc.exists) {
+            res.status(404).json({ error: "Return request not found" });
+            return;
+        }
+        const returnRequestData = returnRequestDoc.data();
+        // Verify the return request matches the order
+        if (returnRequestData.orderId !== payload.orderId) {
+            res.status(400).json({
+                error: "Order mismatch",
+                message: "The return request does not match the specified order"
+            });
+            return;
+        }
+        // Check if return request is in a valid state
+        if (returnRequestData.status !== 'pending') {
+            res.status(400).json({
+                error: "Invalid return request status",
+                message: `Return request has already been ${returnRequestData.status}`
+            });
+            return;
+        }
+        // Fetch the order
+        const orderResult = await fetchOrderData(payload.orderId);
+        if (!orderResult) {
+            res.status(404).json({ error: "Order not found" });
+            return;
+        }
+        const orderData = orderResult.data;
+        if (!orderData) {
+            res.status(404).json({ error: "Order data not found" });
+            return;
+        }
+        // Authorization check - only sellers involved in the order or admins can process returns
+        const isAdmin = decodedToken.role === 'admin' ||
+            ((_a = decodedToken.customClaims) === null || _a === void 0 ? void 0 : _a.role) === 'admin';
+        let isSeller = false;
+        let sellerData = null;
+        if (orderData.sellerIds && Array.isArray(orderData.sellerIds)) {
+            if (orderData.sellerIds.includes(decodedToken.uid)) {
+                isSeller = true;
+                sellerData = await fetchSellerData(decodedToken.uid);
+            }
+            else {
+                const sellerPromises = orderData.sellerIds.map((sellerId) => db.collection("Seller").doc(sellerId).get());
+                const sellerDocs = await Promise.all(sellerPromises);
+                for (const doc of sellerDocs) {
+                    if (doc.exists && (((_b = doc.data()) === null || _b === void 0 ? void 0 : _b.userId) === decodedToken.uid || ((_c = doc.data()) === null || _c === void 0 ? void 0 : _c.email) === decodedToken.email)) {
+                        isSeller = true;
+                        sellerData = doc.data();
+                        break;
+                    }
+                }
+            }
+        }
+        if (!isAdmin && !isSeller) {
+            logger.warn("Unauthorized return request processing", {
+                returnRequestId: payload.returnRequestId,
+                authenticatedUser: decodedToken.uid,
+                sellerIds: orderData.sellerIds
+            });
+            res.status(403).json({
+                error: "Access denied",
+                message: "Only sellers or admins can process return requests"
+            });
+            return;
+        }
+        // If no seller data found yet, try to fetch the first seller
+        if (!sellerData && ((_d = orderData.sellerIds) === null || _d === void 0 ? void 0 : _d.length) > 0) {
+            sellerData = await fetchSellerData(orderData.sellerIds[0]);
+        }
+        const orderRef = db.collection(orderResult.collection).doc(payload.orderId);
+        const now = new Date();
+        // Handle REJECTION
+        if (payload.action === 'reject') {
+            if (!payload.rejectionReason) {
+                res.status(400).json({
+                    error: "Rejection reason required",
+                    message: "Please provide a reason for rejecting the return request"
+                });
+                return;
+            }
+            // Update return request to rejected
+            await returnRequestRef.update({
+                status: 'rejected',
+                rejectedAt: firestore_1.FieldValue.serverTimestamp(),
+                rejectedBy: decodedToken.uid,
+                rejectionReason: payload.rejectionReason,
+                updatedAt: firestore_1.FieldValue.serverTimestamp(),
+            });
+            // Update order status back to delivered (or return_rejected)
+            const statusUpdate = {
+                status: 'return_rejected',
+                timestamp: firestore_1.FieldValue.serverTimestamp(),
+                note: `Return request rejected: ${payload.rejectionReason}`,
+                updatedBy: decodedToken.uid
+            };
+            await orderRef.update({
+                status: 'return_rejected',
+                updatedAt: firestore_1.FieldValue.serverTimestamp(),
+                statusHistory: firestore_1.FieldValue.arrayUnion(statusUpdate),
+            });
+            logger.info("Return request rejected", {
+                returnRequestId: payload.returnRequestId,
+                orderId: payload.orderId,
+                rejectionReason: payload.rejectionReason,
+                rejectedBy: decodedToken.uid
+            });
+            res.status(200).json({
+                success: true,
+                action: 'rejected',
+                message: "Return request has been rejected",
+                returnRequestId: payload.returnRequestId,
+                orderId: payload.orderId,
+            });
+            return;
+        }
+        // Handle APPROVAL - Create reverse JRS shipping
+        logger.info("Approving return request and creating reverse shipping", {
+            returnRequestId: payload.returnRequestId,
+            orderId: payload.orderId
+        });
+        // Generate return shipping reference number
+        const returnShippingReferenceNo = `DPAL-RTN-${payload.orderId.substring(0, 8)}`;
+        // Parse buyer address (shipper for return)
+        const buyerAddress = parseAddress(orderData.shippingInfo || {});
+        // Prepare shipper info (buyer - the one returning the item)
+        const shipperInfo = {
+            email: ((_e = orderData.shippingInfo) === null || _e === void 0 ? void 0 : _e.email) || "customer@dentpal.ph",
+            firstName: ((_g = (_f = orderData.shippingInfo) === null || _f === void 0 ? void 0 : _f.fullName) === null || _g === void 0 ? void 0 : _g.split(' ')[0]) || "Customer",
+            lastName: ((_j = (_h = orderData.shippingInfo) === null || _h === void 0 ? void 0 : _h.fullName) === null || _j === void 0 ? void 0 : _j.split(' ').slice(1).join(' ')) || "N/A",
+            middleName: "",
+            country: buyerAddress.country,
+            province: buyerAddress.state,
+            municipality: buyerAddress.city,
+            district: buyerAddress.district,
+            addressLine1: buyerAddress.addressLine1,
+            phone: ((_k = orderData.shippingInfo) === null || _k === void 0 ? void 0 : _k.phoneNumber) || "+639000000000",
+        };
+        // Prepare recipient info (seller - receiving the returned item)
+        const defaultSellerAddress = {
+            country: "Philippines",
+            province: "Metro Manila",
+            municipality: "Quezon City",
+            district: "Barangay Kamuning",
+            addressLine1: "123 DentPal Street",
+            phone: "+639123456789",
+        };
+        let sellerAddress = defaultSellerAddress;
+        if ((_m = (_l = sellerData === null || sellerData === void 0 ? void 0 : sellerData.vendor) === null || _l === void 0 ? void 0 : _l.company) === null || _m === void 0 ? void 0 : _m.address) {
+            const sellerAddr = sellerData.vendor.company.address;
+            sellerAddress = {
+                country: "Philippines",
+                province: sellerAddr.province || defaultSellerAddress.province,
+                municipality: sellerAddr.city || defaultSellerAddress.municipality,
+                district: sellerAddr.line2 || defaultSellerAddress.district,
+                addressLine1: sellerAddr.line1 || defaultSellerAddress.addressLine1,
+                phone: ((_o = sellerData.vendor.contacts) === null || _o === void 0 ? void 0 : _o.phone) || defaultSellerAddress.phone,
+            };
+        }
+        const recipientInfo = {
+            email: (sellerData === null || sellerData === void 0 ? void 0 : sellerData.email) || "support@dentpal.ph",
+            firstName: ((_p = sellerData === null || sellerData === void 0 ? void 0 : sellerData.name) === null || _p === void 0 ? void 0 : _p.split(' ')[0]) || ((_r = (_q = sellerData === null || sellerData === void 0 ? void 0 : sellerData.vendor) === null || _q === void 0 ? void 0 : _q.company) === null || _r === void 0 ? void 0 : _r.storeName) || "DentPal",
+            lastName: ((_s = sellerData === null || sellerData === void 0 ? void 0 : sellerData.name) === null || _s === void 0 ? void 0 : _s.split(' ').slice(1).join(' ')) || "Support",
+            middleName: "",
+            country: sellerAddress.country,
+            province: sellerAddress.province,
+            municipality: sellerAddress.municipality,
+            district: sellerAddress.district,
+            addressLine1: sellerAddress.addressLine1,
+            phone: sellerAddress.phone,
+        };
+        // Calculate shipment items for return
+        const returnItems = returnRequestData.itemsToReturn
+            ? (_t = orderData.items) === null || _t === void 0 ? void 0 : _t.filter((item) => returnRequestData.itemsToReturn.includes(item.productId))
+            : orderData.items;
+        const shipmentItems = calculateShipmentItems(returnItems || []);
+        // Generate return shipment description
+        const shipmentDescription = `RETURN: ${generateShipmentDescription(returnItems || [])}`.substring(0, 100);
+        // Pickup schedule - default to next day if not provided
+        const pickupSchedule = payload.requestedPickupSchedule ||
+            new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+        // Prepare JRS API request for REVERSE shipping (buyer → seller)
+        const jrsReturnRequest = {
+            requestType: "shipfromecom",
+            apiShippingRequest: {
+                express: true,
+                insurance: true,
+                valuation: true,
+                createdByUserEmail: (sellerData === null || sellerData === void 0 ? void 0 : sellerData.email) || decodedToken.email || "admin@dentpal.ph",
+                shipmentItems: shipmentItems,
+                // REVERSED: Buyer is now the shipper
+                shipperEmail: shipperInfo.email,
+                shipperFirstName: shipperInfo.firstName,
+                shipperLastName: shipperInfo.lastName,
+                shipperMiddleName: shipperInfo.middleName,
+                shipperCountry: shipperInfo.country,
+                shipperProvince: shipperInfo.province,
+                shipperMunicipality: shipperInfo.municipality,
+                shipperDistrict: shipperInfo.district,
+                shipperAddressLine1: shipperInfo.addressLine1,
+                shipperPhone: shipperInfo.phone,
+                // REVERSED: Seller is now the recipient
+                recipientEmail: recipientInfo.email,
+                recipientFirstName: recipientInfo.firstName,
+                recipientLastName: recipientInfo.lastName,
+                recipientMiddleName: recipientInfo.middleName,
+                recipientCountry: recipientInfo.country,
+                recipientProvince: recipientInfo.province,
+                recipientMunicipality: recipientInfo.municipality,
+                recipientDistrict: recipientInfo.district,
+                recipientAddressLine1: recipientInfo.addressLine1,
+                recipientPhone: recipientInfo.phone,
+                requestedPickupSchedule: pickupSchedule,
+                shipmentDescription: shipmentDescription,
+                remarks: payload.remarks || `RETURN SHIPMENT - Order #${payload.orderId} - Reason: ${returnRequestData.reason}`,
+                specialInstruction: "RETURN ITEM - Please handle with care",
+                codAmountToCollect: 0,
+                shippingReferenceNo: returnShippingReferenceNo,
+            },
+        };
+        logger.info("Making JRS API request for return shipping", {
+            orderId: payload.orderId,
+            returnShippingReferenceNo,
+            itemCount: shipmentItems.length,
+            pickupSchedule,
+            shipper: `${shipperInfo.firstName} ${shipperInfo.lastName}`,
+            recipient: `${recipientInfo.firstName} ${recipientInfo.lastName}`,
+        });
+        // Make API call to JRS
+        let jrsResponse;
+        let jrsResponseData;
+        try {
+            jrsResponse = await axios_1.default.post(JRS_API_URL.value(), jrsReturnRequest, {
+                headers: {
+                    "Content-Type": "application/json",
+                    "Ocp-Apim-Subscription-Key": JRS_API_KEY.value(),
+                },
+                timeout: 30000,
+            });
+            jrsResponseData = jrsResponse.data;
+        }
+        catch (axiosError) {
+            logger.error("JRS API request failed for return", {
+                orderId: payload.orderId,
+                error: axiosError.message,
+                response: (_u = axiosError.response) === null || _u === void 0 ? void 0 : _u.data,
+                status: (_v = axiosError.response) === null || _v === void 0 ? void 0 : _v.status,
+            });
+            // Update return request with failure
+            await returnRequestRef.update({
+                status: 'shipping_failed',
+                shippingError: ((_x = (_w = axiosError.response) === null || _w === void 0 ? void 0 : _w.data) === null || _x === void 0 ? void 0 : _x.ErrorMessage) || axiosError.message,
+                updatedAt: firestore_1.FieldValue.serverTimestamp(),
+            });
+            res.status(502).json({
+                error: "JRS shipping request failed",
+                message: ((_z = (_y = axiosError.response) === null || _y === void 0 ? void 0 : _y.data) === null || _z === void 0 ? void 0 : _z.ErrorMessage) || axiosError.message,
+                jrsError: (_0 = axiosError.response) === null || _0 === void 0 ? void 0 : _0.data,
+            });
+            return;
+        }
+        // Check JRS response for success
+        if (!jrsResponseData.Success && jrsResponseData.Success !== undefined) {
+            logger.error("JRS API returned error for return shipping", {
+                orderId: payload.orderId,
+                jrsError: jrsResponseData.ErrorMessage,
+                jrsResponse: jrsResponseData,
+            });
+            await returnRequestRef.update({
+                status: 'shipping_failed',
+                shippingError: jrsResponseData.ErrorMessage,
+                updatedAt: firestore_1.FieldValue.serverTimestamp(),
+            });
+            res.status(400).json({
+                error: "JRS shipping request failed",
+                message: jrsResponseData.ErrorMessage || "Unknown JRS error",
+                jrsResponse: jrsResponseData,
+            });
+            return;
+        }
+        const returnTrackingId = (_1 = jrsResponseData.ShippingRequestEntityDto) === null || _1 === void 0 ? void 0 : _1.TrackingId;
+        logger.info("JRS return shipping created successfully", {
+            orderId: payload.orderId,
+            returnShippingReferenceNo,
+            returnTrackingId,
+            totalShippingAmount: (_2 = jrsResponseData.ShippingRequestEntityDto) === null || _2 === void 0 ? void 0 : _2.TotalShippingAmount,
+        });
+        // Update return request with shipping info
+        await returnRequestRef.update({
+            status: 'approved',
+            approvedAt: firestore_1.FieldValue.serverTimestamp(),
+            approvedBy: decodedToken.uid,
+            returnShipping: {
+                referenceNo: returnShippingReferenceNo,
+                trackingId: returnTrackingId,
+                totalShippingAmount: (_3 = jrsResponseData.ShippingRequestEntityDto) === null || _3 === void 0 ? void 0 : _3.TotalShippingAmount,
+                pickupSchedule: pickupSchedule,
+                jrsResponse: jrsResponseData,
+                createdAt: firestore_1.FieldValue.serverTimestamp(),
+            },
+            updatedAt: firestore_1.FieldValue.serverTimestamp(),
+        });
+        // Update order status to return_approved
+        const statusUpdate = {
+            status: 'return_approved',
+            timestamp: firestore_1.FieldValue.serverTimestamp(),
+            note: `Return approved. Pickup scheduled. Tracking: ${returnTrackingId}`,
+            updatedBy: decodedToken.uid
+        };
+        await orderRef.update({
+            status: 'return_approved',
+            updatedAt: firestore_1.FieldValue.serverTimestamp(),
+            statusHistory: firestore_1.FieldValue.arrayUnion(statusUpdate),
+            returnShippingInfo: {
+                referenceNo: returnShippingReferenceNo,
+                trackingId: returnTrackingId,
+                pickupSchedule: pickupSchedule,
+                createdAt: now.toISOString(),
+            },
+        });
+        res.status(200).json({
+            success: true,
+            action: 'approved',
+            message: "Return request approved and pickup scheduled",
+            returnRequestId: payload.returnRequestId,
+            orderId: payload.orderId,
+            returnShipping: {
+                referenceNo: returnShippingReferenceNo,
+                trackingId: returnTrackingId,
+                totalShippingAmount: (_4 = jrsResponseData.ShippingRequestEntityDto) === null || _4 === void 0 ? void 0 : _4.TotalShippingAmount,
+                pickupSchedule: pickupSchedule,
+                pickup: {
+                    from: `${shipperInfo.firstName} ${shipperInfo.lastName}`,
+                    address: `${shipperInfo.addressLine1}, ${shipperInfo.district}, ${shipperInfo.municipality}, ${shipperInfo.province}`,
+                },
+                deliverTo: {
+                    to: `${recipientInfo.firstName} ${recipientInfo.lastName}`,
+                    address: `${recipientInfo.addressLine1}, ${recipientInfo.district}, ${recipientInfo.municipality}, ${recipientInfo.province}`,
+                },
+            },
+            jrsResponse: jrsResponseData,
+        });
+    }
+    catch (error) {
+        logger.error("Error in processReturnRequest", {
+            error: error instanceof Error ? error.message : "Unknown error",
+            returnRequestId: (_5 = req.body) === null || _5 === void 0 ? void 0 : _5.returnRequestId,
+            orderId: (_6 = req.body) === null || _6 === void 0 ? void 0 : _6.orderId,
+            stack: error instanceof Error ? error.stack : undefined,
+        });
+        res.status(500).json({
+            error: "Internal server error",
+            message: error instanceof Error ? error.message : "Unknown error",
+        });
+    }
+});
+/**
+ * Get return requests for a seller
+ * Allows sellers to view pending return requests for their orders
+ */
+exports.getSellerReturnRequests = (0, https_1.onRequest)({
+    cors: true,
+    region: "asia-southeast1",
+}, async (req, res) => {
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o;
+    res.set('Access-Control-Allow-Origin', '*');
+    res.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    if (req.method === 'OPTIONS') {
+        res.status(200).end();
+        return;
+    }
+    try {
+        // Verify authentication
+        let decodedToken;
+        try {
+            decodedToken = await verifyAuthToken(req.headers.authorization);
+        }
+        catch (authError) {
+            res.status(401).json({
+                error: "Authentication required",
+                message: authError instanceof Error ? authError.message : "Invalid authentication"
+            });
+            return;
+        }
+        const { sellerId, status } = req.query;
+        let targetSellerId = sellerId;
+        // If no sellerId provided, try to find seller record for authenticated user
+        if (!targetSellerId) {
+            const sellerQuery = await db.collection('Seller')
+                .where('userId', '==', decodedToken.uid)
+                .limit(1)
+                .get();
+            if (sellerQuery.empty) {
+                // Try by email
+                const sellerByEmail = await db.collection('Seller')
+                    .where('email', '==', decodedToken.email)
+                    .limit(1)
+                    .get();
+                if (sellerByEmail.empty) {
+                    res.status(404).json({
+                        error: "Seller not found",
+                        message: "No seller account found for this user"
+                    });
+                    return;
+                }
+                targetSellerId = sellerByEmail.docs[0].id;
+            }
+            else {
+                targetSellerId = sellerQuery.docs[0].id;
+            }
+        }
+        // Verify authorization
+        const sellerDoc = await db.collection('Seller').doc(targetSellerId).get();
+        if (!sellerDoc.exists) {
+            res.status(404).json({ error: "Seller not found" });
+            return;
+        }
+        const sellerData = sellerDoc.data();
+        const isSellerOwner = (sellerData === null || sellerData === void 0 ? void 0 : sellerData.userId) === decodedToken.uid || (sellerData === null || sellerData === void 0 ? void 0 : sellerData.email) === decodedToken.email;
+        const isAdmin = decodedToken.role === 'admin' || ((_a = decodedToken.customClaims) === null || _a === void 0 ? void 0 : _a.role) === 'admin';
+        if (!isSellerOwner && !isAdmin) {
+            res.status(403).json({
+                error: "Access denied",
+                message: "You are not authorized to view these return requests"
+            });
+            return;
+        }
+        // Get orders for this seller
+        const ordersQuery = await db.collection('Order')
+            .where('sellerIds', 'array-contains', targetSellerId)
+            .get();
+        const orderIds = ordersQuery.docs.map(doc => doc.id);
+        if (orderIds.length === 0) {
+            res.status(200).json({
+                success: true,
+                sellerId: targetSellerId,
+                returnRequests: [],
+                count: 0,
+            });
+            return;
+        }
+        // Get return requests for these orders
+        // Note: Firestore 'in' queries are limited to 30 values
+        const returnRequests = [];
+        const chunks = [];
+        for (let i = 0; i < orderIds.length; i += 30) {
+            chunks.push(orderIds.slice(i, i + 30));
+        }
+        for (const chunk of chunks) {
+            let query = db.collection('ReturnRequest')
+                .where('orderId', 'in', chunk);
+            if (status) {
+                query = query.where('status', '==', status);
+            }
+            const snapshot = await query.get();
+            for (const doc of snapshot.docs) {
+                const data = doc.data();
+                returnRequests.push({
+                    id: doc.id,
+                    ...data,
+                    requestedAt: ((_d = (_c = (_b = data.requestedAt) === null || _b === void 0 ? void 0 : _b.toDate) === null || _c === void 0 ? void 0 : _c.call(_b)) === null || _d === void 0 ? void 0 : _d.toISOString()) || data.requestedAt,
+                    approvedAt: ((_g = (_f = (_e = data.approvedAt) === null || _e === void 0 ? void 0 : _e.toDate) === null || _f === void 0 ? void 0 : _f.call(_e)) === null || _g === void 0 ? void 0 : _g.toISOString()) || data.approvedAt,
+                    rejectedAt: ((_k = (_j = (_h = data.rejectedAt) === null || _h === void 0 ? void 0 : _h.toDate) === null || _j === void 0 ? void 0 : _j.call(_h)) === null || _k === void 0 ? void 0 : _k.toISOString()) || data.rejectedAt,
+                    deliveryDate: ((_o = (_m = (_l = data.deliveryDate) === null || _l === void 0 ? void 0 : _l.toDate) === null || _m === void 0 ? void 0 : _m.call(_l)) === null || _o === void 0 ? void 0 : _o.toISOString()) || data.deliveryDate,
+                });
+            }
+        }
+        // Sort by requestedAt descending
+        returnRequests.sort((a, b) => {
+            const dateA = new Date(a.requestedAt || 0);
+            const dateB = new Date(b.requestedAt || 0);
+            return dateB.getTime() - dateA.getTime();
+        });
+        res.status(200).json({
+            success: true,
+            sellerId: targetSellerId,
+            returnRequests,
+            count: returnRequests.length,
+        });
+    }
+    catch (error) {
+        logger.error("Error in getSellerReturnRequests", {
+            error: error instanceof Error ? error.message : "Unknown error",
         });
         res.status(500).json({
             error: "Internal server error",

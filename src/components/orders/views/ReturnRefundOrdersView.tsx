@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Order } from '@/types/order';
+import OrdersService from '@/services/orders';
 import { 
   Package, 
   Clock, 
@@ -10,7 +11,8 @@ import {
   Upload,
   MessageSquare,
   ChevronDown,
-  ChevronUp
+  ChevronUp,
+  Loader2
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -23,122 +25,33 @@ import {
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 
-// Hard-coded mock data for return/refund requests
-const MOCK_RETURN_REFUND_DATA = [
-  {
-    id: 'REF-001',
-    orderId: 'DP-2024-1001',
-    requestId: '210615163956635',
-    customer: {
-      name: 'Dr. Maria Santos',
-      email: 'maria.santos@dentclinic.com',
-    },
-    product: {
-      name: 'Dental Handpiece High Speed',
-      image: 'https://images.unsplash.com/photo-1588776814546-1ffcf47267a5?w=200',
-      quantity: 1,
-      price: 2242,
-    },
-    refundAmount: 2242,
-    reason: 'Received an incomplete product (missing quantity or accessories)',
-    status: 'evidence_requested' as const,
-    countdown: '1 day',
-    requestedAt: '2024-12-14T10:30:00Z',
-    evidenceSubmitted: false,
-  },
-  {
-    id: 'REF-002',
-    orderId: 'DP-2024-1002',
-    requestId: '210615163956636',
-    customer: {
-      name: 'Dr. Juan Dela Cruz',
-      email: 'juan.delacruz@smile.ph',
-    },
-    product: {
-      name: 'Dental Composite Resin Kit',
-      image: 'https://images.unsplash.com/photo-1629909613654-28e377c37b09?w=200',
-      quantity: 2,
-      price: 3500,
-    },
-    refundAmount: 7000,
-    reason: 'Product defective or does not work',
-    status: 'new_request' as const,
-    countdown: '2 days',
-    requestedAt: '2024-12-15T14:20:00Z',
-    evidenceSubmitted: true,
-    evidenceImages: [
-      'https://images.unsplash.com/photo-1576091160399-112ba8d25d1d?w=400',
-      'https://images.unsplash.com/photo-1576091160550-2173dba999ef?w=400',
-    ],
-  },
-  {
-    id: 'REF-003',
-    orderId: 'DP-2024-1003',
-    requestId: '210615163956637',
-    customer: {
-      name: 'Dr. Sofia Rodriguez',
-      email: 'sofia.rodriguez@dental.com',
-    },
-    product: {
-      name: 'Orthodontic Bracket Kit',
-      image: 'https://images.unsplash.com/photo-1606811841689-23dfddce3e95?w=200',
-      quantity: 1,
-      price: 4200,
-    },
-    refundAmount: 4200,
-    reason: 'Wrong product received',
-    status: 'responded' as const,
-    countdown: null,
-    requestedAt: '2024-12-13T09:15:00Z',
-    responseMessage: 'We have approved your refund request. The refund will be processed within 3-5 business days.',
-    evidenceSubmitted: true,
-  },
-  {
-    id: 'REF-004',
-    orderId: 'DP-2024-1004',
-    requestId: '210615163956638',
-    customer: {
-      name: 'Dr. Pedro Reyes',
-      email: 'pedro.reyes@dentalcare.ph',
-    },
-    product: {
-      name: 'Dental Suction Unit',
-      image: 'https://images.unsplash.com/photo-1629909615184-74f495363b67?w=200',
-      quantity: 1,
-      price: 8500,
-    },
-    refundAmount: 8500,
-    reason: 'Product arrived damaged',
-    status: 'completed' as const,
-    countdown: null,
-    requestedAt: '2024-12-10T11:00:00Z',
-    completedAt: '2024-12-12T16:30:00Z',
-    evidenceSubmitted: true,
-  },
-  {
-    id: 'REF-005',
-    orderId: 'DP-2024-1005',
-    requestId: '210615163956639',
-    customer: {
-      name: 'Dr. Ana Lopez',
-      email: 'ana.lopez@clinic.ph',
-    },
-    product: {
-      name: 'Dental LED Curing Light',
-      image: 'https://images.unsplash.com/photo-1611689342806-0863700ce1e4?w=200',
-      quantity: 1,
-      price: 1850,
-    },
-    refundAmount: 1850,
-    reason: 'Change of mind',
-    status: 'to_respond' as const,
-    countdown: '12 hours',
-    requestedAt: '2024-12-15T18:45:00Z',
-    evidenceSubmitted: false,
-  },
-];
+type RefundStatus = 'pending' | 'approved' | 'rejected' | 'completed';
 
-type RefundStatus = 'new_request' | 'to_respond' | 'evidence_requested' | 'responded' | 'completed';
+interface ReturnRequestData {
+  id: string;
+  orderId: string;
+  order?: Order;
+  requestId: string;
+  customer: {
+    name: string;
+    email?: string;
+  };
+  product: {
+    name: string;
+    image?: string;
+    quantity: number;
+    price: number;
+  };
+  refundAmount: number;
+  reason: string;
+  status: RefundStatus;
+  countdown: string | null;
+  requestedAt: string;
+  evidenceSubmitted: boolean;
+  evidenceImages?: string[];
+  responseMessage?: string;
+  completedAt?: string;
+}
 
 interface ViewProps { 
   orders: Order[]; 
@@ -147,43 +60,161 @@ interface ViewProps {
 
 const ReturnRefundOrdersView: React.FC<ViewProps> = ({ orders, onSelectOrder }) => {
   const [activeTab, setActiveTab] = useState<'all' | RefundStatus>('all');
-  const [selectedRequest, setSelectedRequest] = useState<typeof MOCK_RETURN_REFUND_DATA[0] | null>(null);
+  const [selectedRequest, setSelectedRequest] = useState<ReturnRequestData | null>(null);
   const [showActionDialog, setShowActionDialog] = useState(false);
   const [actionType, setActionType] = useState<'approve' | 'reject' | 'evidence' | 'view'>('approve');
   const [responseMessage, setResponseMessage] = useState('');
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
+  const [returnRequests, setReturnRequests] = useState<ReturnRequestData[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [refundPercentage, setRefundPercentage] = useState<number>(100);
+  const [customRefundAmount, setCustomRefundAmount] = useState<string>('');
+  const [isCustomAmount, setIsCustomAmount] = useState(false);
 
-  // TODO: Replace MOCK_RETURN_REFUND_DATA with real Firebase data from 'orders' prop
-  // For now, we're using hard-coded dummy data for testing UI/UX
-  console.log('🔴 ReturnRefundOrdersView loaded with', MOCK_RETURN_REFUND_DATA.length, 'mock requests');
-  
+  // Fetch return requests from orders with return_requested, return_approved, etc. statuses
+  useEffect(() => {
+    const loadReturnRequests = async () => {
+      setLoading(true);
+      try {
+        const returnOrdersData: ReturnRequestData[] = [];
+        
+        // Filter orders with return-related statuses
+        const returnOrders = orders.filter(o => 
+          ['return_requested', 'return_approved', 'return_rejected', 'returned', 'refunded'].includes(o.status)
+        );
+
+        // Fetch return request data for each order
+        for (const order of returnOrders) {
+          if (order.returnRequestId) {
+            const returnReq = await OrdersService.fetchReturnRequest(order.returnRequestId);
+            
+            if (returnReq) {
+              // Calculate countdown if status is pending
+              const requestedDate = returnReq.requestedAt 
+                ? (typeof returnReq.requestedAt === 'string' 
+                    ? new Date(returnReq.requestedAt)
+                    : returnReq.requestedAt.toDate?.() || new Date(returnReq.requestedAt))
+                : new Date();
+              
+              const now = new Date();
+              const diffTime = Math.abs(now.getTime() - requestedDate.getTime());
+              const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+              const remainingDays = Math.max(0, 7 - diffDays); // 7 day response window
+              
+              const countdown = returnReq.status === 'pending' && remainingDays > 0
+                ? `${remainingDays} day${remainingDays !== 1 ? 's' : ''}`
+                : null;
+
+              // Get first item for display
+              const firstItem = order.items && order.items.length > 0 ? order.items[0] : null;
+              
+              returnOrdersData.push({
+                id: returnReq.id,
+                orderId: order.id,
+                order: order,
+                requestId: order.returnRequestId,
+                customer: {
+                  name: order.customer.name,
+                  email: order.customerId, // Could be enhanced with actual email
+                },
+                product: {
+                  name: firstItem?.name || order.itemsBrief || 'Unknown Product',
+                  image: firstItem?.imageUrl || order.imageUrl,
+                  quantity: firstItem?.quantity || 1,
+                  price: firstItem?.price || order.total || 0,
+                },
+                refundAmount: returnReq.orderTotal || order.total || 0,
+                reason: returnReq.customReason || returnReq.reason,
+                status: returnReq.status as RefundStatus,
+                countdown,
+                requestedAt: requestedDate.toISOString(),
+                evidenceSubmitted: returnReq.evidenceSubmitted || false,
+                evidenceImages: returnReq.evidenceImages,
+                responseMessage: returnReq.responseMessage,
+                completedAt: returnReq.completedAt 
+                  ? (typeof returnReq.completedAt === 'string'
+                      ? returnReq.completedAt
+                      : returnReq.completedAt.toDate?.()?.toISOString() || new Date(returnReq.completedAt).toISOString())
+                  : undefined,
+              });
+            }
+          }
+        }
+
+        setReturnRequests(returnOrdersData);
+      } catch (error) {
+        console.error('Error loading return requests:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadReturnRequests();
+  }, [orders]);
+
   // Filter data by active tab
   const filteredData = activeTab === 'all' 
-    ? MOCK_RETURN_REFUND_DATA 
-    : MOCK_RETURN_REFUND_DATA.filter(item => item.status === activeTab);
+    ? returnRequests 
+    : returnRequests.filter(item => item.status === activeTab);
 
   // Count for each tab
   const counts = {
-    all: MOCK_RETURN_REFUND_DATA.length,
-    new_request: MOCK_RETURN_REFUND_DATA.filter(d => d.status === 'new_request').length,
-    to_respond: MOCK_RETURN_REFUND_DATA.filter(d => d.status === 'to_respond').length,
-    evidence_requested: MOCK_RETURN_REFUND_DATA.filter(d => d.status === 'evidence_requested').length,
-    responded: MOCK_RETURN_REFUND_DATA.filter(d => d.status === 'responded').length,
-    completed: MOCK_RETURN_REFUND_DATA.filter(d => d.status === 'completed').length,
+    all: returnRequests.length,
+    pending: returnRequests.filter(d => d.status === 'pending').length,
+    approved: returnRequests.filter(d => d.status === 'approved').length,
+    rejected: returnRequests.filter(d => d.status === 'rejected').length,
+    completed: returnRequests.filter(d => d.status === 'completed').length,
   };
 
-  const handleAction = (request: typeof MOCK_RETURN_REFUND_DATA[0], action: typeof actionType) => {
+  const handleAction = (request: ReturnRequestData, action: typeof actionType) => {
     setSelectedRequest(request);
     setActionType(action);
     setShowActionDialog(true);
     setResponseMessage('');
+    // Reset refund amount selection when opening dialog
+    setRefundPercentage(100);
+    setCustomRefundAmount('');
+    setIsCustomAmount(false);
   };
 
   const handleSubmitAction = () => {
-    console.log(`[${actionType}] Request:`, selectedRequest?.id, 'Message:', responseMessage);
-    alert(`Action "${actionType}" submitted for request ${selectedRequest?.requestId}`);
+    const finalRefundAmount = isCustomAmount 
+      ? parseFloat(customRefundAmount) || 0
+      : (selectedRequest?.refundAmount || 0) * (refundPercentage / 100);
+    
+    // Validate refund amount
+    if (actionType === 'approve') {
+      if (finalRefundAmount <= 0) {
+        alert('Refund amount must be greater than ₱0');
+        return;
+      }
+      if (finalRefundAmount > (selectedRequest?.refundAmount || 0)) {
+        alert('Refund amount cannot exceed the order total');
+        return;
+      }
+    }
+    
+    console.log(`[${actionType}] Request:`, selectedRequest?.id, 
+      'Message:', responseMessage, 
+      'Refund Amount:', finalRefundAmount,
+      'Original Amount:', selectedRequest?.refundAmount);
+    
+    alert(`Action "${actionType}" submitted for request ${selectedRequest?.requestId}\n` +
+      (actionType === 'approve' ? `Refund Amount: ₱${finalRefundAmount.toFixed(2)} ${isCustomAmount ? '(Custom)' : `(${refundPercentage}%)`}` : ''));
+    
     setShowActionDialog(false);
     setResponseMessage('');
+    setRefundPercentage(100);
+    setCustomRefundAmount('');
+    setIsCustomAmount(false);
+  };
+
+  const calculateRefundAmount = () => {
+    if (!selectedRequest) return 0;
+    if (isCustomAmount) {
+      return parseFloat(customRefundAmount) || 0;
+    }
+    return selectedRequest.refundAmount * (refundPercentage / 100);
   };
 
   const toggleExpand = (id: string) => {
@@ -200,14 +231,12 @@ const ReturnRefundOrdersView: React.FC<ViewProps> = ({ orders, onSelectOrder }) 
 
   const getStatusBadge = (status: RefundStatus) => {
     switch (status) {
-      case 'new_request':
-        return <span className="px-3 py-1 bg-blue-100 text-blue-700 text-xs font-medium rounded-full">New Request</span>;
-      case 'to_respond':
-        return <span className="px-3 py-1 bg-orange-100 text-orange-700 text-xs font-medium rounded-full">To Respond</span>;
-      case 'evidence_requested':
-        return <span className="px-3 py-1 bg-amber-100 text-amber-700 text-xs font-medium rounded-full">Evidence Requested</span>;
-      case 'responded':
-        return <span className="px-3 py-1 bg-purple-100 text-purple-700 text-xs font-medium rounded-full">Responded</span>;
+      case 'pending':
+        return <span className="px-3 py-1 bg-blue-100 text-blue-700 text-xs font-medium rounded-full">Pending</span>;
+      case 'approved':
+        return <span className="px-3 py-1 bg-purple-100 text-purple-700 text-xs font-medium rounded-full">Approved</span>;
+      case 'rejected':
+        return <span className="px-3 py-1 bg-red-100 text-red-700 text-xs font-medium rounded-full">Rejected</span>;
       case 'completed':
         return <span className="px-3 py-1 bg-green-100 text-green-700 text-xs font-medium rounded-full">Completed</span>;
     }
@@ -215,18 +244,25 @@ const ReturnRefundOrdersView: React.FC<ViewProps> = ({ orders, onSelectOrder }) 
 
   const getStatusIcon = (status: RefundStatus) => {
     switch (status) {
-      case 'new_request':
-        return <AlertCircle className="w-5 h-5 text-blue-600" />;
-      case 'to_respond':
-        return <Clock className="w-5 h-5 text-orange-600" />;
-      case 'evidence_requested':
-        return <Upload className="w-5 h-5 text-amber-600" />;
-      case 'responded':
-        return <MessageSquare className="w-5 h-5 text-purple-600" />;
+      case 'pending':
+        return <Clock className="w-5 h-5 text-blue-600" />;
+      case 'approved':
+        return <CheckCircle className="w-5 h-5 text-purple-600" />;
+      case 'rejected':
+        return <XCircle className="w-5 h-5 text-red-600" />;
       case 'completed':
         return <CheckCircle className="w-5 h-5 text-green-600" />;
     }
   };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <Loader2 className="w-8 h-8 animate-spin text-teal-600" />
+        <span className="ml-3 text-gray-600">Loading return requests...</span>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -244,44 +280,34 @@ const ReturnRefundOrdersView: React.FC<ViewProps> = ({ orders, onSelectOrder }) 
             All ({counts.all})
           </button>
           <button
-            onClick={() => setActiveTab('new_request')}
+            onClick={() => setActiveTab('pending')}
             className={`py-4 px-2 border-b-2 font-medium text-sm whitespace-nowrap transition-colors ${
-              activeTab === 'new_request'
+              activeTab === 'pending'
                 ? 'border-teal-500 text-teal-600'
                 : 'border-transparent text-gray-600 hover:text-gray-900'
             }`}
           >
-            New Request ({counts.new_request})
+            Pending ({counts.pending})
           </button>
           <button
-            onClick={() => setActiveTab('to_respond')}
+            onClick={() => setActiveTab('approved')}
             className={`py-4 px-2 border-b-2 font-medium text-sm whitespace-nowrap transition-colors ${
-              activeTab === 'to_respond'
+              activeTab === 'approved'
                 ? 'border-teal-500 text-teal-600'
                 : 'border-transparent text-gray-600 hover:text-gray-900'
             }`}
           >
-            To Respond ({counts.to_respond})
+            Approved ({counts.approved})
           </button>
           <button
-            onClick={() => setActiveTab('evidence_requested')}
+            onClick={() => setActiveTab('rejected')}
             className={`py-4 px-2 border-b-2 font-medium text-sm whitespace-nowrap transition-colors ${
-              activeTab === 'evidence_requested'
+              activeTab === 'rejected'
                 ? 'border-teal-500 text-teal-600'
                 : 'border-transparent text-gray-600 hover:text-gray-900'
             }`}
           >
-            Evidence Requested ({counts.evidence_requested})
-          </button>
-          <button
-            onClick={() => setActiveTab('responded')}
-            className={`py-4 px-2 border-b-2 font-medium text-sm whitespace-nowrap transition-colors ${
-              activeTab === 'responded'
-                ? 'border-teal-500 text-teal-600'
-                : 'border-transparent text-gray-600 hover:text-gray-900'
-            }`}
-          >
-            Responded ({counts.responded})
+            Rejected ({counts.rejected})
           </button>
           <button
             onClick={() => setActiveTab('completed')}
@@ -297,50 +323,41 @@ const ReturnRefundOrdersView: React.FC<ViewProps> = ({ orders, onSelectOrder }) 
       </div>
 
       {/* Stats Summary */}
-      <div className="grid grid-cols-1 md:grid-cols-5 gap-4 px-6">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 px-6">
         <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-xl p-4 border border-blue-200">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-xs text-blue-600 font-medium">Refund Approved</p>
-              <p className="text-2xl font-bold text-blue-700">{counts.responded}</p>
+              <p className="text-xs text-blue-600 font-medium">Pending Review</p>
+              <p className="text-2xl font-bold text-blue-700">{counts.pending}</p>
             </div>
-            <CheckCircle className="w-8 h-8 text-blue-500 opacity-50" />
-          </div>
-        </div>
-        <div className="bg-gradient-to-br from-orange-50 to-orange-100 rounded-xl p-4 border border-orange-200">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-xs text-orange-600 font-medium">Return Approved</p>
-              <p className="text-2xl font-bold text-orange-700">1</p>
-            </div>
-            <Package className="w-8 h-8 text-orange-500 opacity-50" />
-          </div>
-        </div>
-        <div className="bg-gradient-to-br from-red-50 to-red-100 rounded-xl p-4 border border-red-200">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-xs text-red-600 font-medium">Negotiation Pending</p>
-              <p className="text-2xl font-bold text-red-700">0</p>
-            </div>
-            <MessageSquare className="w-8 h-8 text-red-500 opacity-50" />
-          </div>
-        </div>
-        <div className="bg-gradient-to-br from-amber-50 to-amber-100 rounded-xl p-4 border border-amber-200">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-xs text-amber-600 font-medium">Evidence Requested</p>
-              <p className="text-2xl font-bold text-amber-700">{counts.evidence_requested}</p>
-            </div>
-            <Upload className="w-8 h-8 text-amber-500 opacity-50" />
+            <Clock className="w-8 h-8 text-blue-500 opacity-50" />
           </div>
         </div>
         <div className="bg-gradient-to-br from-purple-50 to-purple-100 rounded-xl p-4 border border-purple-200">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-xs text-purple-600 font-medium">Validation Progress</p>
-              <p className="text-2xl font-bold text-purple-700">1</p>
+              <p className="text-xs text-purple-600 font-medium">Approved</p>
+              <p className="text-2xl font-bold text-purple-700">{counts.approved}</p>
             </div>
-            <Eye className="w-8 h-8 text-purple-500 opacity-50" />
+            <CheckCircle className="w-8 h-8 text-purple-500 opacity-50" />
+          </div>
+        </div>
+        <div className="bg-gradient-to-br from-red-50 to-red-100 rounded-xl p-4 border border-red-200">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-xs text-red-600 font-medium">Rejected</p>
+              <p className="text-2xl font-bold text-red-700">{counts.rejected}</p>
+            </div>
+            <XCircle className="w-8 h-8 text-red-500 opacity-50" />
+          </div>
+        </div>
+        <div className="bg-gradient-to-br from-green-50 to-green-100 rounded-xl p-4 border border-green-200">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-xs text-green-600 font-medium">Completed</p>
+              <p className="text-2xl font-bold text-green-700">{counts.completed}</p>
+            </div>
+            <CheckCircle className="w-8 h-8 text-green-500 opacity-50" />
           </div>
         </div>
       </div>
@@ -463,38 +480,7 @@ const ReturnRefundOrdersView: React.FC<ViewProps> = ({ orders, onSelectOrder }) 
               {/* Actions */}
               {request.status !== 'completed' && (
                 <div className="p-4 bg-white border-t border-gray-100 flex items-center justify-end gap-3">
-                  {request.status === 'new_request' && (
-                    <>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handleAction(request, 'evidence')}
-                        className="border-amber-500 text-amber-600 hover:bg-amber-50"
-                      >
-                        <Upload className="w-4 h-4 mr-2" />
-                        Request Evidence
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handleAction(request, 'reject')}
-                        className="border-red-500 text-red-600 hover:bg-red-50"
-                      >
-                        <XCircle className="w-4 h-4 mr-2" />
-                        Reject
-                      </Button>
-                      <Button
-                        size="sm"
-                        onClick={() => handleAction(request, 'approve')}
-                        className="bg-teal-500 hover:bg-teal-600 text-white"
-                      >
-                        <CheckCircle className="w-4 h-4 mr-2" />
-                        Approve Refund
-                      </Button>
-                    </>
-                  )}
-
-                  {request.status === 'to_respond' && (
+                  {request.status === 'pending' && (
                     <>
                       <Button
                         variant="outline"
@@ -516,19 +502,7 @@ const ReturnRefundOrdersView: React.FC<ViewProps> = ({ orders, onSelectOrder }) 
                     </>
                   )}
 
-                  {request.status === 'evidence_requested' && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => handleAction(request, 'view')}
-                      className="border-gray-300 text-gray-600 hover:bg-gray-50"
-                    >
-                      <Eye className="w-4 h-4 mr-2" />
-                      View Details
-                    </Button>
-                  )}
-
-                  {request.status === 'responded' && (
+                  {(request.status === 'approved' || request.status === 'rejected') && (
                     <Button
                       variant="outline"
                       size="sm"
@@ -576,11 +550,108 @@ const ReturnRefundOrdersView: React.FC<ViewProps> = ({ orders, onSelectOrder }) 
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-gray-900">{selectedRequest.product.name}</p>
                     <p className="text-xs text-gray-500 mt-1">Request ID: {selectedRequest.requestId}</p>
-                    <p className="text-sm font-bold text-red-600 mt-1">
-                      Refund: ₱{selectedRequest.refundAmount.toLocaleString()}
+                    <p className="text-sm font-bold text-gray-900 mt-1">
+                      Order Total: ₱{selectedRequest.refundAmount.toLocaleString()}
                     </p>
                   </div>
                 </div>
+              </div>
+            )}
+
+            {/* Refund Amount Selection - Only show for approve action */}
+            {actionType === 'approve' && selectedRequest && (
+              <div className="space-y-3">
+                <label className="text-sm font-medium text-gray-700 block">
+                  Refund Amount
+                </label>
+                
+                {/* Percentage Options */}
+                <div className="grid grid-cols-4 gap-2">
+                  {[100, 75, 50, 25].map((percentage) => (
+                    <button
+                      key={percentage}
+                      type="button"
+                      onClick={() => {
+                        setRefundPercentage(percentage);
+                        setIsCustomAmount(false);
+                      }}
+                      className={`px-3 py-2 text-sm font-medium rounded-lg border transition-colors ${
+                        !isCustomAmount && refundPercentage === percentage
+                          ? 'bg-teal-500 text-white border-teal-500'
+                          : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                      }`}
+                    >
+                      {percentage}%
+                    </button>
+                  ))}
+                </div>
+
+                {/* Custom Amount Toggle */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsCustomAmount(!isCustomAmount);
+                    if (!isCustomAmount) {
+                      setCustomRefundAmount(selectedRequest.refundAmount.toString());
+                    }
+                  }}
+                  className={`w-full px-3 py-2 text-sm font-medium rounded-lg border transition-colors ${
+                    isCustomAmount
+                      ? 'bg-teal-500 text-white border-teal-500'
+                      : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                  }`}
+                >
+                  Custom Amount
+                </button>
+
+                {/* Custom Amount Input */}
+                {isCustomAmount && (
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">₱</span>
+                    <input
+                      type="number"
+                      min="0"
+                      max={selectedRequest.refundAmount}
+                      step="0.01"
+                      value={customRefundAmount}
+                      onChange={(e) => setCustomRefundAmount(e.target.value)}
+                      placeholder="0.00"
+                      className="w-full pl-7 pr-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+                    />
+                  </div>
+                )}
+
+                {/* Refund Amount Summary */}
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-medium text-blue-900">Total Refund Amount:</span>
+                    <span className="text-lg font-bold text-blue-700">
+                      ₱{calculateRefundAmount().toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                  {!isCustomAmount && refundPercentage < 100 && (
+                    <p className="text-xs text-blue-600 mt-1">
+                      {refundPercentage}% of ₱{selectedRequest.refundAmount.toLocaleString()}
+                    </p>
+                  )}
+                  {isCustomAmount && parseFloat(customRefundAmount) < selectedRequest.refundAmount && (
+                    <p className="text-xs text-blue-600 mt-1">
+                      Partial refund (Original: ₱{selectedRequest.refundAmount.toLocaleString()})
+                    </p>
+                  )}
+                </div>
+
+                {/* Warning for partial refunds */}
+                {((isCustomAmount && parseFloat(customRefundAmount) < selectedRequest.refundAmount) || 
+                  (!isCustomAmount && refundPercentage < 100)) && (
+                  <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 flex items-start gap-2">
+                    <AlertCircle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+                    <div className="text-xs text-amber-700">
+                      <p className="font-medium">Partial Refund</p>
+                      <p className="mt-1">Make sure to explain the partial refund reason to the customer in your message.</p>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
@@ -616,6 +687,7 @@ const ReturnRefundOrdersView: React.FC<ViewProps> = ({ orders, onSelectOrder }) 
             {actionType !== 'view' && (
               <Button
                 onClick={handleSubmitAction}
+                disabled={actionType === 'approve' && isCustomAmount && (!customRefundAmount || parseFloat(customRefundAmount) <= 0)}
                 className={
                   actionType === 'approve'
                     ? 'bg-teal-500 hover:bg-teal-600'
@@ -624,7 +696,11 @@ const ReturnRefundOrdersView: React.FC<ViewProps> = ({ orders, onSelectOrder }) 
                     : 'bg-amber-500 hover:bg-amber-600'
                 }
               >
-                {actionType === 'approve' && 'Approve Refund'}
+                {actionType === 'approve' && (
+                  selectedRequest ? 
+                    `Approve ₱${calculateRefundAmount().toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Refund` : 
+                    'Approve Refund'
+                )}
                 {actionType === 'reject' && 'Reject Request'}
                 {actionType === 'evidence' && 'Request Evidence'}
               </Button>

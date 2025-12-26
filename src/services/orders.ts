@@ -1,5 +1,5 @@
 import { db } from '@/lib/firebase';
-import { collection, onSnapshot, query, where, DocumentData, QuerySnapshot, doc, getDoc, updateDoc } from 'firebase/firestore';
+import { collection, onSnapshot, query, where, DocumentData, QuerySnapshot, doc, getDoc, getDocs, updateDoc } from 'firebase/firestore';
 import { getStorage, ref, getDownloadURL } from 'firebase/storage';
 import type { Order } from '@/types/order';
 
@@ -240,6 +240,12 @@ const mapDocToOrder = (id: string, data: any): Order => {
       const shippingStatus = String(data.shippingInfo?.status || '').toLowerCase();
       const paymentStatus = String(data.paymentInfo?.status || '').toLowerCase();
       const topLevelStatus = String(data.status || '').toLowerCase();
+      
+      // Return and refund statuses
+      if (['return_requested', 'return_approved', 'return_rejected', 'returned', 'refunded', 'return_refund'].includes(topLevelStatus)) {
+        return topLevelStatus as any;
+      }
+      
       if (['delivered', 'completed', 'success', 'succeeded'].includes(shippingStatus) || ['delivered', 'completed', 'success', 'succeeded'].includes(topLevelStatus)) return 'completed';
       if (['failed-delivery', 'delivery_failed', 'failed_delivery'].includes(shippingStatus) || ['failed-delivery', 'delivery_failed', 'failed_delivery'].includes(topLevelStatus)) return 'failed-delivery';
       if (['shipping', 'in_transit', 'in-transit', 'dispatched', 'out_for_delivery', 'out-for-delivery'].includes(shippingStatus) || ['shipping', 'processing'].includes(topLevelStatus)) return 'shipping';
@@ -308,6 +314,8 @@ const mapDocToOrder = (id: string, data: any): Order => {
       amount: data.paymongo.amount != null ? Number(data.paymongo.amount) : undefined,
       currency: data.paymongo.currency ? String(data.paymongo.currency) : undefined,
     } : undefined,
+    // Return request ID if exists
+    returnRequestId: data.returnRequestId ? String(data.returnRequestId) : undefined,
   };
 };
 
@@ -642,6 +650,90 @@ const OrdersService = {
           console.log(`Fixed missing to-pack history for order ${docRef.id}`);
         }
       }
+    }
+  },
+
+  // Fetch return request data for an order
+  fetchReturnRequest: async (returnRequestId: string) => {
+    try {
+      const returnRequestRef = doc(db, 'ReturnRequest', returnRequestId);
+      const returnRequestSnap = await getDoc(returnRequestRef);
+      
+      if (!returnRequestSnap.exists()) {
+        return null;
+      }
+      
+      const data = returnRequestSnap.data();
+      return {
+        id: returnRequestSnap.id,
+        reason: String(data.reason || ''),
+        customReason: data.customReason ? String(data.customReason) : undefined,
+        status: data.status || 'pending',
+        requestedAt: data.requestedAt,
+        deliveryDate: data.deliveryDate,
+        orderTotal: data.orderTotal,
+        itemsToReturn: data.itemsToReturn,
+        responseMessage: data.responseMessage,
+        respondedAt: data.respondedAt,
+        completedAt: data.completedAt,
+        evidenceImages: data.evidenceImages,
+        evidenceSubmitted: data.evidenceSubmitted || false,
+      };
+    } catch (error) {
+      console.error('Error fetching return request:', error);
+      return null;
+    }
+  },
+
+  // Fetch all return requests for a seller's orders
+  fetchReturnRequestsForSeller: async (sellerIds: string[]) => {
+    try {
+      const returnRequests: any[] = [];
+      
+      // Query ReturnRequest collection for all return requests
+      const returnRequestsSnapshot = await getDocs(collection(db, 'ReturnRequest'));
+      
+      for (const returnRequestDoc of returnRequestsSnapshot.docs) {
+        const data = returnRequestDoc.data();
+        const orderId = data.orderId;
+        
+        // Check if this order belongs to the seller by fetching the order
+        for (const coll of ORDER_COLLECTIONS) {
+          try {
+            const orderRef = doc(db, coll, orderId);
+            const orderSnap = await getDoc(orderRef);
+            
+            if (orderSnap.exists()) {
+              const orderData = orderSnap.data();
+              const orderSellerIds = Array.isArray(orderData.sellerIds) 
+                ? orderData.sellerIds 
+                : (orderData.sellerId ? [orderData.sellerId] : []);
+              
+              // Check if any of the seller IDs match
+              const isSellerOrder = orderSellerIds.some((sellerId: string) => 
+                sellerIds.includes(sellerId)
+              );
+              
+              if (isSellerOrder) {
+                returnRequests.push({
+                  id: returnRequestDoc.id,
+                  orderId: orderId,
+                  ...data,
+                });
+                break; // Found the order, no need to check other collections
+              }
+            }
+          } catch (error) {
+            // Continue to next collection if this one fails
+            continue;
+          }
+        }
+      }
+      
+      return returnRequests;
+    } catch (error) {
+      console.error('Error fetching return requests for seller:', error);
+      return [];
     }
   },
 };

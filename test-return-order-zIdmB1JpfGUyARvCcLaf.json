@@ -1,0 +1,215 @@
+{
+  "orderId": "zIdmB1JpfGUyARvCcLaf",
+  "userId": "C1CDP7Epo0cMgQL8uuMxjYLtBGD3",
+  "sellerId": "fNEIry9W7lRWizOmb2ZC0tZoOGu2",
+  "status": "delivered",
+  "deliveredDate": "2025-12-19T01:35:35.529Z",
+  "daysAgoDelivered": 3,
+  "daysRemainingForReturn": 4,
+  "total": 690,
+  "trackingId": "TEST-TRACKING-001",
+  "testPurpose": "return_request_testing",
+  "orderData": {
+    "userId": "C1CDP7Epo0cMgQL8uuMxjYLtBGD3",
+    "sellerIds": [
+      "fNEIry9W7lRWizOmb2ZC0tZoOGu2"
+    ],
+    "items": [
+      {
+        "productId": "J32Sa5K5WRPoZGz73IEp",
+        "productName": "curaprox toothbrush test - blue",
+        "productImage": "https://firebasestorage.googleapis.com/v0/b/dentpal-161e5.firebasestorage.app/o/ProductImages%2F1764639356215%2Ftoothbrush-cs-5460-ortho.jpg?alt=media&token=d0dcab22-993e-4ba8-af23-1b23c8274772",
+        "price": 540,
+        "quantity": 1,
+        "variationId": "YEXWmSqCUCGKBUEujbKv",
+        "sellerId": "fNEIry9W7lRWizOmb2ZC0tZoOGu2",
+        "sellerName": "Unknown Seller"
+      }
+    ],
+    "summary": {
+      "subtotal": 540,
+      "shippingCost": 150,
+      "taxAmount": 0,
+      "discountAmount": 0,
+      "total": 690,
+      "totalItems": 1,
+      "sellerShippingCharge": 0,
+      "buyerShippingCharge": 150,
+      "shippingSplitRule": "buyer_pays_full"
+    },
+    "fees": {
+      "paymentProcessingFee": 17.25,
+      "platformFee": 48,
+      "totalSellerFees": 65.25,
+      "paymentMethod": "gcash"
+    },
+    "sellerFeeBreakdowns": [
+      {
+        "sellerId": "fNEIry9W7lRWizOmb2ZC0tZoOGu2",
+        "sellerName": "Unknown Seller",
+        "cartValue": 540,
+        "shippingCost": 150,
+        "buyerShippingCharge": 150,
+        "sellerShippingCharge": 0,
+        "shippingSplitRule": "buyer_pays_full",
+        "totalChargedToBuyer": 690,
+        "paymentProcessingFee": 17.25,
+        "platformFee": 48,
+        "totalSellerFees": 65.25,
+        "netPayoutToSeller": 474.75
+      }
+    ],
+    "metadata": {
+      "test_order": true,
+      "test_purpose": "return_request_testing",
+      "cart_item_ids": [
+        "TEST_CART_ITEM_001"
+      ]
+    },
+    "createdAt": {
+      "_seconds": 1765503335,
+      "_nanoseconds": 530000000
+    },
+    "paymongo": {
+      "checkoutSessionId": "cs_TEST_RETURN_ORDER_001",
+      "checkoutUrl": "https://checkout.paymongo.com/test_return_order",
+      "paymentMethod": "gcash",
+      "paymentStatus": "paid",
+      "amount": 690,
+      "currency": "PHP",
+      "paymentId": "pay_TEST_RETURN_001",
+      "paymentIntentId": "pi_TEST_RETURN_001",
+      "paidAt": {
+        "_seconds": 1765503335,
+        "_nanoseconds": 530000000
+      }
+    },
+    "payout": {
+      "netPayoutToSeller": 474.75,
+      "calculatedAt": {
+        "_seconds": 1765503335,
+        "_nanoseconds": 530000000
+      }
+    },
+    "statusHistory": [
+      {
+        "status": "pending",
+        "note": "Order created",
+        "timestamp": {
+          "_seconds": 1765503335,
+          "_nanoseconds": 530000000
+        }
+      },
+      {
+        "note": "Payment paid via gcash",
+        "timestamp": {
+          "_seconds": 1765503335,
+          "_nanoseconds": 530000000
+        },
+        "status": "confirmed"
+      },
+      {
+        "status": "to_ship",
+        "timestamp": {
+          "_seconds": 1765503335,
+          "_nanoseconds": 530000000
+        },
+        "note": "Order confirmed and ready to be processed"
+      },
+      {
+        "timestamp": {
+          "_seconds": 1765935335,
+          "_nanoseconds": 530000000
+        },
+        "status": "shipping",
+        "note": "Order shipped via JRS Express. Reference: DPAL-TEST-RETURN-001, Tracking: TEST-TRACKING-001"
+      },
+      {
+        "timestamp": {
+          "_seconds": 1766108135,
+          "_nanoseconds": 529000000
+        },
+        "status": "delivered",
+        "note": "Order delivered successfully"
+      }
+    ],
+    "shippingInfo": {
+      "addressId": "4rJmHkYxpSNrn49kjmim",
+      "fullName": "Rain",
+      "addressLine1": "5A Sunrise Street, Corner Mola",
+      "addressLine2": null,
+      "city": "Makati City",
+      "state": "Metro Manila",
+      "postalCode": "1227",
+      "country": "Philippines",
+      "phoneNumber": "+639123456789",
+      "jrs": {
+        "response": {
+          "ShippingRequestEntityDto": {
+            "Id": "TEST-UUID-RETURN-001",
+            "DateRequested": "2025-12-17T01:35:35.530Z",
+            "DateCreated": "2025-12-17T01:35:35.530Z",
+            "CreatedByUserEmail": "christofer.rrnewtech@gmail.com",
+            "ShipperFirstName": "tofer",
+            "ShipperMiddleName": "",
+            "ShipperLastName": "Support",
+            "ShipperEmail": "christofer.rrnewtech@gmail.com",
+            "ShipperPhone": "09120732452",
+            "ShipperProvince": "Batangas",
+            "ShipperMunicipality": "San Pascual",
+            "ShipperDistrict": "Barangay Kamuning",
+            "ShipperAddressLine1": "blk 11 lot 19 desert rose street",
+            "ShipperCountry": "Philippines",
+            "RecipientFirstName": "Rain",
+            "RecipientMiddleName": "",
+            "RecipientLastName": "N/A",
+            "RecipientEmail": "customer@dentpal.ph",
+            "RecipientPhone": "+639123456789",
+            "RecipientProvince": "Metro Manila",
+            "RecipientMunicipality": "Makati City",
+            "RecipientDistrict": "N/A",
+            "RecipientAddressLine1": "5A Sunrise Street, Corner Mola",
+            "RecipientCountry": "Philippines",
+            "ShipmentRequestStatus": "Delivered",
+            "TrackingId": "TEST-TRACKING-001",
+            "ShipmentDescription": "Dental Supplies: curaprox toothbrush test - blue",
+            "ProductName": "Bulilit Box",
+            "Length": 20,
+            "Width": 15,
+            "Height": 10,
+            "Weight": 0.5,
+            "DeclaredValue": 540,
+            "CodAmountToCollect": 0,
+            "TotalShippingAmount": 150,
+            "ShippingReferenceNo": "DPAL-TEST-RETURN-001",
+            "RequestedPickupSchedule": "2025-12-17T01:35:35.530Z",
+            "CurrentDeliveryStatus": "Delivered",
+            "CurrentDeliveryStatusDate": "2025-12-19T01:35:35.529Z"
+          },
+          "Success": true
+        },
+        "shippingReferenceNo": "DPAL-TEST-RETURN-001",
+        "trackingId": "TEST-TRACKING-001",
+        "requestedAt": {
+          "_seconds": 1765935335,
+          "_nanoseconds": 530000000
+        },
+        "totalShippingAmount": 150,
+        "pickupSchedule": "2025-12-17T01:35:35.530Z",
+        "shippingCharges": {
+          "sellerCharge": 0,
+          "buyerCharge": 150,
+          "totalCharge": 150,
+          "chargeApplied": false,
+          "chargeAppliedAt": null,
+          "payoutAdjustmentId": null
+        }
+      }
+    },
+    "status": "delivered",
+    "updatedAt": {
+      "_seconds": 1766108135,
+      "_nanoseconds": 529000000
+    }
+  }
+}

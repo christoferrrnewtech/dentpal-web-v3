@@ -22,6 +22,9 @@ export const mapOrderToStage = (o: Order): LifecycleStage => {
     case 'completed': return 'delivered';
     case 'failed-delivery': return 'failed-delivery';
     case 'cancelled': return 'cancellation';
+    case 'return_requested':
+    case 'return_approved':
+    case 'return_rejected':
     case 'returned':
     case 'refunded':
     case 'return_refund':
@@ -39,7 +42,7 @@ export const SUB_TABS: SubTabConfig[] = [
   { id: 'delivered', label: 'Delivered', predicate: (o) => mapOrderToStage(o) === 'delivered' },
   { id: 'failed-delivery', label: 'Failed Delivery', predicate: (o) => o.status === 'failed-delivery' },
   { id: 'cancellation', label: 'Cancellation', predicate: (o) => o.status === 'cancelled' },
-  { id: 'return-refund', label: 'Return or Refund', predicate: (o) => o.status === 'returned' || o.status === 'refunded' || o.status === 'return_refund' },
+  { id: 'return-refund', label: 'Return or Refund', predicate: (o) => ['return_requested', 'return_approved', 'return_rejected', 'returned', 'refunded', 'return_refund'].includes(o.status) },
 ];
 
 export const TO_SHIP_SUB_TABS: { id: ToShipStage; label: string }[] = [

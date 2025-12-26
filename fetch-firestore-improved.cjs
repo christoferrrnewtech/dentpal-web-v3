@@ -133,9 +133,7 @@ async function main() {
         
         // Fetch documents
         const documents = [
-            { collection: 'Order', id: 'QRIZxyy31vtQbsGOH7Gk', key: 'order' },
-            { collection: 'Seller', id: 'fNEIry9W7lRWizOmb2ZC0tZoOGu2', key: 'seller' },
-            { collection: 'User', id: 'cixRRzmjf3d68C8mYRldrxAYJHU2', key: 'user' }
+            { collection: 'Order', id: 'TdAonfSPNYj390eXN5bo', key: 'order' },
         ];
         
         for (const doc of documents) {
