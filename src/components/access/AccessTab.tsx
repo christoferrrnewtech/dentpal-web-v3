@@ -1122,17 +1122,29 @@ const AccessTab = ({ loading = false, error, setError, onTabChange, onEditUser }
                       </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="flex flex-wrap gap-1">
-                        {Object.entries(user.permissions || {}).map(([permission, enabled]) => 
-                          enabled ? (
+                      <div className="flex flex-wrap gap-1 max-w-md">
+                        {Object.entries(user.permissions || {})
+                          .filter(([permission, enabled]) => {
+                            // Hide certain permissions from display
+                            const hiddenPermissions = ['bookings', 'booking'];
+                            return enabled && !hiddenPermissions.includes(permission);
+                          })
+                          .map(([permission]) => (
                             <Badge 
                               key={permission} 
                               variant="secondary" 
-                              className="text-xs bg-green-100 text-green-800"
+                              className="text-xs bg-green-100 text-green-800 border border-green-200"
                             >
-                              {permission}
+                              {permission === 'seller-orders' 
+                                ? 'orders' 
+                                : permission.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
                             </Badge>
-                          ) : null
+                          ))}
+                        {Object.entries(user.permissions || {}).filter(([permission, enabled]) => {
+                          const hiddenPermissions = ['bookings', 'booking'];
+                          return enabled && !hiddenPermissions.includes(permission);
+                        }).length === 0 && (
+                          <span className="text-xs text-gray-400 italic">No permissions</span>
                         )}
                       </div>
                     </td>
@@ -1140,7 +1152,21 @@ const AccessTab = ({ loading = false, error, setError, onTabChange, onEditUser }
                    
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
                       <div className="flex items-center space-x-1">
-                        {/* Hide edit icon for admin users */}
+                        {/* Edit icon */}
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          title="Edit user"
+                          aria-label="Edit user"
+                          className="text-blue-600 hover:text-blue-800"
+                          onClick={() => {
+                            setEditingUser(user);
+                            setShowAddForm(false);
+                          }}
+                        >
+                          <Edit3 className="w-4 h-4" />
+                        </Button>
+                        {/* Toggle Active/Inactive */}
                         <Button
                           variant="ghost"
                           size="sm"
@@ -1155,6 +1181,7 @@ const AccessTab = ({ loading = false, error, setError, onTabChange, onEditUser }
                             <Unlock className="w-4 h-4" />
                           )}
                         </Button>
+                        {/* Resend invite */}
                         <Button
                           variant="ghost"
                           size="sm"
@@ -1165,6 +1192,7 @@ const AccessTab = ({ loading = false, error, setError, onTabChange, onEditUser }
                         >
                           <Key className="w-4 h-4" />
                         </Button>
+                        {/* Delete user */}
                         <Button
                           variant="ghost"
                           size="sm"

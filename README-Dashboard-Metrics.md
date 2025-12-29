@@ -33,17 +33,13 @@ const financialMetrics = useMemo(() => {
   let totalShippingCharge = 0;
 
   confirmationOrders.forEach((order) => {
-    // Only PAID orders (same as Reports tab)
     if (!isPaidStatus(order.status)) return;
 
-    // Apply date filter
     if (!withinLastDays(order.timestamp, sellerFilters.dateRange)) return;
 
-    // Extract from order.summary
     const subtotal = order.summary?.subtotal || 0;
     totalGross += subtotal;
 
-    // Extract fees and payout
     totalPaymentProcessingFee += order.feesBreakdown?.paymentProcessingFee || 0;
     totalPlatformFee += order.feesBreakdown?.platformFee || 0;
     totalShippingCharge += order.summary?.sellerShippingCharge || 0;
@@ -68,9 +64,9 @@ Orders are fetched with this structure:
 {
   id: string,
   status: 'pending' | 'to_ship' | 'processing' | 'completed' | ...,
-  timestamp: string, // ISO date for filtering
+  timestamp: string, 
   summary: {
-    subtotal: number,           // Gross Sales
+    subtotal: number,           
     sellerShippingCharge: number,
     total: number
   },
@@ -79,7 +75,7 @@ Orders are fetched with this structure:
     platformFee: number
   },
   payout: {
-    netPayoutToSeller: number   // Net Payout
+    netPayoutToSeller: number   
   }
 }
 ```
@@ -163,12 +159,7 @@ Both Dashboard and Reports tab now use **identical logic**:
 
 **Debug:**
 
-```javascript
-// In browser console
-console.log("[Debug] Orders:", confirmationOrders);
-console.log("[Debug] Date range:", sellerFilters.dateRange);
-console.log("[Debug] Financial metrics:", financialMetrics);
-```
+
 
 ### Different from Reports Tab
 

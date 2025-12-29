@@ -109,8 +109,7 @@ This implementation helps meet requirements for:
 If you need to revert to showing full names:
 
 ```typescript
-// In UserTable.tsx and UserDetailsDialog.tsx
-// Replace maskName() calls with direct concatenation:
+
 {
   user.firstName;
 }

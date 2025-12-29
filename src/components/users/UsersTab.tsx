@@ -8,6 +8,12 @@ import { User, Filters } from "./types";
 import { useUserRealtime } from "@/hooks/useUser";
 import { updateUserSellerApproval, deleteUser, updateUserStatus } from "@/services/userService";
 import { getProvinces as getPhProvinces } from '@/lib/phLocations';
+import { Button } from "@/components/ui/button";
+import { Download, FileText, FileSpreadsheet } from "lucide-react";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import * as XLSX from 'xlsx';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 
 
 export default function UsersTab() {
@@ -18,14 +24,12 @@ export default function UsersTab() {
   const [isResetOpen, setResetOpen] = useState(false);
   const [phProvinces, setPhProvinces] = useState<Array<{ code: string; name: string }>>([]);
 
-  // Load provinces on mount
   useEffect(() => {
     (async () => {
       try {
         const provinces = await getPhProvinces();
         console.log('[UsersTab] Loaded provinces:', provinces.length, provinces.slice(0, 5));
         
-        // Add "Metro Manila" as a special entry if not already present
         const hasMetroManila = provinces.some(p => 
           p.name.toLowerCase().includes('metro manila') || 
           p.code === 'NCR' ||
@@ -33,7 +37,6 @@ export default function UsersTab() {
         );
         
         if (!hasMetroManila) {
-          // Add Metro Manila at the beginning
           provinces.unshift({ code: 'METRO_MANILA', name: 'Metro Manila' });
           console.log('[UsersTab] Added Metro Manila to province list');
         }
@@ -41,7 +44,6 @@ export default function UsersTab() {
         setPhProvinces(provinces);
       } catch (error) {
         console.error('Failed to load provinces:', error);
-        // Fallback: add Metro Manila
         setPhProvinces([{ code: 'METRO_MANILA', name: 'Metro Manila' }]);
       }
     })();
@@ -52,7 +54,6 @@ export default function UsersTab() {
     try {
       await resetPoints(selected); // bulk or single
     } catch (err) {
-      // optionally surface error via toast in the container
       console.error('Failed to reset points', err);
     } finally {
       setResetOpen(false);
@@ -69,11 +70,21 @@ export default function UsersTab() {
   };
 
   const handleToggleUserStatus = async (id: string, currentStatus: User['status']) => {
+
+    if (currentStatus !== 'active' && currentStatus !== 'inactive') {
+      console.warn(`Cannot toggle status for user ${id}: current status '${currentStatus}' is not 'active' or 'inactive'`);
+      // TODO: Show toast notification to user
+      // toast({ title: 'Cannot toggle status', description: `Users with '${currentStatus}' status cannot be toggled. Only 'active' and 'inactive' users can be toggled.`, variant: 'destructive' });
+      return;
+    }
+
     try {
       const newStatus: User['status'] = currentStatus === 'active' ? 'inactive' : 'active';
       await updateUserStatus(id, newStatus);
     } catch (e) {
       console.error('Failed to toggle user status', e);
+      // TODO: Show toast notification to user
+      // toast({ title: 'Failed to update status', description: 'Please try again.', variant: 'destructive' });
     }
   };
 
@@ -86,51 +97,127 @@ export default function UsersTab() {
     }
   };
 
-  // Helper function to get user's province from their default or first address
+  const exportToCSV = () => {
+    const usersToExport = selected.length > 0 
+      ? filtered.filter(u => selected.includes(u.id))
+      : filtered;
+
+    if (usersToExport.length === 0) {
+      alert('No users to export. Please select users or ensure filters show results.');
+      return;
+    }
+
+    const data = usersToExport.map(u => ({
+      'Account ID': u.accountId || '',
+      'Name': `${u.firstName || ''} ${u.lastName || ''}`.trim(),
+      'Email': u.email || '',
+      'Status': u.status === 'active' ? 'Active' : u.status === 'inactive' ? 'Inactive' : (u.status || ''),
+      'Reward Points': u.rewardPoints || 0,
+      'Total Spent': `₱${(u.totalSpent || 0).toFixed(2)}`,
+      'Total Orders': u.totalTransactions || 0,
+      'Specialty': Array.isArray(u.specialty) ? u.specialty.join(', ') : (u.specialty || 'N/A'),
+    }));
+
+    const ws = XLSX.utils.json_to_sheet(data);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Users');
+
+    const filename = selected.length > 0 
+      ? `selected_users_${new Date().toISOString().slice(0, 10)}.csv`
+      : `all_users_${new Date().toISOString().slice(0, 10)}.csv`;
+
+    XLSX.writeFile(wb, filename, { bookType: 'csv' });
+  };
+
+  const exportToPDF = () => {
+    const usersToExport = selected.length > 0 
+      ? filtered.filter(u => selected.includes(u.id))
+      : filtered;
+
+    if (usersToExport.length === 0) {
+      alert('No users to export. Please select users or ensure filters show results.');
+      return;
+    }
+
+    const doc = new jsPDF('landscape');
+
+    doc.setFontSize(16);
+    doc.text('Users Report', 14, 15);
+
+    doc.setFontSize(10);
+    const exportDate = new Date().toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric'
+    });
+    doc.text(`Export Date: ${exportDate}`, 14, 22);
+    doc.text(`Total Users: ${usersToExport.length}`, 14, 28);
+    if (selected.length > 0) {
+      doc.text(`(Showing ${selected.length} selected users)`, 14, 34);
+    }
+
+    const tableData = usersToExport.map(u => [
+      `${u.firstName || ''} ${u.lastName || ''}`.trim(),
+      u.email || '',
+      u.status === 'active' ? 'Active' : u.status === 'inactive' ? 'Inactive' : (u.status || ''),
+      u.rewardPoints || 0,
+      `₱${(u.totalSpent || 0).toFixed(2)}`,
+      u.totalTransactions || 0,
+      Array.isArray(u.specialty) ? u.specialty.join(', ') : (u.specialty || 'N/A'),
+    ]);
+
+    autoTable(doc, {
+      head: [['Name', 'Email', 'Status', 'Points', 'Total Spent', 'Orders', 'Specialty']],
+      body: tableData,
+      startY: selected.length > 0 ? 40 : 34,
+      styles: { fontSize: 8 },
+      headStyles: { fillColor: [13, 148, 136] }, // Teal color
+    });
+
+    const filename = selected.length > 0 
+      ? `selected_users_${new Date().toISOString().slice(0, 10)}.pdf`
+      : `all_users_${new Date().toISOString().slice(0, 10)}.pdf`;
+
+    doc.save(filename);
+  };
+
   const getUserProvince = (user: User): string | null => {
-    // Helper to match province name to code
+
     const findProvinceCode = (provinceName: string): string | null => {
       if (!provinceName) return null;
       const normalized = provinceName.toLowerCase().trim();
       
-      // Special case: Map "Metro Manila" to our custom code
       if (normalized === 'metro manila' || normalized === 'ncr' || normalized.includes('national capital region')) {
         return 'METRO_MANILA';
       }
       
       const match = phProvinces.find(p => 
         p.name.toLowerCase() === normalized ||
-        p.code === provinceName || // In case it's already a code
+        p.code === provinceName || 
         p.code.toLowerCase() === normalized
       );
       return match ? match.code : null;
     };
 
-    // Check Firebase User > Address field first
     if (user.addresses && Array.isArray(user.addresses) && user.addresses.length > 0) {
-      // Find default address
       const defaultAddress = user.addresses.find((addr: any) => addr?.isDefault === true);
       if (defaultAddress) {
-        // Try provinceCode first
         if (defaultAddress.provinceCode) return defaultAddress.provinceCode;
-        // Try province field
         if (defaultAddress.province) {
           const code = findProvinceCode(defaultAddress.province);
           if (code) return code;
         }
-        // Try state field (common in Firebase addresses)
+        
         if (defaultAddress.state) {
           const code = findProvinceCode(defaultAddress.state);
           if (code) return code;
         }
-        // Try country field as fallback (sometimes misused for province)
         if (defaultAddress.country === 'Philippines' && defaultAddress.state) {
           const code = findProvinceCode(defaultAddress.state);
           if (code) return code;
         }
       }
       
-      // Fallback to first address with province data
       for (const addr of user.addresses) {
         if (addr?.provinceCode) return addr.provinceCode;
         if (addr?.province) {
@@ -144,7 +231,6 @@ export default function UsersTab() {
       }
     }
     
-    // Fallback to shippingAddresses if addresses field doesn't exist
     if (user.shippingAddresses && Array.isArray(user.shippingAddresses) && user.shippingAddresses.length > 0) {
       for (const addr of user.shippingAddresses) {
         if (typeof addr === 'object' && addr !== null) {
@@ -162,7 +248,6 @@ export default function UsersTab() {
           }
         }
       }
-      // Try first address object
       const firstObj = user.shippingAddresses.find(addr => typeof addr === 'object' && addr !== null) as any;
       if (firstObj) {
         if (firstObj.provinceCode) return firstObj.provinceCode;
@@ -181,7 +266,6 @@ export default function UsersTab() {
   };
 
   const specialties = useMemo(() => {
-    // Flatten all specialty arrays and get unique values
     const allSpecialties = users.flatMap(u => u.specialty || []);
     const uniqueSpecialties = Array.from(new Set(allSpecialties)).filter(Boolean);
     console.log('[UsersTab] Loaded specialties from Firebase User > specialty (array):', uniqueSpecialties);
@@ -204,7 +288,6 @@ export default function UsersTab() {
       const matchesStatus = filters.status === 'all' || u.status === filters.status;
       const matchesSpecialty = filters.specialty === 'all' || (u.specialty || []).includes(filters.specialty);
       
-      // Debug log for specialty filter (first user when specialty filter active)
       if (filters.specialty !== 'all' && u === users[0]) {
         console.log('[UsersTab] Specialty Filter Debug:', {
           filterSpecialty: filters.specialty,
@@ -214,13 +297,11 @@ export default function UsersTab() {
         });
       }
       
-      // Province filtering based on User > Address with debug logging
       const userProvince = getUserProvince(u);
       const matchesProvince = 
         filters.province === 'all' || 
         userProvince === filters.province;
       
-      // Debug log for first user when province filter is active
       if (filters.province !== 'all' && u === users[0]) {
         console.log('[UsersTab] Province Filter Debug:', {
           filterProvince: filters.province,
@@ -252,7 +333,39 @@ export default function UsersTab() {
   return (
     <div className="space-y-6">
       <UserSummaryCards totalUsers={filtered.length} activeUsers={filtered.filter(u=>u.status==='active').length} totalRevenue={filtered.reduce((s,u)=>s+u.totalSpent,0)} totalOrders={filtered.reduce((s,u)=>s+u.totalTransactions,0)} />
-      <UserFilters filters={filters} provinces={phProvinces} specialties={specialties} onChange={setFilters} />
+      
+      {/* Filters with Export Button */}
+      <div className="flex items-end gap-4">
+        <div className="flex-1">
+          <UserFilters filters={filters} provinces={phProvinces} specialties={specialties} onChange={setFilters} />
+        </div>
+        <div className="flex items-center gap-2">
+          {selected.length > 0 && (
+            <span className="text-sm text-gray-600 mr-2">
+              {selected.length} selected
+            </span>
+          )}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" className="flex items-center gap-2">
+                <Download className="w-4 h-4" />
+                <span>Export</span>
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={exportToCSV} className="flex items-center gap-2">
+                <FileSpreadsheet className="w-4 h-4" /> 
+                {selected.length > 0 ? `Export Selected (${selected.length}) as CSV` : 'Export All as CSV'}
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={exportToPDF} className="flex items-center gap-2">
+                <FileText className="w-4 h-4" /> 
+                {selected.length > 0 ? `Export Selected (${selected.length}) as PDF` : 'Export All as PDF'}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      </div>
+      
       <UserTable
         users={filtered}
         selected={selected}

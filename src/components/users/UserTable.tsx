@@ -184,20 +184,25 @@ export default function UserTable({
                       </TooltipTrigger>
                       <TooltipContent>View</TooltipContent>
                     </Tooltip>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button 
-                          size="icon" 
-                          variant="ghost" 
-                          aria-label={u.status === 'active' ? 'Disable Account' : 'Enable Account'}
-                          onClick={() => onToggleStatus(u.id, u.status)}
-                          className={u.status === 'active' ? 'text-amber-600 hover:text-amber-800' : 'text-green-600 hover:text-green-800'}
-                        >
-                          {u.status === 'active' ? <Lock className="w-4 h-4" /> : <Unlock className="w-4 h-4" />}
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>{u.status === 'active' ? 'Disable Account' : 'Enable Account'}</TooltipContent>
-                    </Tooltip>
+                    
+                    {/* Only show lock/unlock for active or inactive users */}
+                    {(u.status === 'active' || u.status === 'inactive') && (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button 
+                            size="icon" 
+                            variant="ghost" 
+                            aria-label={u.status === 'active' ? 'Disable Account' : 'Enable Account'}
+                            onClick={() => onToggleStatus(u.id, u.status)}
+                            className={u.status === 'active' ? 'text-amber-600 hover:text-amber-800' : 'text-green-600 hover:text-green-800'}
+                          >
+                            {u.status === 'active' ? <Lock className="w-4 h-4" /> : <Unlock className="w-4 h-4" />}
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>{u.status === 'active' ? 'Disable Account' : 'Enable Account'}</TooltipContent>
+                      </Tooltip>
+                    )}
+                    
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <Button size="icon" variant="ghost" aria-label="Delete" onClick={() => onDelete(u.id)}>
