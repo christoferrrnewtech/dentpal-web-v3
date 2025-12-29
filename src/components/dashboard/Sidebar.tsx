@@ -80,47 +80,36 @@ const Sidebar = ({ activeItem, onItemClick, onLogout }: SidebarProps) => {
     notifications: 'notifications',
   };
 
-  // Compute visible menu items with role-based ordering for sellers
   const visibleMenuItems = loading
     ? []
     : (() => {
-        // Start from permitted list
         let permitted = menuItems.filter((item) => {
           if (item.id === 'product-qc' && !isAdmin) return false;
           if (item.id === 'warranty' && !isAdmin) return false;
           if (item.id === 'categories' && !isAdmin) return false;
-          // Hide Profile tab for admin users only
           if (item.id === 'profile' && isAdmin) return false;
-          // TEMP: hide seller tabs from admin panel
           if (isAdmin && ['seller-orders','inventory','add-product','sub-accounts'].includes(item.id)) return false;
-          // NEW: hide reports & booking for admin
           if (isAdmin && ['reports','booking'].includes(item.id)) return false;
           const key = permissionByMenuId[item.id];
 
-          // For sub-accounts: only show items that have an explicit permission flag and it's true
           if (isSubAccount) {
-            if (!key) return false; // no explicit key => do not show
+            if (!key) return false; 
             return hasPermission(key as any);
           }
 
-          // Primary/admin: default to dashboard when specific key not mapped
           const hasPerm = hasPermission((key || 'dashboard') as any);
           return hasPerm;
         });
 
-        // Sub-accounts: never show Access or Sub Account regardless of permissions
         if (isSubAccount) {
           permitted = permitted.filter((i) => i.id !== 'access' && i.id !== 'sub-accounts');
-          // No vendor gating for sub-accounts
           return permitted;
         }
 
-        // If seller (primary) and vendor profile not complete, only show Profile
         if (isSeller && !isAdmin && !vendorProfileComplete) {
           return permitted.filter((i) => i.id === 'profile');
         }
 
-        // Primary sellers (not sub-accounts): custom seller ordering
         if (isSeller && !isAdmin) {
           const sellerOrder = ['dashboard', 'seller-orders', 'reports', 'withdrawal', 'inventory', 'add-product', 'sub-accounts', 'profile'];
           const map = new Map(permitted.map((i) => [i.id, i] as const));
@@ -128,7 +117,6 @@ const Sidebar = ({ activeItem, onItemClick, onLogout }: SidebarProps) => {
           return ordered;
         }
 
-        // Admins keep full permitted list and original order
         return permitted;
       })();
 
@@ -147,7 +135,6 @@ const Sidebar = ({ activeItem, onItemClick, onLogout }: SidebarProps) => {
                   alt="DentPal Logo" 
                   className="w-8 h-8 object-contain rounded-lg"
                   onError={(e) => {
-                    // Fallback to SVG icon if image fails to load
                     e.currentTarget.style.display = 'none';
                     const fallbackElement = e.currentTarget.nextElementSibling as HTMLElement;
                     if (fallbackElement) {
@@ -184,9 +171,8 @@ const Sidebar = ({ activeItem, onItemClick, onLogout }: SidebarProps) => {
           {visibleMenuItems.map((item) => {
             const Icon = item.icon;
             const isActive = activeItem === item.id;
-            // Seller-specific label adjustments
             const displayLabel = (isSeller && !isAdmin)
-              ? (item.id === 'seller-orders' ? 'Orders' : item.id === 'reports' ? 'Report' : item.label)
+              ? (item.id === 'dashboard' ? 'Sales Summary' : item.id === 'seller-orders' ? 'Orders' : item.id === 'reports' ? 'Report' : item.label)
               : item.label;
             
             return (

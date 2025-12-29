@@ -1,8 +1,8 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import Sidebar from "@/components/dashboard/Sidebar";
 import DashboardHeader from "@/components/dashboard/DashboardHeader";
-import StatsCard from "@/components/dashboard/StatsCard";
-import RecentOrders from "@/components/dashboard/RecentOrders";
+// import StatsCard from "@/components/dashboard/StatsCard";
+// import RecentOrders from "@/components/dashboard/RecentOrders";
 import RevenueChart from "@/components/dashboard/RevenueChart";
 import Booking from "@/pages/Booking";
 import ConfirmationTab from "@/components/confirmation/ConfirmationTab";
@@ -22,7 +22,7 @@ import SellerProfileTab from '@/components/profile/SellerProfileTab';
 import ReportsTab from '@/components/reports/ReportsTab';
 import OrdersService from '@/services/orders';
 import AddProduct from '@/pages/AddProduct'; // New
-import NotificationsTab from '@/components/notifications/NotificationsTab';
+//import NotificationsTab from '@/components/notifications/NotificationsTab';
 import { useLocation, useNavigate } from 'react-router-dom';
 import WarrantyManager from '@/pages/admin/WarrantyManager';
 import CategoryManager from '@/pages/admin/CategoryManager';
@@ -67,7 +67,7 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
   
   // New: seller dashboard UI state
   const [showTutorial, setShowTutorial] = useState(false);
-  const [sellerFilters, setSellerFilters] = useState({ dateRange: 'last-30', brand: 'all', subcategory: 'all', location: 'all', paymentType: 'all' });
+  const [sellerFilters, setSellerFilters] = useState({ dateRange: 'last-30', brand: 'all', subcategory: 'all', location: 'all', paymentType: 'all', viewType: 'summary' });
   // Admin filters (date picker range, province, city, seller/shop name)
   const [adminFilters, setAdminFilters] = useState<{ dateFrom: string; dateTo: string; province: string; city: string; seller: string }>({ dateFrom: '', dateTo: '', province: 'all', city: 'all', seller: 'all' });
   // Date range picker state (moved back after refactor)
@@ -96,7 +96,7 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
     logistic: true,
     payment: true,
     inquiry: true,
-    orderSummary: true, // NEW: Order Summary column (moved to last)
+    orderSummary: true, 
   });
   const columnLabels: Record<string, string> = {
     seller: 'Seller Store',
@@ -106,7 +106,7 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
     logistic: 'Logistic Fee',
     payment: 'Payment Fee',
     inquiry: 'Platform Fee',
-    orderSummary: 'Order Summary', // NEW (moved to last)
+    orderSummary: 'Order Summary', 
   };
   const visibleColumnKeys = Object.keys(exportColumnVisibility).filter(k => exportColumnVisibility[k]);
   const [showExportColumnMenu, setShowExportColumnMenu] = useState(false);
@@ -169,7 +169,6 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
     setAdminFilters(f => ({ ...f, dateFrom: toISO(start), dateTo: toISO(end) }));
   };
 
-  // State moved up so memoized selectors can depend on it safely
   const [confirmationOrders, setConfirmationOrders] = useState<Order[]>([
     {
       id: "DP-2024-005",
@@ -195,7 +194,6 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Derived: normalize and compute options/filtered/metrics so UI updates consistently
   const productOptions = useMemo(() => {
     return Array.from(
       new Set(
@@ -228,7 +226,6 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
   const getAmount = (o: Order) => typeof o.total === 'number' ? o.total : ((o.items || []).reduce((s, it) => s + ((it.price || 0) * (it.quantity || 0)), 0) || 0);
 
   const filteredOrders = useMemo(() => {
-    // Helpers inside memo to avoid re-creation elsewhere
     const parseDate = (s?: string) => {
       if (!s) return null;
       const d = new Date(s);
@@ -238,6 +235,20 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
       if (!s) return false;
       const d = parseDate(s);
       if (!d) return false;
+      
+      if (key && key.startsWith('custom:')) {
+        const parts = key.split(':');
+        if (parts.length === 3) {
+          const startDate = parseDate(parts[1]);
+          const endDate = parseDate(parts[2]);
+          if (startDate && endDate) {
+            const start = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate());
+            const end = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate(), 23, 59, 59, 999);
+            return d >= start && d <= end;
+          }
+        }
+      }
+      
       const now = new Date();
       const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
       let days = 30;
@@ -274,7 +285,6 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
     const avgSalePerTxn = receipts ? (totalRevenue / receipts) : 0;
     const logisticsDue = paidOrders.reduce((s, o) => s + (Number(o.shipping || 0) + Number(o.fees || 0)), 0);
 
-    // Average timings from lifecycle timestamps
     const toMs = (s?: string) => {
       if (!s) return undefined;
       const t = Date.parse(s);
@@ -296,7 +306,6 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
     return { receipts, totalRevenue, avgSalePerTxn, logisticsDue, avgPackMins, avgHandoverMins };
   }, [paidOrders]);
 
-  // Financial metrics calculated directly from orders (same as Reports tab)
   const financialMetrics = useMemo(() => {
     if (!confirmationOrders || confirmationOrders.length === 0) {
       return {
@@ -308,7 +317,6 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
       };
     }
 
-    // Date filtering helper (same as Reports tab)
     const parseDate = (s?: string) => {
       if (!s) return null;
       const d = new Date(s);
@@ -319,6 +327,19 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
       if (!s) return false;
       const d = parseDate(s);
       if (!d) return false;
+      
+      if (key && key.startsWith('custom:')) {
+        const parts = key.split(':');
+        if (parts.length === 3) {
+          const startDate = parseDate(parts[1]);
+          const endDate = parseDate(parts[2]);
+          if (startDate && endDate) {
+            const start = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate());
+            const end = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate(), 23, 59, 59, 999);
+            return d >= start && d <= end;
+          }
+        }
+      }   
       const now = new Date();
       const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
       let days = 30;
@@ -341,17 +362,14 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
     let matchedOrders = 0;
 
     confirmationOrders.forEach((order: any) => {
-      // Only count PAID orders (same as Reports tab)
       if (!isPaidStatus(order.status)) {
         return;
       }
 
-      // Apply date range filter
       if (!withinLastDays(order.timestamp, sellerFilters.dateRange)) {
         return;
       }
 
-      // Extract gross sales from order.summary.subtotal (same as Reports tab)
       const summary = order.summary || {};
       const subtotal = Number(summary.subtotal || 0);
       
@@ -359,15 +377,12 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
         totalGross += subtotal;
         matchedOrders++;
         
-        // Extract fees
         const feesData = order.feesBreakdown || {};
         totalPaymentProcessingFee += Number(feesData.paymentProcessingFee || 0);
         totalPlatformFee += Number(feesData.platformFee || 0);
         
-        // Extract shipping charge
         totalShippingCharge += Number(summary.sellerShippingCharge || 0);
         
-        // Extract net payout
         const payout = order.payout || {};
         totalNetPayout += Number(payout.netPayoutToSeller || 0);
       }
@@ -393,7 +408,6 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
     };
   }, [confirmationOrders, sellerFilters.dateRange]);
 
-  // Initialize active tab from query string (e.g., /?tab=inventory)
   useEffect(() => {
     try {
       const params = new URLSearchParams(window.location.search);
@@ -402,7 +416,6 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
     } catch {}
   }, []);
 
-  // Sync active tab from query string whenever location changes
   useEffect(() => {
     try {
       const params = new URLSearchParams(location.search);
@@ -411,15 +424,13 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
     } catch {}
   }, [location.search]);
 
-  // NEW: Keep URL query (?tab=...) in sync when activeItem changes to ensure future navigations take effect
-  // Use a ref to prevent infinite loop
+
   const lastSyncedTab = useRef<string | null>(null);
   useEffect(() => {
     try {
       if (!activeItem) return;
       const params = new URLSearchParams(location.search);
       const current = params.get('tab');
-      // Only navigate if activeItem changed AND it's different from URL AND we haven't just synced this value
       if (current !== activeItem && lastSyncedTab.current !== activeItem) {
         lastSyncedTab.current = activeItem;
         params.set('tab', activeItem);
@@ -428,7 +439,6 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
     } catch {}
   }, [activeItem, location.pathname, location.search, navigate]);
 
-  // Listen for custom navigation events from header actions (e.g., notifications)
   useEffect(() => {
     const onNavigate = (e: Event) => {
       const detail = (e as CustomEvent).detail || {};
@@ -440,7 +450,6 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
     return () => window.removeEventListener('dentpal:navigate' as any, onNavigate as any);
   }, []);
 
-  // Map page ids to permission keys stored in Firestore
   const permissionByMenuId: Record<string, keyof ReturnType<typeof useAuth>["permissions"] | 'dashboard'> = {
     dashboard: "dashboard",
     profile: "dashboard",
@@ -449,7 +458,6 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
     confirmation: "confirmation",
     withdrawal: "withdrawal",
     access: "access",
-    // NEW: Sub-accounts uses same component as Access but is always allowed for sellers (mapped to dashboard in Sidebar)
     'sub-accounts': 'dashboard',
     images: "images",
     users: "users",
@@ -457,21 +465,16 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
     inventory: 'inventory',
     'add-product': 'add-product',
     notifications: 'dashboard',
-    // NEW: Admin QC tab permission mapping
     'product-qc': 'product-qc',
-    // NEW: Warranty tab mapping (admin-only in UI; permission optional)
     'warranty': 'warranty',
-    // NEW: Categories tab mapping (admin-only)
     'categories': 'categories',
   } as any;
 
   const isAllowed = (itemId: string) => {
-    // Hide Profile tab for admin users only
     if (itemId === 'profile' && isAdmin) return false;
     return hasPermission((permissionByMenuId[itemId] || 'dashboard') as any);
   };
 
-  // Ensure active tab is permitted; otherwise jump to first allowed
   useEffect(() => {
     if (authLoading) return;
     if (!isAllowed(activeItem)) {
@@ -482,7 +485,6 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
         "booking",
         "seller-orders",
         "inventory",
-        // Include admin QC tab in fallback order
         "product-qc",
         "confirmation",
         "withdrawal",
@@ -495,13 +497,11 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
     }
   }, [authLoading, activeItem]);
 
-  // Handlers for confirmation actions
   const handleConfirmOrder = async (orderId: string) => {
     setLoading(true);
     try {
       // TODO: API call to confirm order
       console.log(`Confirming order ${orderId}`);
-      // Remove from confirmation list (simulate move to completed)
       setConfirmationOrders(prev => prev.filter(order => order.id !== orderId));
       setError(null);
     } catch (err) {
@@ -516,7 +516,6 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
     try {
       // TODO: API call to reject order
       console.log(`Rejecting order ${orderId}`);
-      // Remove from confirmation list
       setConfirmationOrders(prev => prev.filter(order => order.id !== orderId));
       setError(null);
     } catch (err) {
@@ -543,13 +542,11 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
     setActiveItem(tab);
   };
 
-  // Handlers for withdrawal actions
   const handleApproveWithdrawal = async (withdrawalId: string) => {
     setLoading(true);
     try {
       // TODO: API call to approve withdrawal and initiate bank transfer
       console.log(`Approving withdrawal ${withdrawalId}`);
-      // In real implementation, this would trigger bank transfer API
       setError(null);
     } catch (err) {
       setError("Failed to approve withdrawal. Please try again.");
@@ -584,7 +581,6 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
     }
   };
 
-  // Handlers for access control actions
   const handleCreateUser = async (userData: any) => {
     setLoading(true);
     try {
@@ -624,7 +620,6 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
     }
   };
 
-  // Handlers for images management actions
   const handleUploadImages = async (files: File[], category: string) => {
     setLoading(true);
     try {
@@ -691,7 +686,132 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
     }
   };
 
-  // Export seller metrics table as CSV
+  const exportAllItemsCSV = () => {
+    try {
+      console.log('[exportAllItemsCSV] Starting export with', paidOrders.length, 'paid orders');
+      
+      const itemMap = new Map<string, {
+        name: string;
+        sold: number;
+        refunded: number;
+        grossSales: number;
+        refunds: number;
+        paymentFee: number;
+        shippingFee: number;
+        platformFee: number;
+        netPayout: number;
+      }>();
+
+      paidOrders.forEach((order, idx) => {
+        const items = order.items || [];
+        const summary = order.summary || {};
+        const fees = order.feesBreakdown || {};
+        
+        const orderSubtotal = Number(summary.subtotal) || 0;
+        const orderPaymentFee = Number(fees.paymentProcessingFee) || 0;
+        const orderShippingFee = Number(summary.sellerShippingCharge) || 0;
+        const orderPlatformFee = Number(fees.platformFee) || 0;
+
+        // Debug: log first order
+        if (idx === 0) {
+          console.log('[exportAllItemsCSV] First order data:', {
+            orderId: order.id,
+            summary,
+            fees,
+            orderSubtotal,
+            orderPaymentFee,
+            orderShippingFee,
+            orderPlatformFee,
+            itemsCount: items.length,
+            sampleItem: items[0]
+          });
+        }
+
+        items.forEach((item: any) => {
+          const itemName = item.productName || item.name || 'Unknown Item';
+          const quantity = Number(item.quantity) || 0;
+          const price = Number(item.price) || 0;
+          const itemSubtotal = Number(item.subtotal) || (price * quantity);
+          
+          const feeRatio = orderSubtotal > 0 ? itemSubtotal / orderSubtotal : 0;
+          const itemPaymentFee = orderPaymentFee * feeRatio;
+          const itemShippingFee = orderShippingFee * feeRatio;
+          const itemPlatformFee = orderPlatformFee * feeRatio;
+          const itemNetPayout = itemSubtotal - itemPaymentFee - itemShippingFee - itemPlatformFee;
+
+          const existing = itemMap.get(itemName) || {
+            name: itemName,
+            sold: 0,
+            refunded: 0,
+            grossSales: 0,
+            refunds: 0,
+            paymentFee: 0,
+            shippingFee: 0,
+            platformFee: 0,
+            netPayout: 0
+          };
+
+          itemMap.set(itemName, {
+            name: itemName,
+            sold: existing.sold + quantity,
+            refunded: existing.refunded,
+            grossSales: existing.grossSales + itemSubtotal,
+            refunds: existing.refunds,
+            paymentFee: existing.paymentFee + itemPaymentFee,
+            shippingFee: existing.shippingFee + itemShippingFee,
+            platformFee: existing.platformFee + itemPlatformFee,
+            netPayout: existing.netPayout + itemNetPayout
+          });
+        });
+      });
+
+      const allItems = Array.from(itemMap.values())
+        .sort((a, b) => b.netPayout - a.netPayout);
+
+      const headers = [
+        'Item Name',
+        'Items Sold',
+        'Items Refunded',
+        'Gross Sales',
+        'Refunds',
+        'Payment Fee',
+        'Shipping Fee',
+        'Platform Fee',
+        'Net Payout'
+      ];
+
+      const rows = allItems.map(item => [
+        `"${item.name}"`,
+        item.sold,
+        item.refunded,
+        item.grossSales.toFixed(2),
+        item.refunds.toFixed(2),
+        item.paymentFee.toFixed(2),
+        item.shippingFee.toFixed(2),
+        item.platformFee.toFixed(2),
+        item.netPayout.toFixed(2)
+      ]);
+
+      const csvContent = [
+        headers.join(','),
+        ...rows.map(row => row.join(','))
+      ].join('\n');
+
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const link = document.createElement('a');
+      const url = URL.createObjectURL(blob);
+      link.setAttribute('href', url);
+      link.setAttribute('download', `all-items-${new Date().toISOString().slice(0,10)}.csv`);
+      link.style.visibility = 'hidden';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } catch (err) {
+      console.error('CSV export failed:', err);
+      setError('Failed to export all items CSV. Please try again.');
+    }
+  };
+
   const exportSellerMetricsCSV = () => {
     try {
       const headers = visibleColumnKeys.map(k => columnLabels[k]);
@@ -700,13 +820,11 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
           const orderSellerIds = o.sellerIds || [];
           if (!orderSellerIds.includes(s.uid)) return false;
           
-          // Date range filter
           if (adminFilters.dateFrom && adminFilters.dateTo) {
             const orderDate = o.timestamp ? o.timestamp.slice(0, 10) : '';
             if (orderDate < adminFilters.dateFrom || orderDate > adminFilters.dateTo) return false;
           }
           
-          // Province filter - EXCLUDE orders without region data when filter is active
           if (adminFilters.province !== 'all') {
             if (!o.region || !o.region.province) {
               return false;
@@ -715,7 +833,6 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
             if (orderProvinceCode !== adminFilters.province) return false;
           }
           
-          // City filter - EXCLUDE orders without region data when filter is active
           if (adminSelectedCityCodes.size > 0) {
             if (!o.region || !o.region.municipality) {
               return false;
@@ -767,7 +884,6 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
     }
   };
 
-  // Export seller metrics table as PDF
   const exportSellerMetricsPDF = async () => {
     try {
       const { jsPDF } = await import('jspdf');
@@ -775,47 +891,39 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
       
       const doc = new jsPDF();
       
-      // Add title
       doc.setFontSize(16);
       doc.text('Seller Metrics Report', 14, 15);
       
-      // Add date range if available
       doc.setFontSize(10);
       const dateText = adminFilters.dateFrom 
         ? `Period: ${adminFilters.dateFrom} to ${adminFilters.dateTo}`
         : 'All time';
       doc.text(dateText, 14, 22);
 
-      // Prepare table data
       const headers = visibleColumnKeys.map(k => columnLabels[k]);
       const rows = adminSellersDisplayed.map(s => {
         const sellerOrders = confirmationOrders.filter(o => {
           const orderSellerIds = o.sellerIds || [];
           if (!orderSellerIds.includes(s.uid)) return false;
           
-          // Date range filter
           if (adminFilters.dateFrom && adminFilters.dateTo) {
             const orderDate = o.timestamp ? o.timestamp.slice(0, 10) : '';
             if (orderDate < adminFilters.dateFrom || orderDate > adminFilters.dateTo) return false;
           }
           
-          // Province filter - skip if order has no region data
           if (adminFilters.province !== 'all') {
             if (o.region && o.region.province) {
               const orderProvinceCode = o.region.province;
               if (orderProvinceCode !== adminFilters.province) return false;
             }
-            // If no region data, include the order
           }
           
-          // City filter - skip if order has no region data
           if (adminSelectedCityCodes.size > 0) {
             if (o.region && o.region.municipality) {
               const orderCity = o.region.municipality;
               const matchingCity = phCities.find(c => c.name === orderCity);
               if (!matchingCity || !adminSelectedCityCodes.has(matchingCity.code)) return false;
             }
-            // If no region data, include the order
           }
           
           if (!isPaidStatus(o.status)) return false;
@@ -855,24 +963,18 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
     }
   };
 
-  // Handler to open Order Summary modal for a seller
   const handleOpenOrderSummary = (seller: { uid: string; storeName?: string; shopName?: string; name?: string }) => {
     const sellerName = seller.storeName || seller.shopName || seller.name || seller.uid;
     
-    // Filter orders for this seller with admin filters applied
     const filteredSellerOrders = confirmationOrders.filter(order => {
-      // Must belong to this seller
       const orderSellerIds = order.sellerIds || [];
       if (!orderSellerIds.includes(seller.uid)) return false;
       
-      // Apply admin filters
-      // Date range filter
       if (adminFilters.dateFrom && adminFilters.dateTo) {
         const orderDate = order.timestamp ? order.timestamp.slice(0, 10) : '';
         if (orderDate < adminFilters.dateFrom || orderDate > adminFilters.dateTo) return false;
       }
       
-      // Province filter - EXCLUDE orders without region data when filter is active
       if (adminFilters.province !== 'all') {
         if (!order.region || !order.region.province) {
           return false;
@@ -881,7 +983,6 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
         if (orderProvinceCode !== adminFilters.province) return false;
       }
       
-      // City filter - EXCLUDE orders without region data when filter is active
       if (adminSelectedCityCodes.size > 0) {
         if (!order.region || !order.region.municipality) {
           return false;
@@ -913,12 +1014,11 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
             <div className="space-y-6">
               {/* Title + Tutorial */}
               <div className="flex items-center justify-between">
-                <h3 className="text-lg font-semibold text-gray-900 tracking-tight">Dashboard</h3>
-                <button onClick={() => setShowTutorial(true)} className="px-3 py-2 text-xs font-medium rounded-lg border border-gray-200 bg-white hover:bg-gray-50 shadow-sm">Tutorial</button>
+                {/* <button onClick={() => setShowTutorial(true)} className="px-3 py-2 text-xs font-medium rounded-lg border border-gray-200 bg-white hover:bg-gray-50 shadow-sm">Tutorial</button> */}
               </div>
 
               {/* KPI cards - Row 1: Primary Sales Metrics */}
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              {/* <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                 <div className="bg-white border border-gray-100 rounded-2xl p-5 shadow-sm">
                   <div className="text-sm font-medium text-gray-700">Gross Sales</div>
                   <div className="mt-2 text-2xl font-bold text-gray-900">{currency.format(financialMetrics.totalGross)}</div>
@@ -939,10 +1039,10 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
                   <div className="mt-2 text-2xl font-bold text-gray-900">{currency.format(kpiMetrics.avgSalePerTxn)}</div>
                   <div className="mt-1 text-xs text-gray-500">Last {sellerFilters.dateRange.replace('last-','')} days</div>
                 </div>
-              </div>
+              </div> */}
 
               {/* KPI cards - Row 2: Fees & Charges */}
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              {/* <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                 <div className="bg-white border border-gray-100 rounded-2xl p-5 shadow-sm">
                   <div className="text-sm font-medium text-gray-700">Payment Processing Fee</div>
                   <div className="mt-2 text-2xl font-bold text-red-600">{currency.format(financialMetrics.totalPaymentProcessingFee)}</div>
@@ -963,12 +1063,22 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
                   <div className="mt-2 text-2xl font-bold text-gray-900">{`${fmtMins(kpiMetrics.avgPackMins)} / ${fmtMins(kpiMetrics.avgHandoverMins)}`}</div>
                   <div className="mt-1 text-xs text-gray-500">To pack / To handover</div>
                 </div>
-              </div>
+              </div> */}
 
-              {/* Horizontal Filters (below KPIs, above Revenue) */}
-              <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100">
+              <div className="bg-white rounded-2xl p-5 shadow-sm border border-white-100">
                 <div className="text-sm font-semibold text-gray-900 mb-3">Filters</div>
                 <div className="flex flex-col lg:flex-row lg:items-end lg:space-x-4 gap-4">
+                  <div className="flex-1 min-w-[160px]">
+                    <label className="block text-xs font-medium text-gray-700 mb-1">View by</label>
+                    <select className="w-full p-2 border border-gray-200 rounded-lg text-xs focus:ring-2 focus:ring-teal-500 focus:border-transparent" value={sellerFilters.viewType || 'summary'} onChange={(e)=> setSellerFilters(f=>({ ...f, viewType: e.target.value }))}>
+                      <option value="summary">Summary (Revenue Chart)</option>
+                      <option value="item">By Item</option>
+                      <option value="category">By Category</option>
+                      <option value="paymentType">By Payment Type</option>
+                      <option value="Receipts">By Receipts</option>
+
+                    </select>
+                  </div>
                   <div className="flex-1 min-w-[160px]">
                     <label className="block text-xs font-medium text-gray-700 mb-1">Select date</label>
                     <div ref={sellerDateDropdownRef} className="relative">
@@ -1038,7 +1148,7 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
                       )}
                     </div>
                   </div>
-                  <div className="flex-1 min-w-[160px]">
+                  {/* <div className="flex-1 min-w-[160px]">
                     <label className="block text-xs font-medium text-gray-700 mb-1">Select product</label>
                     <select className="w-full p-2 border border-gray-200 rounded-lg text-xs focus:ring-2 focus:ring-teal-500 focus:border-transparent" value={sellerFilters.brand} onChange={(e)=> setSellerFilters(f=>({ ...f, brand: e.target.value }))}>
                       <option value="all">All products</option>
@@ -1055,43 +1165,462 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
                         <option key={sc} value={sc}>{sc}</option>
                       ))}
                     </select>
-                  </div>
+                  </div> */}
                   <div className="flex items-end gap-2 pt-2">
                     <button className="px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white text-xs font-medium rounded-lg shadow-sm transition">Apply</button>
-                    <button onClick={()=> setSellerFilters({ dateRange: "last-30", brand: "all", subcategory: "all", location: "all", paymentType: "all" })} className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-medium rounded-lg transition">Reset</button>
+                    <button onClick={()=> setSellerFilters({ dateRange: "last-30", brand: "all", subcategory: "all", location: "all", paymentType: "all", viewType: "summary" })} className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-medium rounded-lg transition">Reset</button>
                   </div>
                 </div>
               </div>
 
-              {/* Revenue */}
-              <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
-                <div className="flex items-center justify-between mb-4">
-                  <div>
-                    <h4 className="text-sm font-medium text-gray-700">Revenue</h4>
-                    <div className="mt-1 text-2xl font-bold text-gray-900">{currency.format(kpiMetrics.totalRevenue)}</div>
-                    <div className="text-xs text-gray-500">Sales</div>
+              {/* Conditional Content Based on View Type */}
+              {sellerFilters.viewType === 'summary' && (
+                <>
+                  {/* Revenue */}
+                  <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
+                    <div className="flex items-center justify-between mb-4">
+                      <div>
+                        <h4 className="text-sm font-medium text-gray-700">Revenue</h4>
+                        <div className="mt-1 text-2xl font-bold text-gray-900">{currency.format(kpiMetrics.totalRevenue)}</div>
+                        <div className="text-xs text-gray-500">Sales</div>
+                      </div>
+                      <div className="hidden md:block text-xs text-gray-500">Date: {sellerFilters.dateRange.replace("last-", "Last ")} days</div>
+                    </div>
+                    {(() => {
+                      const byDate = new Map<string, { amount: number; count: number }>();
+                      paidOrders.forEach(o => {
+                        const key = o.timestamp.slice(0,10); // YYYY-MM-DD
+                        const prev = byDate.get(key) || { amount: 0, count: 0 };
+                        byDate.set(key, { amount: prev.amount + getAmount(o), count: prev.count + 1 });
+                      });
+                      const series = Array.from(byDate.entries())
+                        .sort(([a],[b]) => a.localeCompare(b))
+                        .map(([date, v]) => {
+                          const d = new Date(date);
+                          const label = `${(d.getMonth()+1).toString().padStart(2,'0')}/${d.getDate().toString().padStart(2,'0')}`;
+                          return { name: label, revenue: v.amount, count: v.count };
+                        });
+                      return <RevenueChart data={series} />;
+                    })()}
+                    <div className="mt-2 text-[11px] text-gray-500">(date)</div>
                   </div>
-                  <div className="hidden md:block text-xs text-gray-500">Date: {sellerFilters.dateRange.replace("last-", "Last ")} days</div>
-                </div>
-                {(() => {
-                  // Build simple time series from filtered paid orders (by accrual date)
-                  const byDate = new Map<string, { amount: number; count: number }>();
-                  paidOrders.forEach(o => {
-                    const key = o.timestamp.slice(0,10); // YYYY-MM-DD
-                    const prev = byDate.get(key) || { amount: 0, count: 0 };
-                    byDate.set(key, { amount: prev.amount + getAmount(o), count: prev.count + 1 });
-                  });
-                  const series = Array.from(byDate.entries())
-                    .sort(([a],[b]) => a.localeCompare(b))
-                    .map(([date, v]) => {
-                      const d = new Date(date);
-                      const label = `${(d.getMonth()+1).toString().padStart(2,'0')}/${d.getDate().toString().padStart(2,'0')}`;
-                      return { name: label, revenue: v.amount, count: v.count };
-                    });
-                  return <RevenueChart data={series} />;
-                })()}
-                <div className="mt-2 text-[11px] text-gray-500">(date)</div>
-              </div>
+
+                  {/* Financial Summary Table */}
+                  <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+                    <div className="px-6 py-4 border-b border-gray-100">
+                      <h3 className="text-sm font-semibold text-gray-800 tracking-wide">FINANCIAL SUMMARY</h3>
+                    </div>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead className="bg-gray-50 text-gray-600">
+                          <tr className="text-left text-xs font-semibold tracking-wide">
+                            <th className="px-6 py-3">Date</th>
+                            <th className="px-6 py-3 text-right">Gross Sales</th>
+                            <th className="px-6 py-3 text-right">Refunds</th>
+                            <th className="px-6 py-3 text-right">Payment Fee</th>
+                            <th className="px-6 py-3 text-right">Shipping Fee</th>
+                            <th className="px-6 py-3 text-right">Platform Fee</th>
+                            <th className="px-6 py-3 text-right font-bold">Net Payout</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr className="border-t hover:bg-gray-50">
+                            <td className="px-6 py-4 text-gray-700 font-medium text-xs">
+                              {(() => {
+                                const now = new Date();
+                                const formatTimestamp = (date: Date) => {
+                                  return date.toLocaleString('en-US', {
+                                    month: 'short',
+                                    day: 'numeric',
+                                    year: 'numeric',
+                                    hour: 'numeric',
+                                    minute: '2-digit',
+                                    hour12: true
+                                  });
+                                };
+                                
+                                if (sellerRange.start) {
+                                  return `${formatTimestamp(sellerRange.start)} → ${formatTimestamp(sellerRange.end || sellerRange.start)}`;
+                                } else {
+                                  const days = parseInt(sellerFilters.dateRange.replace('last-', ''));
+                                  const startDate = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
+                                  return `${formatTimestamp(startDate)} → ${formatTimestamp(now)}`;
+                                }
+                              })()}
+                            </td>
+                            <td className="px-6 py-4 text-gray-900 text-right font-medium">
+                              {currency.format(financialMetrics.totalGross)}
+                            </td>
+                            <td className="px-6 py-4 text-red-600 text-right font-medium">
+                              {currency.format(0)} {/* TODO: Add refunds calculation */}
+                            </td>
+                            <td className="px-6 py-4 text-red-600 text-right">
+                              {currency.format(financialMetrics.totalPaymentProcessingFee)}
+                            </td>
+                            <td className="px-6 py-4 text-orange-600 text-right">
+                              {currency.format(financialMetrics.totalShippingCharge)}
+                            </td>
+                            <td className="px-6 py-4 text-red-600 text-right">
+                              {currency.format(financialMetrics.totalPlatformFee)}
+                            </td>
+                            <td className="px-6 py-4 text-green-600 text-right font-bold text-base">
+                              {currency.format(financialMetrics.totalNetPayout)}
+                            </td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                    <div className="px-6 py-3 bg-gray-50 border-t border-gray-100">
+                      <div className="flex items-center justify-between text-xs text-gray-600">
+                        <div className="flex items-center gap-2">
+                          <span className="inline-flex items-center gap-1">
+                            <span className="w-2 h-2 bg-green-500 rounded-full"></span>
+                            Net Payout = Gross Sales - (Payment Fee + Shipping Fee + Platform Fee)
+                          </span>
+                        </div>
+                        <div className="text-gray-500">
+                          Based on {paidOrders.length} paid {paidOrders.length === 1 ? 'order' : 'orders'}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {/* By Item View */}
+              {sellerFilters.viewType === 'item' && (
+                <>
+                  {/* Top 5 Items + Sales Chart */}
+                  <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+                    <div className="px-6 py-4 border-b border-gray-100">
+                      <h3 className="text-sm font-semibold text-gray-800 tracking-wide">TOP 5 ITEMS & SALES BY ITEM</h3>
+                      <p className="text-xs text-gray-500 mt-1">
+                        {sellerRange.start 
+                          ? `${toISO(sellerRange.start)} → ${toISO(sellerRange.end || sellerRange.start)}`
+                          : sellerFilters.dateRange.replace('last-', 'Last ') + ' days'
+                        }
+                      </p>
+                    </div>
+                    
+                    <div className="p-6">
+                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                        {/* Left: Top 5 Items List */}
+                        <div>
+                          <h4 className="text-sm font-medium text-gray-700 mb-4">Top 5 Items by Net Payout</h4>
+                          {(() => {
+                            const itemMap = new Map<string, {
+                              name: string;
+                              netPayout: number;
+                            }>();
+
+                            paidOrders.forEach(order => {
+                              const items = order.items || [];
+                              const summary = order.summary || {};
+                              const fees = order.feesBreakdown || {};
+                              
+                              const orderSubtotal = Number(summary.subtotal) || 0;
+                              const orderPaymentFee = Number(fees.paymentProcessingFee) || 0;
+                              const orderShippingFee = Number(summary.sellerShippingCharge) || 0;
+                              const orderPlatformFee = Number(fees.platformFee) || 0;
+
+                              items.forEach((item: any) => {
+                                const itemName = item.productName || item.name || 'Unknown Item';
+                                const quantity = Number(item.quantity) || 0;
+                                const price = Number(item.price) || 0;
+                                const itemSubtotal = Number(item.subtotal) || (price * quantity);
+                                
+                                const feeRatio = orderSubtotal > 0 ? itemSubtotal / orderSubtotal : 0;
+                                const itemPaymentFee = orderPaymentFee * feeRatio;
+                                const itemShippingFee = orderShippingFee * feeRatio;
+                                const itemPlatformFee = orderPlatformFee * feeRatio;
+                                const itemNetPayout = itemSubtotal - itemPaymentFee - itemShippingFee - itemPlatformFee;
+
+                                const existing = itemMap.get(itemName) || { name: itemName, netPayout: 0 };
+                                itemMap.set(itemName, {
+                                  name: itemName,
+                                  netPayout: existing.netPayout + itemNetPayout
+                                });
+                              });
+                            });
+
+                            const topItems = Array.from(itemMap.values())
+                              .sort((a, b) => b.netPayout - a.netPayout)
+                              .slice(0, 5);
+
+                            if (topItems.length === 0) {
+                              return (
+                                <div className="text-center py-8 text-gray-500">
+                                  <div className="text-sm">No items to display</div>
+                                  <div className="text-xs mt-1">There are no sales in the selected time period</div>
+                                </div>
+                              );
+                            }
+
+                            return (
+                              <div className="space-y-3">
+                                {topItems.map((item, idx) => (
+                                  <div key={idx} className="flex items-start gap-3 p-3 rounded-lg border border-gray-200 hover:border-teal-300 transition">
+                                    <div className="flex-shrink-0 w-8 h-8 rounded-full bg-teal-100 text-teal-700 flex items-center justify-center font-bold text-sm">
+                                      {idx + 1}
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                      <div className="text-sm font-medium text-gray-900 truncate">{item.name}</div>
+                                      <div className="text-xs text-gray-500 mt-1">Net Payout: <span className="font-semibold text-green-600">{currency.format(item.netPayout)}</span></div>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            );
+                          })()}
+                        </div>
+
+                        {/* Right: Sales Chart with Chart Type Selector */}
+                        <div>
+                          <div className="flex items-center justify-between mb-4">
+                            <h4 className="text-sm font-medium text-gray-700">Sales by Item Chart</h4>
+                            <select 
+                              className="px-3 py-1.5 text-xs border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+                              defaultValue="bar"
+                            >
+                              <option value="line">Line Chart</option>
+                              <option value="bar">Bar Chart</option>
+                              <option value="pie">Pie Chart</option>
+                            </select>
+                          </div>
+                          {(() => {
+                            const itemMap = new Map<string, number>();
+
+                            paidOrders.forEach(order => {
+                              const items = order.items || [];
+                              items.forEach((item: any) => {
+                                const itemName = item.productName || item.name || 'Unknown Item';
+                                const quantity = Number(item.quantity) || 0;
+                                const price = Number(item.price) || 0;
+                                const itemSubtotal = Number(item.subtotal) || (price * quantity);
+                                const existing = itemMap.get(itemName) || 0;
+                                itemMap.set(itemName, existing + itemSubtotal);
+                              });
+                            });
+
+                            const chartData = Array.from(itemMap.entries())
+                              .sort((a, b) => b[1] - a[1])
+                              .slice(0, 5)
+                              .map(([name, sales]) => ({ name, sales }));
+
+                            if (chartData.length === 0) {
+                              return (
+                                <div className="h-64 flex items-center justify-center text-gray-500 border border-gray-200 rounded-lg">
+                                  <div className="text-center">
+                                    <div className="text-sm">No data to display</div>
+                                    <div className="text-xs mt-1">There are no sales in the selected time period</div>
+                                  </div>
+                                </div>
+                              );
+                            }
+
+                            const maxSales = Math.max(...chartData.map(d => d.sales));
+                            return (
+                              <div className="space-y-3">
+                                {chartData.map((item, idx) => (
+                                  <div key={idx} className="space-y-1">
+                                    <div className="flex items-center justify-between text-xs">
+                                      <span className="font-medium text-gray-700 truncate pr-2">{item.name}</span>
+                                      <span className="font-semibold text-gray-900">{currency.format(item.sales)}</span>
+                                    </div>
+                                    <div className="w-full bg-gray-100 rounded-full h-6 relative overflow-hidden">
+                                      <div 
+                                        className="bg-gradient-to-r from-teal-500 to-teal-600 h-full rounded-full transition-all duration-500 flex items-center justify-end pr-2"
+                                        style={{ width: `${(item.sales / maxSales) * 100}%` }}
+                                      >
+                                        {(item.sales / maxSales) > 0.3 && (
+                                          <span className="text-[10px] font-medium text-white">
+                                            {((item.sales / maxSales) * 100).toFixed(0)}%
+                                          </span>
+                                        )}
+                                      </div>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            );
+                          })()}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Export Table - All Items */}
+                  <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+                    <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+                      <h3 className="text-sm font-semibold text-gray-800 tracking-wide">EXPORT - ALL ITEMS</h3>
+                      <button 
+                        onClick={exportAllItemsCSV}
+                        disabled={paidOrders.length === 0}
+                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-teal-700 bg-teal-50 border border-teal-200 rounded-lg hover:bg-teal-100 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        </svg>
+                        Export CSV
+                      </button>
+                    </div>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead className="bg-gray-50 text-gray-600">
+                          <tr className="text-left text-xs font-semibold tracking-wide">
+                            <th className="px-6 py-3">Item Name</th>
+                            <th className="px-6 py-3 text-right">Items Sold</th>
+                            <th className="px-6 py-3 text-right">Items Refunded</th>
+                            <th className="px-6 py-3 text-right">Gross Sales</th>
+                            <th className="px-6 py-3 text-right">Refunds</th>
+                            <th className="px-6 py-3 text-right">Payment Fee</th>
+                            <th className="px-6 py-3 text-right">Shipping Fee</th>
+                            <th className="px-6 py-3 text-right">Platform Fee</th>
+                            <th className="px-6 py-3 text-right font-bold">Net Payout</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(() => {
+                            // Aggregate ALL items from paid orders
+                            const itemMap = new Map<string, {
+                              name: string;
+                              sold: number;
+                              refunded: number;
+                              grossSales: number;
+                              refunds: number;
+                              paymentFee: number;
+                              shippingFee: number;
+                              platformFee: number;
+                              netPayout: number;
+                            }>();
+
+                            paidOrders.forEach(order => {
+                              const items = order.items || [];
+                              const summary = order.summary || {};
+                              const fees = order.feesBreakdown || {};
+                              
+                              const orderSubtotal = Number(summary.subtotal) || 0;
+                              const orderPaymentFee = Number(fees.paymentProcessingFee) || 0;
+                              const orderShippingFee = Number(summary.sellerShippingCharge) || 0;
+                              const orderPlatformFee = Number(fees.platformFee) || 0;
+
+                              // Debug: log first order to check data structure
+                              if (items.length > 0 && itemMap.size === 0) {
+                                console.log('[EXPORT-ALL-ITEMS] Sample order data:', {
+                                  orderId: order.id,
+                                  summary,
+                                  fees,
+                                  orderSubtotal,
+                                  orderPaymentFee,
+                                  orderShippingFee,
+                                  orderPlatformFee,
+                                  sampleItem: items[0]
+                                });
+                                
+                                const firstItem = items[0] as any;
+                                const qty = Number(firstItem.quantity) || 0;
+                                const prc = Number(firstItem.price) || 0;
+                                const calculated = prc * qty;
+                                console.log('[EXPORT-ALL-ITEMS] First item calculation:', {
+                                  name: firstItem.productName || firstItem.name,
+                                  price: prc,
+                                  quantity: qty,
+                                  calculatedSubtotal: calculated,
+                                  hasSubtotalField: 'subtotal' in firstItem,
+                                  subtotalValue: firstItem.subtotal
+                                });
+                              }
+
+                              items.forEach((item: any) => {
+                                const itemName = item.productName || item.name || 'Unknown Item';
+                                const quantity = Number(item.quantity) || 0;
+                                const price = Number(item.price) || 0;
+                                const itemSubtotal = Number(item.subtotal) || (price * quantity);
+                                
+                                const feeRatio = orderSubtotal > 0 ? itemSubtotal / orderSubtotal : 0;
+                                const itemPaymentFee = orderPaymentFee * feeRatio;
+                                const itemShippingFee = orderShippingFee * feeRatio;
+                                const itemPlatformFee = orderPlatformFee * feeRatio;
+                                const itemNetPayout = itemSubtotal - itemPaymentFee - itemShippingFee - itemPlatformFee;
+
+                                const existing = itemMap.get(itemName) || {
+                                  name: itemName,
+                                  sold: 0,
+                                  refunded: 0,
+                                  grossSales: 0,
+                                  refunds: 0,
+                                  paymentFee: 0,
+                                  shippingFee: 0,
+                                  platformFee: 0,
+                                  netPayout: 0
+                                };
+
+                                itemMap.set(itemName, {
+                                  name: itemName,
+                                  sold: existing.sold + quantity,
+                                  refunded: existing.refunded,
+                                  grossSales: existing.grossSales + itemSubtotal,
+                                  refunds: existing.refunds,
+                                  paymentFee: existing.paymentFee + itemPaymentFee,
+                                  shippingFee: existing.shippingFee + itemShippingFee,
+                                  platformFee: existing.platformFee + itemPlatformFee,
+                                  netPayout: existing.netPayout + itemNetPayout
+                                });
+                              });
+                            });
+
+                            const allItems = Array.from(itemMap.values())
+                              .sort((a, b) => b.netPayout - a.netPayout);
+
+                            if (allItems.length === 0) {
+                              return (
+                                <tr>
+                                  <td colSpan={9} className="px-6 py-16">
+                                    <div className="flex flex-col items-center justify-center text-center text-gray-500">
+                                      <div className="w-16 h-16 rounded-full bg-gray-100 flex items-center justify-center mb-3">
+                                        <span className="text-xs font-semibold text-gray-400">⌀</span>
+                                      </div>
+                                      <div className="text-sm font-medium">No items to display</div>
+                                      <div className="mt-1 text-xs text-gray-400">There are no sales in the selected time period</div>
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            }
+
+                            return allItems.map((item, idx) => (
+                              <tr key={idx} className="border-t hover:bg-gray-50">
+                                <td className="px-6 py-4 text-gray-900 font-medium">{item.name}</td>
+                                <td className="px-6 py-4 text-gray-700 text-right">{item.sold.toLocaleString()}</td>
+                                <td className="px-6 py-4 text-red-600 text-right">{item.refunded.toLocaleString()}</td>
+                                <td className="px-6 py-4 text-gray-900 text-right font-medium">{currency.format(item.grossSales)}</td>
+                                <td className="px-6 py-4 text-red-600 text-right">{currency.format(item.refunds)}</td>
+                                <td className="px-6 py-4 text-red-600 text-right">{currency.format(item.paymentFee)}</td>
+                                <td className="px-6 py-4 text-orange-600 text-right">{currency.format(item.shippingFee)}</td>
+                                <td className="px-6 py-4 text-red-600 text-right">{currency.format(item.platformFee)}</td>
+                                <td className="px-6 py-4 text-green-600 text-right font-bold text-base">{currency.format(item.netPayout)}</td>
+                              </tr>
+                            ));
+                          })()}
+                        </tbody>
+                      </table>
+                    </div>
+                    <div className="px-6 py-3 bg-gray-50 border-t border-gray-100">
+                      <div className="flex items-center justify-between text-xs text-gray-600">
+                        <div className="flex items-center gap-2">
+                          <span className="inline-flex items-center gap-1">
+                            <span className="w-2 h-2 bg-green-500 rounded-full"></span>
+                            Net Payout = Gross Sales - (Payment Fee + Shipping Fee + Platform Fee)
+                          </span>
+                        </div>
+                        <div className="text-gray-500">
+                          Based on {paidOrders.length} paid {paidOrders.length === 1 ? 'order' : 'orders'}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </>
+              )}
 
               {/* Tutorial modal */}
               {showTutorial && (
@@ -1099,13 +1628,13 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
                   <div className="absolute inset-0 bg-black/40" onClick={() => setShowTutorial(false)} />
                   <div className="relative z-10 w-[92vw] max-w-xl bg-white rounded-2xl shadow-xl border border-gray-200 overflow-hidden">
                     <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
-                      <div className="text-sm font-medium text-gray-900">Dashboard tutorial</div>
+                      <div className="text-sm font-medium text-gray-900">Sales Summary tutorial</div>
                       <button className="text-xs px-3 py-1.5 rounded-md border border-gray-200 hover:bg-gray-50" onClick={() => setShowTutorial(false)}>Close</button>
                     </div>
                     <div className="p-4 space-y-2 text-sm text-gray-700">
-                      <p>Use the filters below the KPIs to refine metrics by date, brand, category, location, and payment type.</p>
-                      <p>KPIs summarize performance. The line chart shows revenue over time. Hover points for details.</p>
-                      <p>Fulfillment times help you optimize operations from packing to handover.</p>
+                      <p>Use the filters below to refine metrics by date, brand, category, location, and payment type.</p>
+                      <p>The line chart shows revenue over time. Hover points for details.</p>
+                      <p>Track your sales performance and fulfillment times to optimize operations.</p>
                     </div>
                   </div>
                 </div>
@@ -1478,13 +2007,10 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
                       </tr>
                     )}
                     {adminSellersDisplayed.map(s => {
-                      // Calculate gross sales from real-time orders with ALL admin filters
                       const sellerOrders = confirmationOrders.filter(o => {
-                        // Check if order belongs to this seller
                         const orderSellerIds = o.sellerIds || [];
                         if (!orderSellerIds.includes(s.uid)) return false;
                         
-                        // Apply date range filter
                         if (adminFilters.dateFrom && adminFilters.dateTo) {
                           const orderDate = o.timestamp ? o.timestamp.slice(0, 10) : '';
                           if (orderDate < adminFilters.dateFrom || orderDate > adminFilters.dateTo) {
@@ -1492,16 +2018,13 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
                           }
                         }
                         
-                        // Apply province filter - EXCLUDE orders without region data when filter is active
                         if (adminFilters.province !== 'all') {
-                          // If order has no region data, EXCLUDE it (filter it out)
                           if (!o.region || !o.region.province) {
                             return false;
                           }
                           
                           const orderProvinceCode = o.region.province;
                           
-                          // DEBUG: Log order region data for first order
                           if (s === adminSellersDisplayed[0] && o === confirmationOrders[0]) {
                             console.log('[PROVINCE FILTER DEBUG]', {
                               filterProvinceCode: adminFilters.province,
@@ -1512,28 +2035,23 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
                             });
                           }
                           
-                          // Filter out if province doesn't match
                           if (orderProvinceCode !== adminFilters.province) {
                             return false;
                           }
                         }
                         
-                        // Apply city filter (multi-select) - EXCLUDE orders without region data when filter is active
                         if (adminSelectedCityCodes.size > 0) {
-                          // If order has no region data, EXCLUDE it (filter it out)
                           if (!o.region || !o.region.municipality) {
                             return false;
                           }
                           
                           const orderCity = o.region.municipality;
-                          // Find matching city code from phCities
                           const matchingCity = phCities.find(c => c.name === orderCity);
                           if (!matchingCity || !adminSelectedCityCodes.has(matchingCity.code)) {
                             return false;
                           }
                         }
                         
-                        // Only count PAID orders
                         if (!isPaidStatus(o.status)) return false;
                         
                         return true;
@@ -1545,11 +2063,9 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
                         return sum + subtotal;
                       }, 0);
                       
-                      // Calculate average order value
                       const tx = sellerOrders.length;
                       const avgOrder = tx > 0 ? gross / tx : 0;
                       
-                      // Calculate fees from actual order data
                       const logistic = sellerOrders.reduce((sum, o) => {
                         const summary = o.summary || {};
                         return sum + (Number(summary.sellerShippingCharge) || 0);
@@ -1633,13 +2149,12 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
                         gross: gross,
                         avg: avgOrder,
                         tx: tx,
-                        orderSummary: tx, // NEW: Order count for the summary
+                        orderSummary: tx, 
                         logistic: logistic,
                         payment: payment,
                         inquiry: inquiry,
                       };
                       
-                      // Calculate row total (sum of numeric visible columns, excluding 'seller' and 'orderSummary')
                       const rowTotal = visibleColumnKeys.reduce((sum, k) => {
                         if (k === 'seller' || k === 'orderSummary') return sum;
                         return sum + (typeof cellByKey[k] === 'number' ? cellByKey[k] : 0);
@@ -1672,20 +2187,17 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
                         if (k === 'seller') {
                           return <td key={k} className="px-4 py-3 text-gray-900">TOTAL</td>;
                         }
-                        // Skip orderSummary in totals (it's not a sum-able metric)
                         if (k === 'orderSummary') {
                           const totalOrders = adminSellersDisplayed.reduce((sum, s) => {
                             const sellerOrders = confirmationOrders.filter(o => {
                               const orderSellerIds = o.sellerIds || [];
                               if (!orderSellerIds.includes(s.uid)) return false;
                               
-                              // Date range filter
                               if (adminFilters.dateFrom && adminFilters.dateTo) {
                                 const orderDate = o.timestamp ? o.timestamp.slice(0, 10) : '';
                                 if (orderDate < adminFilters.dateFrom || orderDate > adminFilters.dateTo) return false;
                               }
                               
-                              // Province filter
                               if (adminFilters.province !== 'all') {
                                 if (o.region && o.region.province) {
                                   const orderProvinceCode = o.region.province;
@@ -1693,7 +2205,6 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
                                 }
                               }
                               
-                              // City filter
                               if (adminSelectedCityCodes.size > 0) {
                                 if (o.region && o.region.municipality) {
                                   const orderCity = o.region.municipality;
@@ -1709,19 +2220,16 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
                           }, 0);
                           return <td key={k} className="px-4 py-3 text-gray-900">{totalOrders} {totalOrders === 1 ? 'order' : 'orders'}</td>;
                         }
-                        // Calculate column total with ALL admin filters
                         const columnTotal = adminSellersDisplayed.reduce((sum, s) => {
                           const sellerOrders = confirmationOrders.filter(o => {
                             const orderSellerIds = o.sellerIds || [];
                             if (!orderSellerIds.includes(s.uid)) return false;
                             
-                            // Date range filter
                             if (adminFilters.dateFrom && adminFilters.dateTo) {
                               const orderDate = o.timestamp ? o.timestamp.slice(0, 10) : '';
                               if (orderDate < adminFilters.dateFrom || orderDate > adminFilters.dateTo) return false;
                             }
                             
-                            // Province filter - EXCLUDE orders without region data when filter is active
                             if (adminFilters.province !== 'all') {
                               if (!o.region || !o.region.province) {
                                 return false;
@@ -1730,7 +2238,6 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
                               if (orderProvinceCode !== adminFilters.province) return false;
                             }
                             
-                            // City filter - EXCLUDE orders without region data when filter is active
                             if (adminSelectedCityCodes.size > 0) {
                               if (!o.region || !o.region.municipality) {
                                 return false;
@@ -1789,7 +2296,7 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
                         setShowOrderSummaryModal(false);
                         setSelectedSellerForOrders(null);
                         setSellerOrders([]);
-                        setExpandedOrderIds(new Set()); // Reset expanded items
+                        setExpandedOrderIds(new Set()); 
                       }}
                       className="text-white/80 hover:text-white transition p-2 hover:bg-white/10 rounded-lg"
                     >
@@ -1923,7 +2430,6 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
                                                   alt={item.name || 'Product'} 
                                                   className="w-full h-full object-cover"
                                                   onError={(e) => {
-                                                    // Fallback to placeholder if image fails to load
                                                     e.currentTarget.src = '/placeholder.svg';
                                                   }}
                                                 />
@@ -2000,7 +2506,6 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
                   <div className="border-t border-gray-200 px-6 py-4 bg-gray-50 flex items-center justify-between">
                     <button
                       onClick={() => {
-                        // Export orders to CSV with seller info and timestamp header
                         const now = new Date();
                         const exportDate = now.toLocaleDateString('en-US', { 
                           year: 'numeric', 
@@ -2014,14 +2519,12 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
                           hour12: true 
                         });
                         
-                        // Calculate summary totals
                         const totalOrders = sellerOrders.length;
                         const totalRevenue = sellerOrders.reduce((sum, o) => sum + (o.summary?.subtotal || 0), 0);
                         const totalShipping = sellerOrders.reduce((sum, o) => sum + (o.summary?.sellerShippingCharge || 0), 0);
                         const totalPaymentFees = sellerOrders.reduce((sum, o) => sum + (o.feesBreakdown?.paymentProcessingFee || 0), 0);
                         const totalPlatformFees = sellerOrders.reduce((sum, o) => sum + (o.feesBreakdown?.platformFee || 0), 0);
                         
-                        // Header section with seller info and metadata
                         const headerSection = [
                           ['Order Summary Report'],
                           [''],
@@ -2037,10 +2540,10 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
                           ['Total Platform Fees:', `₱${totalPlatformFees.toFixed(2)}`],
                           ['Net Amount:', `₱${(totalRevenue - totalPaymentFees - totalPlatformFees).toFixed(2)}`],
                           [''],
-                          [''], // Extra blank line before table
+                          [''], 
                         ];
                         
-                        const headers = ['Order ID', 'Status', 'Customer', 'Date', 'Items', 'Payment', 'Location', 'Subtotal', 'Shipping', 'Payment Fee', 'Platform Fee'];
+                        const headers = ['Order ID', 'Status', 'Customer', 'Date', 'Items', 'Payment', 'Payment Status', 'Location', 'Subtotal', 'Shipping', 'Payment Fee', 'Platform Fee'];
                         const rows = sellerOrders.map(o => [
                           o.id,
                           o.status,
@@ -2048,6 +2551,7 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
                           o.timestamp ? new Date(o.timestamp).toLocaleDateString() : 'N/A',
                           o.items?.map(i => `${i.name} (${i.quantity}x)`).join('; ') || 'N/A',
                           o.feesBreakdown?.paymentMethod || o.paymentType || 'N/A',
+                          (o as any).paymongo?.paymentStatus || 'N/A',
                           o.region ? [o.region.municipality, o.region.province].filter(Boolean).join(', ') : 'N/A',
                           (o.summary?.subtotal || 0).toFixed(2),
                           (o.summary?.sellerShippingCharge || 0).toFixed(2),
@@ -2055,7 +2559,6 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
                           (o.feesBreakdown?.platformFee || 0).toFixed(2),
                         ]);
                         
-                        // Combine header section with data table
                         const csvContent = [
                           ...headerSection.map(row => row.map(cell => `"${cell}"`).join(',')),
                           headers.map(cell => `"${cell}"`).join(','),
@@ -2080,7 +2583,7 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
                           setShowOrderSummaryModal(false);
                           setSelectedSellerForOrders(null);
                           setSellerOrders([]);
-                          setExpandedOrderIds(new Set()); // Reset expanded items
+                          setExpandedOrderIds(new Set()); 
                         }}
                         className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition"
                       >
@@ -2103,7 +2606,6 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
             onRefresh={() => {/* listener keeps it live; left for future manual refresh */}}
           />
         );
-      // NEW: Admin Pending QC tab
       case 'product-qc':
         if (!isAllowed('product-qc')) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
         return <ProductQCTab />;
@@ -2132,7 +2634,6 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
         );
       case "withdrawal":
         if (!isAllowed("withdrawal")) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
-        // Show seller-facing withdrawal for non-admin users
         if (!isAdmin) {
           return (
             <SellerWithdrawalTab
@@ -2143,7 +2644,6 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
             />
           );
         }
-        // Admin view for managing withdrawal requests
         return (
           <WithdrawalTab 
             loading={loading}
@@ -2165,7 +2665,6 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
             onTabChange={handleTabChange}
           />
         );
-      // NEW: route sub-accounts tab to AccessTab (seller-facing)
       case "sub-accounts":
         return (
           <AccessTab 
@@ -2190,23 +2689,19 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
         return (
           <UsersTab />
         );
-      // Seller inventory tab
       case "inventory":
         if (!isAllowed("inventory")) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
         return (
           <InventoryTab />
         );
-      // Seller add product tab
       case "add-product":
         if (!isAllowed("add-product")) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
         return (
           <AddProduct />
         );
-      // NEW: Admin Warranty tab
       case 'warranty':
         if (!isAdmin) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
         return <WarrantyManager />;
-      // NEW: Admin Categories tab
       case 'categories':
         if (!isAdmin) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
         return <CategoryManager />;
@@ -2217,22 +2712,19 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
 
   const getPageTitle = () => {
     switch (activeItem) {
-      case "dashboard": return "Dashboard";
+      case "dashboard": 
+        return isAdmin ? "Dashboard" : "Sales Summary";
       case "booking": return "Booking";
       case "confirmation": return "Confirmation";
       case "withdrawal": return "Withdrawal";
       case "access": return "Access";
       case 'seller-orders': return 'Orders';
-      case 'reports': return 'Reports'; // added proper title
-      // NEW: Admin QC title
+      case 'reports': return 'Reports'; 
       case 'product-qc': return 'Pending QC';
-      // NEW: Sub-accounts title
       case "sub-accounts": return "Sub Account";
       case "images": return "Images";
       case "users": return "Users";
-      // NEW: Warranty title
       case 'warranty': return 'Warranty';
-      // NEW: Categories title
       case 'categories': return 'Categories';
       default: return "Dashboard";
     }
@@ -2241,6 +2733,9 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
   const getPageSubtitle = () => {
     switch (activeItem) {
       case "dashboard":
+        if (!isAdmin) {
+          return `Welcome back, ${user.name || user.email}`;
+        }
         return `Welcome back, ${user.name || user.email}`;
       case "profile":
         return "Manage seller profile, documents, and security";
@@ -2250,7 +2745,6 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
         return "Manage dental appointments and bookings";
       case 'seller-orders':
         return 'Manage seller order statuses and actions';
-      // NEW: Admin QC subtitle
       case 'product-qc':
         return 'Review and approve products pending quality control';
       case "confirmation":
@@ -2259,17 +2753,14 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
         return "Manage payment withdrawals and financial transactions";
       case "access":
         return "Control user access and system permissions";
-      // NEW: Sub-accounts subtitle
       case "sub-accounts":
         return "Create and manage seller sub-accounts";
       case "images":
-        return "Manage dental images, x-rays, and patient photos";
+        return "Manage banners and promotional images";
       case "users":
         return "Manage patients, staff, and user accounts";
-      // NEW: Warranty subtitle
       case 'warranty':
         return 'Set warranty durations by category and subcategory';
-      // NEW: Categories subtitle
       case 'categories':
         return 'Create, rename, and delete categories and their subcategories';
       default:
@@ -2277,7 +2768,6 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
     }
   };
 
-  // Live Orders subscription for Orders tab
   useEffect(() => {
     if (!uid) {
       console.log('[Dashboard] No UID, skipping order subscription');
@@ -2286,47 +2776,28 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
     console.log('[Dashboard] Setting up order subscription for:', { uid, isAdmin, isSubAccount, parentId });
     let unsub: (() => void) | undefined;
     if (isAdmin) {
-      console.log('[Dashboard] Subscribing to ALL orders (admin)');
       unsub = OrdersService.listenAll((orders) => {
-        console.log('[Dashboard] Received orders (admin):', orders.length, orders);
-        
-        // DEBUG: Log all order region data
-        console.log('[Dashboard] ORDER REGION DATA:', orders.map(o => ({
-          id: o.id,
-          region: o.region,
-          hasRegion: !!o.region,
-          province: o.region?.province,
-          municipality: o.region?.municipality,
-        })));
-        
         setConfirmationOrders(orders);
       });
     } else if (isSubAccount && parentId) {
-      console.log('[Dashboard] Subscribing to parent seller orders:', parentId);
       unsub = OrdersService.listenBySeller(parentId, (orders) => {
-        console.log('[Dashboard] Received orders (sub-account):', orders.length, orders);
         setConfirmationOrders(orders);
       });
     } else {
-      console.log('[Dashboard] Subscribing to seller orders:', uid);
       unsub = OrdersService.listenBySeller(uid, (orders) => {
-        console.log('[Dashboard] Received orders (seller):', orders.length, orders);
         setConfirmationOrders(orders);
       });
     }
     return () => {
-      console.log('[Dashboard] Unsubscribing from orders');
       unsub && unsub();
     };
   }, [isAdmin, isSubAccount, parentId, uid]);
   
-  // Load provinces (Philippines) - admin only
   useEffect(() => {
     if (!isAdmin) return;
     (async () => {
       const rows = await getPhProvinces();
       
-      // Add "Metro Manila" as a special entry if not already present
       const hasMetroManila = rows.some(p => 
         p.name.toLowerCase().includes('metro manila') || 
         p.code === 'NCR' ||
@@ -2334,7 +2805,6 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
       );
       
       if (!hasMetroManila) {
-        // Add Metro Manila at the beginning
         rows.unshift({ code: 'METRO_MANILA', name: 'Metro Manila' });
         console.log('[Dashboard] Added Metro Manila to province list');
       }
@@ -2343,14 +2813,12 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
     })();
   }, [isAdmin]);
 
-  // Load cities when province changes (admin only)
   useEffect(() => {
     if (!isAdmin) return;
     const provinceCode = adminFilters.province;
     if (!provinceCode || provinceCode === 'all') { setPhCities([]); return; }
     
     (async () => {
-      // Special handling for Metro Manila - use static city list
       if (provinceCode === 'METRO_MANILA') {
         const metroCities = [
           { code: "MNL", name: "Manila", provinceCode: "NCR" },
@@ -2376,7 +2844,6 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
         return;
       }
       
-      // For other provinces, use the async loader
       try {
         const rows = await getPhCitiesAsync(provinceCode);
         console.log(`[Dashboard] Loaded ${rows.length} cities for province ${provinceCode}`);
@@ -2388,7 +2855,6 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
     })();
   }, [adminFilters.province, isAdmin]);
 
-  // Load sellers from Firebase "Seller" collection (admin only)
   useEffect(() => {
     if (!isAdmin) return;
     let cancelled = false;
@@ -2399,11 +2865,8 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
         
         const allSellers = sellersSnap.docs.map(doc => {
           const data = doc.data();
-          // Extract storeName from vendor.company.storeName path
           const storeName = data.vendor?.company?.storeName || '';
-          // Extract role directly from root level (not from permissions)
           const role = data.role || '';
-          // Extract address from vendor.company.address
           const address = data.vendor?.company?.address || {};
           const province = address.province || '';
           const city = address.city || address.municipality || '';
@@ -2413,16 +2876,15 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
             uid: doc.id,
             name: data.name || data.ownerName || data.displayName || '',
             shopName: data.shopName || data.storeName || data.businessName || '',
-            storeName: storeName, // This is what we'll display
+            storeName: storeName, 
             role: role,
             province: province,
             city: city,
             zipCode: zipCode,
-            address: address, // Keep full address object for reference
+            address: address, 
           };
         });
         
-        // Filter OUT admins - only show sellers (role !== 'admin')
         const sellers = allSellers.filter(seller => seller.role !== 'admin');
         
         console.log('[Dashboard] All sellers:', allSellers.length);
@@ -2449,21 +2911,17 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
     return () => { cancelled = true; };
   }, [isAdmin]);
 
-  // Calculate admin metrics from confirmationOrders (admin only)
   useEffect(() => {
     if (!isAdmin) return;
     
-    // Filter orders based on admin filters
     const filteredOrdersForMetrics = confirmationOrders.filter(order => {
-      // Date range filter
       if (adminFilters.dateFrom && adminFilters.dateTo) {
-        const orderDate = order.timestamp ? order.timestamp.slice(0, 10) : ''; // YYYY-MM-DD
+        const orderDate = order.timestamp ? order.timestamp.slice(0, 10) : ''; 
         if (orderDate < adminFilters.dateFrom || orderDate > adminFilters.dateTo) {
           return false;
         }
       }
       
-      // Province filter
       if (adminFilters.province !== 'all') {
         const orderProvinceCode = order.region?.province;
         if (orderProvinceCode !== adminFilters.province) {
@@ -2471,17 +2929,14 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
         }
       }
       
-      // City filter (multi-select)
       if (adminSelectedCityCodes.size > 0) {
         const orderCity = order.region?.municipality;
-        // Find matching city code from phCities
         const matchingCity = phCities.find(c => c.name === orderCity);
         if (!matchingCity || !adminSelectedCityCodes.has(matchingCity.code)) {
           return false;
         }
       }
       
-      // Shop name (seller) filter
       if (adminFilters.seller !== 'all') {
         const orderSellerIds = order.sellerIds || [];
         const isSeller = orderSellerIds.includes(adminFilters.seller);
@@ -2493,15 +2948,11 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
       return true;
     });
     
-    // Calculate metrics from filtered orders
     const totalOrders = filteredOrdersForMetrics.length;
     
-    // Count orders with "completed" status as delivered
     const deliveredOrders = filteredOrdersForMetrics.filter(order => order.status === 'completed').length;
     
-    // Count orders that have been shipped (based on statusHistory having "shipping" status)
     const shippedOrders = filteredOrdersForMetrics.filter(order => {
-      // Check if order has statusHistory with "shipping" status
       if (order.statusHistory && Array.isArray(order.statusHistory)) {
         return order.statusHistory.some(history => 
           history.status === 'shipping' || history.status === 'shipped'

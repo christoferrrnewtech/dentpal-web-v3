@@ -8,6 +8,7 @@ import { storage, db } from '@/lib/firebase';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { collection, getDocs } from 'firebase/firestore';
 import ComplianceService, { COMPLIANCE_DEFAULTS, type Option } from '@/services/compliance';
+import imageCompression from 'browser-image-compression';
 
 type ItemStatus = 'active' | 'inactive' | 'draft' | 'pending_qc' | 'violation' | 'deleted';
 
@@ -45,6 +46,25 @@ const AddProduct: React.FC = () => {
   const [subcategories, setSubcategories] = useState<Array<{ id: string; name: string }>>([]);
   const [selectedCategoryId, setSelectedCategoryId] = useState<string>('');
   const [selectedSubcategoryId, setSelectedSubcategoryId] = useState<string>('');
+
+  // Image compression utility
+  const compressImage = async (file: File): Promise<File> => {
+    const options = {
+      maxSizeMB: 1, // Maximum file size in MB
+      maxWidthOrHeight: 1200, // Maximum width or height
+      useWebWorker: true, // Use web worker for better performance
+      fileType: file.type, // Maintain original file type
+      initialQuality: 0.85, // Quality level (85%)
+    };
+    try {
+      const compressedFile = await imageCompression(file, options);
+      console.log(`Compressed ${file.name}: ${(file.size / 1024 / 1024).toFixed(2)}MB → ${(compressedFile.size / 1024 / 1024).toFixed(2)}MB`);
+      return compressedFile;
+    } catch (error) {
+      console.error('Image compression failed, using original file:', error);
+      return file; // Fallback to original file if compression fails
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -188,11 +208,15 @@ const AddProduct: React.FC = () => {
   const handleVariantFileChange = async (key: string, e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const preview = URL.createObjectURL(file);
+    
+    // Compress the variant image before creating preview
+    const compressedFile = await compressImage(file);
+    const preview = URL.createObjectURL(compressedFile);
+    
     setVariants((list) => list.map(v => {
       if (v.key !== key) return v;
       if (v.imagePreview) URL.revokeObjectURL(v.imagePreview);
-      return { ...v, imageFile: file, imagePreview: preview };
+      return { ...v, imageFile: compressedFile, imagePreview: preview };
     }));
     if (variantFileInputs.current[key]) variantFileInputs.current[key]!.value = '';
   };
@@ -208,10 +232,14 @@ const AddProduct: React.FC = () => {
   const handleFileChange: React.ChangeEventHandler<HTMLInputElement> = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const preview = URL.createObjectURL(file);
+    
+    // Compress the image before creating preview
+    const compressedFile = await compressImage(file);
+    const preview = URL.createObjectURL(compressedFile);
+    
     setNewItem((s) => {
       if (s.imagePreview) URL.revokeObjectURL(s.imagePreview);
-      return { ...s, imageFile: file, imagePreview: preview };
+      return { ...s, imageFile: compressedFile, imagePreview: preview };
     });
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
@@ -239,7 +267,8 @@ const AddProduct: React.FC = () => {
     if (!(Number.isFinite(newItem.dimensions.width) && newItem.dimensions.width > 0)) errors.width = 'Width must be greater than 0';
     if (!(Number.isFinite(newItem.dimensions.height) && newItem.dimensions.height > 0)) errors.height = 'Height must be greater than 0';
     if (!newItem.dimensionUnit) errors.dimensionUnit = 'Dimension unit is required';
-    if (!(Number.isFinite(newItem.suggestedThreshold) && newItem.suggestedThreshold >= 0)) errors.threshold = 'Suggested threshold is required';
+    // Suggested threshold validation - Temporarily disabled
+    // if (!(Number.isFinite(newItem.suggestedThreshold) && newItem.suggestedThreshold >= 0)) errors.threshold = 'Suggested threshold is required';
 
     if (variants.length === 0) {
       if (!(Number.isFinite(newItem.inStock) && newItem.inStock >= 0)) errors.inStock = 'Initial stock is required';
@@ -421,7 +450,7 @@ const AddProduct: React.FC = () => {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               {/* Inquiry toggle moved here above Product Name */}
-              <div className="flex items-center mb-2">
+              {/* <div className="flex items-center mb-2">
                 <label className="text-xs font-medium text-gray-600 mr-2">Inquiry</label>
                 <button
                   type="button"
@@ -434,25 +463,34 @@ const AddProduct: React.FC = () => {
                 </button>
               <p className="mt-1 text-[11px] text-gray-500">. Allow Inquiry: <span className={newItem.allowInquiry ? 'text-teal-600 font-medium' : 'text-gray-600'}>{newItem.allowInquiry ? 'Enabled' : 'Disabled'}</span></p>
 
-              </div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Product Name</label>
+              </div> */}
+              <label className="block text-xs font-medium text-gray-600 mb-1">
+                Product Name {!newItem.name.trim() && <span className="text-red-500">*</span>}
+              </label>
               <input value={newItem.name} onChange={(e)=> setNewItem(s=> ({...s, name: e.target.value}))} className="w-full text-sm p-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent" placeholder="e.g. Alginate Powder" />
             </div>
             <div>
               {/* SKU on the right */}
-              <label className="block text-xs font-medium text-gray-600 mb-1">SKU</label>
+              <label className="block text-xs font-medium text-gray-600 mb-1">
+                SKU {variants.length === 0 && !newItem.sku.trim() && <span className="text-red-500">*</span>}
+              </label>
               <input value={newItem.sku} onChange={(e)=> setNewItem(s=> ({...s, sku: e.target.value}))} className="w-full text-sm p-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent" placeholder="e.g. SKU-ALG-001" />
             </div>
           </div>
 
           <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">Description</label>
+            <label className="block text-xs font-medium text-gray-600 mb-1">
+              Description {!newItem.description.trim() && <span className="text-red-500">*</span>}
+            </label>
             <textarea value={newItem.description} onChange={(e)=> setNewItem(s=> ({...s, description: e.target.value}))} className="w-full text-sm p-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent" rows={3} placeholder="Short product description" />
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Product Image</label>
+              <label className="block text-xs font-medium text-gray-600 mb-1">
+                Product Image {!(newItem.imagePreview || newItem.imageUrl || newItem.imageFile) && <span className="text-red-500">*</span>}
+              </label>
+              <p className="text-[11px] text-gray-500 mb-1">Main product thumbnail (used when no variants, or as fallback)</p>
               <div className="flex items-center gap-3">
                 <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleFileChange} />
                 <button type="button" onClick={handlePickImage} className="px-3 py-2 text-sm font-medium bg-gray-100 rounded-lg hover:bg-gray-300" disabled={!effectiveSellerId}>
@@ -465,7 +503,9 @@ const AddProduct: React.FC = () => {
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">Category</label>
+                <label className="block text-xs font-medium text-gray-600 mb-1">
+                  Category {!selectedCategoryId && <span className="text-red-500">*</span>}
+                </label>
                 <select
                   value={selectedCategoryId}
                   onChange={(e)=> {
@@ -482,7 +522,9 @@ const AddProduct: React.FC = () => {
                 </select>
               </div>
               <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">Subcategory</label>
+                <label className="block text-xs font-medium text-gray-600 mb-1">
+                  Subcategory {!selectedSubcategoryId && <span className="text-red-500">*</span>}
+                </label>
                 <select
                   value={selectedSubcategoryId}
                   onChange={(e)=> {
@@ -503,31 +545,85 @@ const AddProduct: React.FC = () => {
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Price</label>
-              <input type="number" value={newItem.price} onChange={(e)=> setNewItem(s=> ({...s, price: Number(e.target.value)}))} className="w-full text-sm p-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent" placeholder="0.00" />
+              <label className="block text-xs font-medium text-gray-600 mb-1">
+                Price {variants.length === 0 && !(Number.isFinite(newItem.price) && newItem.price > 0) && <span className="text-red-500">*</span>}
+              </label>
+              <input type="text" inputMode="decimal" value={newItem.price === 0 ? '' : newItem.price} onChange={(e)=> {
+                const val = e.target.value;
+                if (val === '' || /^\d*\.?\d*$/.test(val)) setNewItem(s=> ({...s, price: val === '' ? 0 : parseFloat(val) || 0}));
+              }} className="w-full text-sm p-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent" placeholder="0.00" />
             </div>
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Weight</label>
+              <label className="block text-xs font-medium text-gray-600 mb-1">
+                Weight {!(Number.isFinite(newItem.weight) && newItem.weight > 0) && <span className="text-red-500">*</span>}
+              </label>
               <div className="flex gap-2">
-                <input type="number" value={newItem.weight} onChange={(e)=> setNewItem(s=> ({...s, weight: Number(e.target.value)}))} className="w-full text-sm p-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent" placeholder="0" />
-                <select value={newItem.weightUnit} onChange={(e)=> setNewItem(s=> ({...s, weightUnit: e.target.value as any}))} className="min-w-[88px] text-sm p-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent">
+                <input type="text" inputMode="decimal" value={newItem.weight === 0 ? '' : newItem.weight} onChange={(e)=> {
+                  const val = e.target.value;
+                  if (val === '' || /^\d*\.?\d*$/.test(val)) setNewItem(s=> ({...s, weight: val === '' ? 0 : parseFloat(val) || 0}));
+                }} className="w-full text-sm p-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent" placeholder="0" />
+                <select value={newItem.weightUnit} onChange={(e)=> {
+                  const newUnit = e.target.value as 'kg' | 'g';
+                  const oldUnit = newItem.weightUnit;
+                  let convertedWeight = newItem.weight;
+                  
+                  if (oldUnit === 'kg' && newUnit === 'g') {
+                    convertedWeight = newItem.weight * 1000;
+                  } else if (oldUnit === 'g' && newUnit === 'kg') {
+                    convertedWeight = newItem.weight / 1000;
+                  }
+                  
+                  setNewItem(s=> ({...s, weight: convertedWeight, weightUnit: newUnit}));
+                }} className="min-w-[88px] text-sm p-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent">
                   <option value="kg">kg</option>
                   <option value="g">g</option>
                 </select>
               </div>
             </div>
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Unit</label>
+              <label className="block text-xs font-medium text-gray-600 mb-1">
+                Unit {!newItem.unit.trim() && <span className="text-red-500">*</span>}
+              </label>
               <input value={newItem.unit} onChange={(e)=> setNewItem(s=> ({...s, unit: e.target.value}))} className="w-full text-sm p-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent" placeholder="pcs, box" />
             </div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Length</label>
+              <label className="block text-xs font-medium text-gray-600 mb-1">
+                Length {!(Number.isFinite(newItem.dimensions.length) && newItem.dimensions.length > 0) && <span className="text-red-500">*</span>}
+              </label>
               <div className="flex gap-2">
-                <input type="number" value={newItem.dimensions.length} onChange={(e)=> setNewItem(s=> ({ ...s, dimensions: { ...s.dimensions, length: Number(e.target.value) }}))} className="w-full text-sm p-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent" placeholder="0" />
-                <select value={newItem.dimensionUnit} onChange={(e)=> setNewItem(s=> ({...s, dimensionUnit: e.target.value as any}))} className="min-w-[88px] text-sm p-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent">
+                <input type="text" inputMode="decimal" value={newItem.dimensions.length === 0 ? '' : newItem.dimensions.length} onChange={(e)=> {
+                  const val = e.target.value;
+                  if (val === '' || /^\d*\.?\d*$/.test(val)) setNewItem(s=> ({ ...s, dimensions: { ...s.dimensions, length: val === '' ? 0 : parseFloat(val) || 0 }}));
+                }} className="w-full text-sm p-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent" placeholder="0" />
+                <select value={newItem.dimensionUnit} onChange={(e)=> {
+                  const newUnit = e.target.value as 'cm' | 'mm' | 'in';
+                  const oldUnit = newItem.dimensionUnit;
+                  
+                  const convert = (value: number, from: string, to: string): number => {
+                    if (from === to) return value;
+                    
+                    let inCm = value;
+                    if (from === 'mm') inCm = value / 10;
+                    else if (from === 'in') inCm = value * 2.54;
+                    
+                    if (to === 'mm') return inCm * 10;
+                    else if (to === 'in') return inCm / 2.54;
+                    return inCm;
+                  };
+                  
+                  setNewItem(s=> ({
+                    ...s,
+                    dimensions: {
+                      length: convert(s.dimensions.length, oldUnit, newUnit),
+                      width: convert(s.dimensions.width, oldUnit, newUnit),
+                      height: convert(s.dimensions.height, oldUnit, newUnit),
+                    },
+                    dimensionUnit: newUnit
+                  }));
+                }} className="min-w-[88px] text-sm p-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent">
                   <option value="cm">cm</option>
                   <option value="mm">mm</option>
                   <option value="in">in</option>
@@ -535,10 +631,40 @@ const AddProduct: React.FC = () => {
               </div>
             </div>
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Width</label>
+              <label className="block text-xs font-medium text-gray-600 mb-1">
+                Width {!(Number.isFinite(newItem.dimensions.width) && newItem.dimensions.width > 0) && <span className="text-red-500">*</span>}
+              </label>
               <div className="flex gap-2">
-                <input type="number" value={newItem.dimensions.width} onChange={(e)=> setNewItem(s=> ({ ...s, dimensions: { ...s.dimensions, width: Number(e.target.value) }}))} className="w-full text-sm p-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent" placeholder="0" />
-                <select value={newItem.dimensionUnit} onChange={(e)=> setNewItem(s=> ({...s, dimensionUnit: e.target.value as any}))} className="min-w-[88px] text-sm p-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent">
+                <input type="text" inputMode="decimal" value={newItem.dimensions.width === 0 ? '' : newItem.dimensions.width} onChange={(e)=> {
+                  const val = e.target.value;
+                  if (val === '' || /^\d*\.?\d*$/.test(val)) setNewItem(s=> ({ ...s, dimensions: { ...s.dimensions, width: val === '' ? 0 : parseFloat(val) || 0 }}));
+                }} className="w-full text-sm p-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent" placeholder="0" />
+                <select value={newItem.dimensionUnit} onChange={(e)=> {
+                  const newUnit = e.target.value as 'cm' | 'mm' | 'in';
+                  const oldUnit = newItem.dimensionUnit;
+                  
+                  const convert = (value: number, from: string, to: string): number => {
+                    if (from === to) return value;
+                    
+                    let inCm = value;
+                    if (from === 'mm') inCm = value / 10;
+                    else if (from === 'in') inCm = value * 2.54;
+                    
+                    if (to === 'mm') return inCm * 10;
+                    else if (to === 'in') return inCm / 2.54;
+                    return inCm;
+                  };
+                  
+                  setNewItem(s=> ({
+                    ...s,
+                    dimensions: {
+                      length: convert(s.dimensions.length, oldUnit, newUnit),
+                      width: convert(s.dimensions.width, oldUnit, newUnit),
+                      height: convert(s.dimensions.height, oldUnit, newUnit),
+                    },
+                    dimensionUnit: newUnit
+                  }));
+                }} className="min-w-[88px] text-sm p-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent">
                   <option value="cm">cm</option>
                   <option value="mm">mm</option>
                   <option value="in">in</option>
@@ -546,10 +672,40 @@ const AddProduct: React.FC = () => {
               </div>
             </div>
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Height</label>
+              <label className="block text-xs font-medium text-gray-600 mb-1">
+                Height {!(Number.isFinite(newItem.dimensions.height) && newItem.dimensions.height > 0) && <span className="text-red-500">*</span>}
+              </label>
               <div className="flex gap-2">
-                <input type="number" value={newItem.dimensions.height} onChange={(e)=> setNewItem(s=> ({ ...s, dimensions: { ...s.dimensions, height: Number(e.target.value) }}))} className="w-full text-sm p-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent" placeholder="0" />
-                <select value={newItem.dimensionUnit} onChange={(e)=> setNewItem(s=> ({...s, dimensionUnit: e.target.value as any}))} className="min-w-[88px] text-sm p-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent">
+                <input type="text" inputMode="decimal" value={newItem.dimensions.height === 0 ? '' : newItem.dimensions.height} onChange={(e)=> {
+                  const val = e.target.value;
+                  if (val === '' || /^\d*\.?\d*$/.test(val)) setNewItem(s=> ({ ...s, dimensions: { ...s.dimensions, height: val === '' ? 0 : parseFloat(val) || 0 }}));
+                }} className="w-full text-sm p-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent" placeholder="0" />
+                <select value={newItem.dimensionUnit} onChange={(e)=> {
+                  const newUnit = e.target.value as 'cm' | 'mm' | 'in';
+                  const oldUnit = newItem.dimensionUnit;
+                  
+                  const convert = (value: number, from: string, to: string): number => {
+                    if (from === to) return value;
+                    
+                    let inCm = value;
+                    if (from === 'mm') inCm = value / 10;
+                    else if (from === 'in') inCm = value * 2.54;
+                    
+                    if (to === 'mm') return inCm * 10;
+                    else if (to === 'in') return inCm / 2.54;
+                    return inCm;
+                  };
+                  
+                  setNewItem(s=> ({
+                    ...s,
+                    dimensions: {
+                      length: convert(s.dimensions.length, oldUnit, newUnit),
+                      width: convert(s.dimensions.width, oldUnit, newUnit),
+                      height: convert(s.dimensions.height, oldUnit, newUnit),
+                    },
+                    dimensionUnit: newUnit
+                  }));
+                }} className="min-w-[88px] text-sm p-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent">
                   <option value="cm">cm</option>
                   <option value="mm">mm</option>
                   <option value="in">in</option>
@@ -559,12 +715,15 @@ const AddProduct: React.FC = () => {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div>
+            {/* Suggested Threshold - Temporarily disabled */}
+            {/* <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">Suggested Threshold</label>
               <input type="number" value={newItem.suggestedThreshold} onChange={(e)=> setNewItem(s=> ({...s, suggestedThreshold: Number(e.target.value)}))} className="w-full text-sm p-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent" placeholder="0" />
-            </div>
+            </div> */}
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Initial Stock</label>
+              <label className="block text-xs font-medium text-gray-600 mb-1">
+                Initial Stock {variants.length === 0 && !(Number.isFinite(newItem.inStock) && newItem.inStock >= 0) && <span className="text-red-500">*</span>}
+              </label>
               <input type="number" value={newItem.inStock} onChange={(e)=> setNewItem(s=> ({...s, inStock: Number(e.target.value)}))} className="w-full text-sm p-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent" placeholder="0" />
             </div>
             <div className="hidden md:block" />
@@ -575,7 +734,7 @@ const AddProduct: React.FC = () => {
             <div className="flex items-center justify-between mb-2">
               <div>
                 <h4 className="text-sm font-semibold text-gray-900">Price, Stock & Variants</h4>
-                <p className="text-xs text-gray-500">Add variant rows to set per-variant price and stock.</p>
+                <p className="text-xs text-gray-500">Add variant rows to set per-variant price and stock. Each variant can have its own image (optional).</p>
               </div>
               <div className="flex items-center gap-2">
                 <button type="button" className="text-xs px-3 py-1 rounded border border-gray-300 hover:bg-gray-50" onClick={addBlankVariant}>
@@ -621,18 +780,40 @@ const AddProduct: React.FC = () => {
                 <table className="min-w-full text-xs">
                   <thead className="bg-gray-50">
                     <tr>
+                      <th className="text-left p-2 font-medium text-gray-600">Remove</th>
                       <th className="text-left p-2 font-medium text-gray-600">Image</th>
-                      <th className="text-left p-2 font-medium text-gray-600">Name</th>
-                      <th className="text-left p-2 font-medium text-gray-600">Price</th>
+                      <th className="text-left p-2 font-medium text-gray-600">
+                        Name <span className="text-red-500">*</span>
+                      </th>
+                      <th className="text-left p-2 font-medium text-gray-600">
+                        Price <span className="text-red-500">*</span>
+                      </th>
                       <th className="text-left p-2 font-medium text-gray-600">Special Price</th>
-                      <th className="text-left p-2 font-medium text-gray-600">Stock</th>
-                      <th className="text-left p-2 font-medium text-gray-600">SellerSKU</th>
+                      <th className="text-left p-2 font-medium text-gray-600">
+                        Stock <span className="text-red-500">*</span>
+                      </th>
+                      <th className="text-left p-2 font-medium text-gray-600">
+                        SellerSKU <span className="text-red-500">*</span>
+                      </th>
                       <th className="text-left p-2 font-medium text-gray-600">Availability</th>
                     </tr>
                   </thead>
                   <tbody>
                     {variants.map((v, idx) => (
                       <tr key={v.key} className={idx % 2 ? 'bg-white' : 'bg-gray-50'}>
+                        <td className="p-2">
+                          <button 
+                            type="button" 
+                            className="px-2 py-1 text-xs rounded bg-red-100 text-red-700 hover:bg-red-200"
+                            onClick={() => {
+                              if (v.imagePreview) URL.revokeObjectURL(v.imagePreview);
+                              setVariants((list) => list.filter(x => x.key !== v.key));
+                            }}
+                            title="Remove variant"
+                          >
+                            ✕
+                          </button>
+                        </td>
                         <td className="p-2">
                           <input type="file" accept="image/*" ref={(el) => { variantFileInputs.current[v.key] = el; }} className="hidden" onChange={(e) => handleVariantFileChange(v.key, e)} />
                           <button type="button" className="px-2 py-1 rounded bg-gray-100 hover:bg-gray-200" onClick={() => triggerVariantFilePick(v.key)} disabled={!effectiveSellerId}>
@@ -642,11 +823,38 @@ const AddProduct: React.FC = () => {
                             <img src={v.imagePreview || v.imageUrl} alt="preview" className="inline-block ml-2 h-8 w-8 rounded object-cover border" />
                           )}
                         </td>
-                        <td className="p-2"><input value={v.name || ''} onChange={(e)=> setVariants((list)=> list.map(x=> x.key===v.key?{...x, name: e.target.value}:x))} className="w-full p-1 border rounded" placeholder={`Variant ${idx+1}`} /></td>
-                        <td className="p-2"><input type="number" value={v.price} onChange={(e)=> setVariants((list)=> list.map(x=> x.key===v.key?{...x, price: Number(e.target.value)}:x))} className="w-24 p-1 border rounded" /></td>
+                        <td className="p-2">
+                          <input 
+                            value={v.name || ''} 
+                            onChange={(e)=> setVariants((list)=> list.map(x=> x.key===v.key?{...x, name: e.target.value}:x))} 
+                            className={`w-full p-1 border rounded ${!v.name?.trim() ? 'border-red-300' : ''}`}
+                            placeholder={`Variant ${idx+1}`} 
+                          />
+                        </td>
+                        <td className="p-2">
+                          <input 
+                            type="number" 
+                            value={v.price} 
+                            onChange={(e)=> setVariants((list)=> list.map(x=> x.key===v.key?{...x, price: Number(e.target.value)}:x))} 
+                            className={`w-24 p-1 border rounded ${!(Number.isFinite(v.price) && v.price > 0) ? 'border-red-300' : ''}`}
+                          />
+                        </td>
                         <td className="p-2"><input type="number" value={(v as any).specialPrice || 0} onChange={(e)=> setVariants((list)=> list.map((x)=> x.key===v.key?{...x, specialPrice: Number(e.target.value)}:x))} className="w-24 p-1 border rounded" /></td>
-                        <td className="p-2"><input type="number" value={v.stock} onChange={(e)=> setVariants((list)=> list.map(x=> x.key===v.key?{...x, stock: Number(e.target.value)}:x))} className="w-20 p-1 border rounded" /></td>
-                        <td className="p-2"><input value={v.sku || ''} onChange={(e)=> setVariants((list)=> list.map(x=> x.key===v.key?{...x, sku: e.target.value}:x))} className="w-32 p-1 border rounded" /></td>
+                        <td className="p-2">
+                          <input 
+                            type="number" 
+                            value={v.stock} 
+                            onChange={(e)=> setVariants((list)=> list.map(x=> x.key===v.key?{...x, stock: Number(e.target.value)}:x))} 
+                            className={`w-20 p-1 border rounded ${!(Number.isFinite(v.stock) && v.stock >= 0) ? 'border-red-300' : ''}`}
+                          />
+                        </td>
+                        <td className="p-2">
+                          <input 
+                            value={v.sku || ''} 
+                            onChange={(e)=> setVariants((list)=> list.map(x=> x.key===v.key?{...x, sku: e.target.value}:x))} 
+                            className={`w-32 p-1 border rounded ${!v.sku?.trim() ? 'border-red-300' : ''}`}
+                          />
+                        </td>
                         <td className="p-2"><input type="checkbox" className="accent-teal-600" checked={(v as any).available ?? true} onChange={(e)=> setVariants((list)=> list.map(x=> x.key===v.key?{...x, available: e.target.checked}:x))} /></td>
                       </tr>
                     ))}
@@ -673,7 +881,9 @@ const AddProduct: React.FC = () => {
                 </select>
               </div>
               <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">Warranty Type</label>
+                <label className="block text-xs font-medium text-gray-600 mb-1">
+                  Warranty Type {(!newItem.warrantyType || newItem.warrantyType === '') && <span className="text-red-500">*</span>}
+                </label>
                 <select
                   value={newItem.warrantyType || ''}
                   onChange={(e)=> setNewItem(s=> ({...s, warrantyType: e.target.value}))}
@@ -686,7 +896,9 @@ const AddProduct: React.FC = () => {
                 </select>
               </div>
               <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">Warranty Duration</label>
+                <label className="block text-xs font-medium text-gray-600 mb-1">
+                  Warranty Duration {newItem.warrantyType && newItem.warrantyType !== 'No warranty' && (!newItem.warrantyDuration || newItem.warrantyDuration === '') && <span className="text-red-500">*</span>}
+                </label>
                 <select
                   value={newItem.warrantyDuration || ''}
                   onChange={(e)=> setNewItem(s=> ({...s, warrantyDuration: e.target.value}))}

@@ -14,12 +14,6 @@
 
 ### 🔐 Demo Credentials
 
-```
-Email: admin@gmail.com
-Password: DentpalAccess
-Role: Administrator
-```
-
 > **Architecture Note**: This is a modern serverless application using Firebase for backend services. No separate backend server required.
 
 🚀 Key Features
