@@ -57,7 +57,7 @@ export interface Order {
   };
   priority: 'normal' | 'priority' | 'urgent';
   // Extended to support additional lifecycle stages in Seller Orders
-  status: 'pending' | 'confirmed' | 'to_ship' | 'processing' | 'shipped' | 'shipping' | 'completed' | 'cancelled' | 'returned' | 'refunded' | 'return_refund' | 'failed-delivery';
+  status: 'pending' | 'confirmed' | 'to_ship' | 'processing' | 'shipped' | 'shipping' | 'completed' | 'cancelled' | 'returned' | 'refunded' | 'return_refund' | 'failed-delivery' | 'return_requested' | 'return_approved' | 'return_rejected';
   // New: fulfillment stage for to-ship sub-tabs
   fulfillmentStage?: 'to-pack' | 'to-arrangement' | 'to-hand-over';
   // New: status history tracking
@@ -66,6 +66,23 @@ export interface Order {
     note: string;
     timestamp: Timestamp | Date;
   }>;
+  // Return request information
+  returnRequestId?: string;
+  returnRequest?: {
+    id: string;
+    reason: string;
+    customReason?: string;
+    status: 'pending' | 'approved' | 'rejected' | 'completed';
+    requestedAt: Timestamp | Date | string;
+    deliveryDate?: Timestamp | Date | string;
+    orderTotal?: number;
+    itemsToReturn?: string[];
+    responseMessage?: string;
+    respondedAt?: Timestamp | Date | string;
+    completedAt?: Timestamp | Date | string;
+    evidenceImages?: string[];
+    evidenceSubmitted?: boolean;
+  };
   // New: full line items for invoices/exports
   items?: Array<{
     name: string;

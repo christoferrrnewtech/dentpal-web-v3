@@ -1,0 +1,329 @@
+{
+  "timestamp": "2025-12-19T05:36:03.185Z",
+  "project_id": "dentpal-161e5",
+  "data": {
+    "order": {
+      "id": "TdAonfSPNYj390eXN5bo",
+      "data": {
+        "userId": "C1CDP7Epo0cMgQL8uuMxjYLtBGD3",
+        "sellerIds": [
+          "fNEIry9W7lRWizOmb2ZC0tZoOGu2"
+        ],
+        "items": [
+          {
+            "productId": "J32Sa5K5WRPoZGz73IEp",
+            "productName": "curaprox toothbrush test - blue",
+            "productImage": "https://firebasestorage.googleapis.com/v0/b/dentpal-161e5.firebasestorage.app/o/ProductImages%2F1764639356215%2Ftoothbrush-cs-5460-ortho.jpg?alt=media&token=d0dcab22-993e-4ba8-af23-1b23c8274772",
+            "price": 540,
+            "quantity": 2,
+            "variationId": "YEXWmSqCUCGKBUEujbKv",
+            "sellerId": "fNEIry9W7lRWizOmb2ZC0tZoOGu2",
+            "sellerName": "Unknown Seller"
+          }
+        ],
+        "summary": {
+          "subtotal": 1080,
+          "shippingCost": 272,
+          "taxAmount": 0,
+          "discountAmount": 0,
+          "total": 1352,
+          "totalItems": 2,
+          "sellerShippingCharge": 0,
+          "buyerShippingCharge": 272,
+          "shippingSplitRule": "buyer_pays_full"
+        },
+        "fees": {
+          "paymentProcessingFee": 33.8,
+          "platformFee": 95.90400000000001,
+          "totalSellerFees": 129.704,
+          "paymentMethod": "gcash"
+        },
+        "sellerFeeBreakdowns": [
+          {
+            "sellerId": "fNEIry9W7lRWizOmb2ZC0tZoOGu2",
+            "sellerName": "Unknown Seller",
+            "cartValue": 1080,
+            "shippingCost": 272,
+            "buyerShippingCharge": 272,
+            "sellerShippingCharge": 0,
+            "shippingSplitRule": "buyer_pays_full",
+            "totalChargedToBuyer": 1352,
+            "paymentProcessingFee": 33.8,
+            "platformFee": 95.90400000000001,
+            "totalSellerFees": 129.704,
+            "netPayoutToSeller": 950.296
+          }
+        ],
+        "metadata": {
+          "cart_item_ids": [
+            "MaUebwajjqYRDQ6Dd6hQ"
+          ]
+        },
+        "createdAt": {
+          "_seconds": 1764643336,
+          "_nanoseconds": 868000000
+        },
+        "paymongo": {
+          "checkoutSessionId": "cs_vEX2bUdpvEpA74qoCjLT8W8Z",
+          "checkoutUrl": "https://checkout.paymongo.com/cs_vEX2bUdpvEpA74qoCjLT8W8Z_client_MTsTZ3Y8q7dYuXqYBndEpywa#cGtfdGVzdF9UVG9KTFpldVhyR1dUVHc0N0U0enBhVkg=",
+          "paymentMethod": "gcash",
+          "paymentStatus": "paid",
+          "amount": 1352,
+          "currency": "PHP",
+          "paymentId": "pay_NWJA5SwrKarybTDseqoZgfzs",
+          "paymentIntentId": "pi_43pkitJ2ubBGuxocDE5Yc6Cu",
+          "paidAt": {
+            "_seconds": 1764643353,
+            "_nanoseconds": 921000000
+          }
+        },
+        "payout": {
+          "netPayoutToSeller": 950.296,
+          "calculatedAt": {
+            "_seconds": 1764643353,
+            "_nanoseconds": 921000000
+          }
+        },
+        "statusHistory": [
+          {
+            "status": "pending",
+            "note": "Order created",
+            "timestamp": {
+              "_seconds": 1764643336,
+              "_nanoseconds": 842000000
+            }
+          },
+          {
+            "note": "Payment paid via gcash",
+            "timestamp": {
+              "_seconds": 1764643353,
+              "_nanoseconds": 893000000
+            },
+            "status": "confirmed"
+          },
+          {
+            "status": "to_ship",
+            "timestamp": {
+              "_seconds": 1764643362,
+              "_nanoseconds": 399000000
+            },
+            "note": "Order confirmed and ready to be processed"
+          },
+          {
+            "timestamp": {
+              "_seconds": 1764643362,
+              "_nanoseconds": 400000000
+            },
+            "status": "to-pack",
+            "note": "Order is ready to be packed"
+          },
+          {
+            "timestamp": {
+              "_seconds": 1764643364,
+              "_nanoseconds": 572000000
+            },
+            "status": "to-arrangement",
+            "note": "Order is being prepared for arrangement"
+          },
+          {
+            "note": "Order is ready to be handed over",
+            "status": "to-hand-over",
+            "timestamp": {
+              "_seconds": 1764643366,
+              "_nanoseconds": 967000000
+            }
+          },
+          {
+            "timestamp": {
+              "_seconds": 1764644143,
+              "_nanoseconds": 51000000
+            },
+            "status": "to-arrangement",
+            "note": "Order is being prepared for arrangement"
+          },
+          {
+            "timestamp": {
+              "_seconds": 1764644145,
+              "_nanoseconds": 579000000
+            },
+            "note": " Order moved back to packing stage",
+            "status": "to-pack"
+          },
+          {
+            "status": "to-arrangement",
+            "note": "Order is being prepared for arrangement",
+            "timestamp": {
+              "_seconds": 1764644163,
+              "_nanoseconds": 491000000
+            }
+          },
+          {
+            "status": "to-hand-over",
+            "timestamp": {
+              "_seconds": 1764644165,
+              "_nanoseconds": 735000000
+            },
+            "note": "Order is ready to be handed over"
+          },
+          {
+            "note": "Order is being prepared for arrangement",
+            "timestamp": {
+              "_seconds": 1764644834,
+              "_nanoseconds": 63000000
+            },
+            "status": "to-arrangement"
+          },
+          {
+            "status": "to-pack",
+            "timestamp": {
+              "_seconds": 1764644835,
+              "_nanoseconds": 661000000
+            },
+            "note": " Order moved back to packing stage"
+          },
+          {
+            "note": "Order is being prepared for arrangement",
+            "timestamp": {
+              "_seconds": 1764644842,
+              "_nanoseconds": 248000000
+            },
+            "status": "to-arrangement"
+          },
+          {
+            "status": "to-hand-over",
+            "note": "Order is ready to be handed over",
+            "timestamp": {
+              "_seconds": 1764656281,
+              "_nanoseconds": 778000000
+            }
+          },
+          {
+            "status": "shipping",
+            "note": "Order shipped via JRS Express. Reference: DPAL-TdAonfSPNYj390eXN5bo, Tracking: 1764656615748223",
+            "timestamp": {
+              "_seconds": 1764656616,
+              "_nanoseconds": 230000000
+            }
+          }
+        ],
+        "shippingInfo": {
+          "addressId": "4rJmHkYxpSNrn49kjmim",
+          "fullName": "Rain",
+          "addressLine1": "5A Sunrise Street, Corner Mola",
+          "addressLine2": null,
+          "city": "Makati City",
+          "state": "Metro Manila",
+          "postalCode": "1227",
+          "country": "Philippines",
+          "phoneNumber": "+639123456789",
+          "jrs": {
+            "response": {
+              "HTMLLabel": null,
+              "ShippingRequestEntityDto": {
+                "Id": "396d7c28-0147-45dd-a4e7-218b93bc4028",
+                "RequestId": null,
+                "DateRequested": "2025-12-02T06:23:35.7490147Z",
+                "DateCreated": "2025-12-02T06:23:35.7478458Z",
+                "CreatedByUserEmail": "christofer.rrnewtech@gmail.com",
+                "ApimId": "rain.rrnewtech@gmail.com",
+                "CustomerId": null,
+                "ShipperFirstName": "tofer",
+                "ShipperMiddleName": "",
+                "ShipperLastName": "Support",
+                "ShipperFullName": "tofer  ",
+                "ShipperEmail": "christofer.rrnewtech@gmail.com",
+                "ShipperPhone": "09120732452",
+                "ShipperProvince": "Batangas",
+                "ShipperMunicipality": "San Pascual",
+                "ShipperDistrict": "Barangay Kamuning",
+                "ShipperAddressLine1": "blk 11 lot 19 desert rose street",
+                "ShipperCountry": "Philippines",
+                "RecipientFirstName": "Rain",
+                "RecipientMiddleName": "",
+                "RecipientLastName": "N/A",
+                "RecipientFullName": "Rain   N/A",
+                "RecipientEmail": "customer@dentpal.ph",
+                "RecipientPhone": "+639123456789",
+                "RecipientProvince": "Metro Manila",
+                "RecipientMunicipality": "Makati City",
+                "RecipientDistrict": "N/A",
+                "RecipientAddressLine1": "5A Sunrise Street, Corner Mola",
+                "RecipientFullAddress": null,
+                "RecipientCountry": "Philippines",
+                "BookingSource": "Ecommerce api",
+                "ShipmentRequestStatus": "Shipment request granted",
+                "WayBill": null,
+                "TrackingId": "1764656615748223",
+                "OrNumber": null,
+                "ShipmentDescription": "Dental Supplies: curaprox toothbrush test - blue",
+                "ProductId": "2613b587-3ed7-463c-bf34-e97a41415658",
+                "ProductName": "Bulilit Box",
+                "SpecialInstruction": "",
+                "Remarks": "DentPal Order #TdAonfSPNYj390eXN5bo - Pickup scheduled for 2025-12-03 at 09:00",
+                "Length": 20,
+                "Width": 15,
+                "Height": 10,
+                "Weight": 1,
+                "VolumeWeight": null,
+                "DeclaredValue": 1080,
+                "Discount": null,
+                "CodAmountToCollect": 0,
+                "AmountToCollect": null,
+                "CODSelection": null,
+                "ClientGuid": null,
+                "SalesType": null,
+                "TotalShippingAmount": 297,
+                "ValuationAmount": null,
+                "InsuranceAmount": null,
+                "ServiceFee": null,
+                "WithHoldingAmount": null,
+                "OSACharge": null,
+                "ShippingReferenceNo": "DPAL-TdAonfSPNYj390eXN5bo",
+                "RequestedPickupSchedule": "2025-12-03T01:00:00Z",
+                "PickupScheduleSetByBranch": null,
+                "PickupDate": null,
+                "PickupPin": null,
+                "AssignedPickupBranch": null,
+                "AssignedPickupMan": null,
+                "DeliveredByMessengerName": null,
+                "CurrentDeliveryStatus": null,
+                "CurrentDeliveryStatusDate": null,
+                "CancellationDetails": null,
+                "CanceledByUserEmail": null,
+                "DateCanceled": null
+              },
+              "ShippingRequestEntityDtoList": null,
+              "FailedShippingRequestEntityDtoList": null,
+              "ClientTransactions": null,
+              "Success": true,
+              "ErrorMessage": null,
+              "MissingProperties": null
+            },
+            "shippingReferenceNo": "DPAL-TdAonfSPNYj390eXN5bo",
+            "trackingId": "1764656615748223",
+            "requestedAt": {
+              "_seconds": 1764656616,
+              "_nanoseconds": 230000000
+            },
+            "totalShippingAmount": 297,
+            "pickupSchedule": "2025-12-03T01:00:00.000Z",
+            "shippingCharges": {
+              "sellerCharge": 0,
+              "buyerCharge": 272,
+              "totalCharge": 272,
+              "chargeApplied": false,
+              "chargeAppliedAt": null,
+              "payoutAdjustmentId": null
+            }
+          }
+        },
+        "status": "shipping",
+        "updatedAt": {
+          "_seconds": 1764656616,
+          "_nanoseconds": 230000000
+        }
+      },
+      "subcollections": {}
+    }
+  }
+}
