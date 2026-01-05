@@ -344,6 +344,11 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
       const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
       let days = 30;
       switch (key) {
+        case 'today': 
+          // For today, check if the date is within today's boundaries
+          const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 0, 0, 0);
+          const todayEnd = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59, 999);
+          return d >= todayStart && d <= todayEnd;
         case 'last-7': days = 7; break;
         case 'last-30': days = 30; break;
         case 'last-90': days = 90; break;
@@ -1611,6 +1616,742 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
                           <span className="inline-flex items-center gap-1">
                             <span className="w-2 h-2 bg-green-500 rounded-full"></span>
                             Net Payout = Gross Sales - (Payment Fee + Shipping Fee + Platform Fee)
+                          </span>
+                        </div>
+                        <div className="text-gray-500">
+                          Based on {paidOrders.length} paid {paidOrders.length === 1 ? 'order' : 'orders'}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {/* By Category View */}
+              {sellerFilters.viewType === 'category' && (
+                <>
+                  {/* Export Table - All Categories */}
+                  <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+                    <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+                      <h3 className="text-sm font-semibold text-gray-800 tracking-wide">SALES BY CATEGORY</h3>
+                      <button 
+                        onClick={() => {
+                          try {
+                            console.log('[exportCategoriesCSV] Starting export with', paidOrders.length, 'paid orders');
+                            
+                            // Aggregate ALL categories from paid orders
+                            const categoryMap = new Map<string, {
+                              name: string;
+                              sold: number;
+                              refunded: number;
+                              grossSales: number;
+                              refunds: number;
+                              paymentFee: number;
+                              shippingFee: number;
+                              platformFee: number;
+                              netPayout: number;
+                            }>();
+
+                            paidOrders.forEach(order => {
+                              const items = order.items || [];
+                              const summary = order.summary || {};
+                              const fees = order.feesBreakdown || {};
+                              
+                              const orderSubtotal = Number(summary.subtotal) || 0;
+                              const orderPaymentFee = Number(fees.paymentProcessingFee) || 0;
+                              const orderShippingFee = Number(summary.sellerShippingCharge) || 0;
+                              const orderPlatformFee = Number(fees.platformFee) || 0;
+
+                              items.forEach((item: any) => {
+                                const categoryName = item.category || 'Uncategorized';
+                                const quantity = Number(item.quantity) || 0;
+                                const price = Number(item.price) || 0;
+                                const itemSubtotal = Number(item.subtotal) || (price * quantity);
+                                
+                                const feeRatio = orderSubtotal > 0 ? itemSubtotal / orderSubtotal : 0;
+                                const itemPaymentFee = orderPaymentFee * feeRatio;
+                                const itemShippingFee = orderShippingFee * feeRatio;
+                                const itemPlatformFee = orderPlatformFee * feeRatio;
+                                const itemNetPayout = itemSubtotal - itemPaymentFee - itemShippingFee - itemPlatformFee;
+
+                                const existing = categoryMap.get(categoryName) || {
+                                  name: categoryName,
+                                  sold: 0,
+                                  refunded: 0,
+                                  grossSales: 0,
+                                  refunds: 0,
+                                  paymentFee: 0,
+                                  shippingFee: 0,
+                                  platformFee: 0,
+                                  netPayout: 0
+                                };
+
+                                categoryMap.set(categoryName, {
+                                  name: categoryName,
+                                  sold: existing.sold + quantity,
+                                  refunded: existing.refunded,
+                                  grossSales: existing.grossSales + itemSubtotal,
+                                  refunds: existing.refunds,
+                                  paymentFee: existing.paymentFee + itemPaymentFee,
+                                  shippingFee: existing.shippingFee + itemShippingFee,
+                                  platformFee: existing.platformFee + itemPlatformFee,
+                                  netPayout: existing.netPayout + itemNetPayout
+                                });
+                              });
+                            });
+
+                            const allCategories = Array.from(categoryMap.values())
+                              .sort((a, b) => b.netPayout - a.netPayout);
+
+                            const headers = [
+                              'Category',
+                              'Items Sold',
+                              'Items Refunded',
+                              'Gross Sales',
+                              'Refunds',
+                              'Payment Fee',
+                              'Shipping Fee',
+                              'Platform Fee',
+                              'Net Payout'
+                            ];
+
+                            const rows = allCategories.map(cat => [
+                              `"${cat.name}"`,
+                              cat.sold,
+                              cat.refunded,
+                              cat.grossSales.toFixed(2),
+                              cat.refunds.toFixed(2),
+                              cat.paymentFee.toFixed(2),
+                              cat.shippingFee.toFixed(2),
+                              cat.platformFee.toFixed(2),
+                              cat.netPayout.toFixed(2)
+                            ]);
+
+                            const csvContent = [
+                              headers.join(','),
+                              ...rows.map(row => row.join(','))
+                            ].join('\n');
+
+                            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+                            const link = document.createElement('a');
+                            const url = URL.createObjectURL(blob);
+                            link.setAttribute('href', url);
+                            link.setAttribute('download', `categories-${new Date().toISOString().slice(0,10)}.csv`);
+                            link.style.visibility = 'hidden';
+                            document.body.appendChild(link);
+                            link.click();
+                            document.body.removeChild(link);
+                          } catch (err) {
+                            console.error('CSV export failed:', err);
+                            setError('Failed to export categories CSV. Please try again.');
+                          }
+                        }}
+                        disabled={paidOrders.length === 0}
+                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-teal-700 bg-teal-50 border border-teal-200 rounded-lg hover:bg-teal-100 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        </svg>
+                        Export CSV
+                      </button>
+                    </div>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead className="bg-gray-50 text-gray-600">
+                          <tr className="text-left text-xs font-semibold tracking-wide">
+                            <th className="px-6 py-3">Category</th>
+                            <th className="px-6 py-3 text-right">Items Sold</th>
+                            <th className="px-6 py-3 text-right">Items Refunded</th>
+                            <th className="px-6 py-3 text-right">Gross Sales</th>
+                            <th className="px-6 py-3 text-right">Refunds</th>
+                            <th className="px-6 py-3 text-right">Payment Fee</th>
+                            <th className="px-6 py-3 text-right">Shipping Fee</th>
+                            <th className="px-6 py-3 text-right">Platform Fee</th>
+                            <th className="px-6 py-3 text-right font-bold">Net Payout</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(() => {
+                            // Aggregate ALL categories from paid orders
+                            const categoryMap = new Map<string, {
+                              name: string;
+                              sold: number;
+                              refunded: number;
+                              grossSales: number;
+                              refunds: number;
+                              paymentFee: number;
+                              shippingFee: number;
+                              platformFee: number;
+                              netPayout: number;
+                            }>();
+
+                            paidOrders.forEach(order => {
+                              const items = order.items || [];
+                              const summary = order.summary || {};
+                              const fees = order.feesBreakdown || {};
+                              
+                              const orderSubtotal = Number(summary.subtotal) || 0;
+                              const orderPaymentFee = Number(fees.paymentProcessingFee) || 0;
+                              const orderShippingFee = Number(summary.sellerShippingCharge) || 0;
+                              const orderPlatformFee = Number(fees.platformFee) || 0;
+
+                              items.forEach((item: any) => {
+                                const categoryName = item.category || 'Uncategorized';
+                                const quantity = Number(item.quantity) || 0;
+                                const price = Number(item.price) || 0;
+                                // Calculate item subtotal: try item.subtotal first, fallback to price * quantity
+                                const itemSubtotal = Number(item.subtotal) || (price * quantity);
+                                
+                                const feeRatio = orderSubtotal > 0 ? itemSubtotal / orderSubtotal : 0;
+                                const itemPaymentFee = orderPaymentFee * feeRatio;
+                                const itemShippingFee = orderShippingFee * feeRatio;
+                                const itemPlatformFee = orderPlatformFee * feeRatio;
+                                const itemNetPayout = itemSubtotal - itemPaymentFee - itemShippingFee - itemPlatformFee;
+
+                                const existing = categoryMap.get(categoryName) || {
+                                  name: categoryName,
+                                  sold: 0,
+                                  refunded: 0,
+                                  grossSales: 0,
+                                  refunds: 0,
+                                  paymentFee: 0,
+                                  shippingFee: 0,
+                                  platformFee: 0,
+                                  netPayout: 0
+                                };
+
+                                categoryMap.set(categoryName, {
+                                  name: categoryName,
+                                  sold: existing.sold + quantity,
+                                  refunded: existing.refunded,
+                                  grossSales: existing.grossSales + itemSubtotal,
+                                  refunds: existing.refunds,
+                                  paymentFee: existing.paymentFee + itemPaymentFee,
+                                  shippingFee: existing.shippingFee + itemShippingFee,
+                                  platformFee: existing.platformFee + itemPlatformFee,
+                                  netPayout: existing.netPayout + itemNetPayout
+                                });
+                              });
+                            });
+
+                            // Sort by net payout (descending) - show ALL categories
+                            const allCategories = Array.from(categoryMap.values())
+                              .sort((a, b) => b.netPayout - a.netPayout);
+
+                            if (allCategories.length === 0) {
+                              return (
+                                <tr>
+                                  <td colSpan={9} className="px-6 py-16">
+                                    <div className="flex flex-col items-center justify-center text-center text-gray-500">
+                                      <div className="w-16 h-16 rounded-full bg-gray-100 flex items-center justify-center mb-3">
+                                        <span className="text-xs font-semibold text-gray-400">⌀</span>
+                                      </div>
+                                      <div className="text-sm font-medium">No categories to display</div>
+                                      <div className="mt-1 text-xs text-gray-400">There are no sales in the selected time period</div>
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            }
+
+                            return allCategories.map((category, idx) => (
+                              <tr key={idx} className="border-t hover:bg-gray-50">
+                                <td className="px-6 py-4 text-gray-900 font-medium">{category.name}</td>
+                                <td className="px-6 py-4 text-gray-700 text-right">{category.sold.toLocaleString()}</td>
+                                <td className="px-6 py-4 text-red-600 text-right">{category.refunded.toLocaleString()}</td>
+                                <td className="px-6 py-4 text-gray-900 text-right font-medium">{currency.format(category.grossSales)}</td>
+                                <td className="px-6 py-4 text-red-600 text-right">{currency.format(category.refunds)}</td>
+                                <td className="px-6 py-4 text-red-600 text-right">{currency.format(category.paymentFee)}</td>
+                                <td className="px-6 py-4 text-orange-600 text-right">{currency.format(category.shippingFee)}</td>
+                                <td className="px-6 py-4 text-red-600 text-right">{currency.format(category.platformFee)}</td>
+                                <td className="px-6 py-4 text-green-600 text-right font-bold text-base">{currency.format(category.netPayout)}</td>
+                              </tr>
+                            ));
+                          })()}
+                        </tbody>
+                      </table>
+                    </div>
+                    <div className="px-6 py-3 bg-gray-50 border-t border-gray-100">
+                      <div className="flex items-center justify-between text-xs text-gray-600">
+                        <div className="flex items-center gap-2">
+                          <span className="inline-flex items-center gap-1">
+                            <span className="w-2 h-2 bg-green-500 rounded-full"></span>
+                            Net Payout = Gross Sales - (Payment Fee + Shipping Fee + Platform Fee)
+                          </span>
+                        </div>
+                        <div className="text-gray-500">
+                          Based on {paidOrders.length} paid {paidOrders.length === 1 ? 'order' : 'orders'}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {/* By Payment Type View */}
+              {sellerFilters.viewType === 'paymentType' && (
+                <>
+                  {/* Export Table - All Payment Types */}
+                  <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+                    <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+                      <h3 className="text-sm font-semibold text-gray-800 tracking-wide">SALES BY PAYMENT TYPE</h3>
+                      <button 
+                        onClick={() => {
+                          try {
+                            console.log('[exportPaymentTypesCSV] Starting export with', paidOrders.length, 'paid orders');
+                            
+                            // Aggregate ALL payment types from paid orders
+                            const paymentTypeMap = new Map<string, {
+                              name: string;
+                              sold: number;
+                              refunded: number;
+                              grossSales: number;
+                              refunds: number;
+                              paymentFee: number;
+                              shippingFee: number;
+                              platformFee: number;
+                              netPayout: number;
+                            }>();
+
+                            paidOrders.forEach(order => {
+                              const items = order.items || [];
+                              const summary = order.summary || {};
+                              const fees = order.feesBreakdown || {};
+                              
+                              // Get payment method from fees.paymentMethod
+                              const paymentMethod = fees.paymentMethod || 'Unknown';
+                              
+                              const orderSubtotal = Number(summary.subtotal) || 0;
+                              const orderPaymentFee = Number(fees.paymentProcessingFee) || 0;
+                              const orderShippingFee = Number(summary.sellerShippingCharge) || 0;
+                              const orderPlatformFee = Number(fees.platformFee) || 0;
+
+                              items.forEach((item: any) => {
+                                const quantity = Number(item.quantity) || 0;
+                                const price = Number(item.price) || 0;
+                                const itemSubtotal = Number(item.subtotal) || (price * quantity);
+                                
+                                const feeRatio = orderSubtotal > 0 ? itemSubtotal / orderSubtotal : 0;
+                                const itemPaymentFee = orderPaymentFee * feeRatio;
+                                const itemShippingFee = orderShippingFee * feeRatio;
+                                const itemPlatformFee = orderPlatformFee * feeRatio;
+                                const itemNetPayout = itemSubtotal - itemPaymentFee - itemShippingFee - itemPlatformFee;
+
+                                const existing = paymentTypeMap.get(paymentMethod) || {
+                                  name: paymentMethod,
+                                  sold: 0,
+                                  refunded: 0,
+                                  grossSales: 0,
+                                  refunds: 0,
+                                  paymentFee: 0,
+                                  shippingFee: 0,
+                                  platformFee: 0,
+                                  netPayout: 0
+                                };
+
+                                paymentTypeMap.set(paymentMethod, {
+                                  name: paymentMethod,
+                                  sold: existing.sold + quantity,
+                                  refunded: existing.refunded,
+                                  grossSales: existing.grossSales + itemSubtotal,
+                                  refunds: existing.refunds,
+                                  paymentFee: existing.paymentFee + itemPaymentFee,
+                                  shippingFee: existing.shippingFee + itemShippingFee,
+                                  platformFee: existing.platformFee + itemPlatformFee,
+                                  netPayout: existing.netPayout + itemNetPayout
+                                });
+                              });
+                            });
+
+                            const allPaymentTypes = Array.from(paymentTypeMap.values())
+                              .sort((a, b) => b.netPayout - a.netPayout);
+
+                            const headers = [
+                              'Payment Type',
+                              'Items Sold',
+                              'Items Refunded',
+                              'Gross Sales',
+                              'Refunds',
+                              'Payment Fee',
+                              'Shipping Fee',
+                              'Platform Fee',
+                              'Net Payout'
+                            ];
+
+                            const rows = allPaymentTypes.map(pt => [
+                              `"${pt.name}"`,
+                              pt.sold,
+                              pt.refunded,
+                              pt.grossSales.toFixed(2),
+                              pt.refunds.toFixed(2),
+                              pt.paymentFee.toFixed(2),
+                              pt.shippingFee.toFixed(2),
+                              pt.platformFee.toFixed(2),
+                              pt.netPayout.toFixed(2)
+                            ]);
+
+                            const csvContent = [
+                              headers.join(','),
+                              ...rows.map(row => row.join(','))
+                            ].join('\n');
+
+                            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+                            const link = document.createElement('a');
+                            const url = URL.createObjectURL(blob);
+                            link.setAttribute('href', url);
+                            link.setAttribute('download', `payment-types-${new Date().toISOString().slice(0,10)}.csv`);
+                            link.style.visibility = 'hidden';
+                            document.body.appendChild(link);
+                            link.click();
+                            document.body.removeChild(link);
+                          } catch (err) {
+                            console.error('CSV export failed:', err);
+                            setError('Failed to export payment types CSV. Please try again.');
+                          }
+                        }}
+                        disabled={paidOrders.length === 0}
+                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-teal-700 bg-teal-50 border border-teal-200 rounded-lg hover:bg-teal-100 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        </svg>
+                        Export CSV
+                      </button>
+                    </div>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead className="bg-gray-50 text-gray-600">
+                          <tr className="text-left text-xs font-semibold tracking-wide">
+                            <th className="px-6 py-3">Payment Type</th>
+                            <th className="px-6 py-3 text-right">Items Sold</th>
+                            <th className="px-6 py-3 text-right">Items Refunded</th>
+                            <th className="px-6 py-3 text-right">Gross Sales</th>
+                            <th className="px-6 py-3 text-right">Refunds</th>
+                            <th className="px-6 py-3 text-right">Payment Fee</th>
+                            <th className="px-6 py-3 text-right">Shipping Fee</th>
+                            <th className="px-6 py-3 text-right">Platform Fee</th>
+                            <th className="px-6 py-3 text-right font-bold">Net Payout</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(() => {
+                            // Aggregate ALL payment types from paid orders
+                            const paymentTypeMap = new Map<string, {
+                              name: string;
+                              sold: number;
+                              refunded: number;
+                              grossSales: number;
+                              refunds: number;
+                              paymentFee: number;
+                              shippingFee: number;
+                              platformFee: number;
+                              netPayout: number;
+                            }>();
+
+                            paidOrders.forEach(order => {
+                              const items = order.items || [];
+                              const summary = order.summary || {};
+                              const fees = order.feesBreakdown || {};
+                              
+                              // Get payment method from fees.paymentMethod
+                              const paymentMethod = fees.paymentMethod || 'Unknown';
+                              
+                              const orderSubtotal = Number(summary.subtotal) || 0;
+                              const orderPaymentFee = Number(fees.paymentProcessingFee) || 0;
+                              const orderShippingFee = Number(summary.sellerShippingCharge) || 0;
+                              const orderPlatformFee = Number(fees.platformFee) || 0;
+
+                              items.forEach((item: any) => {
+                                const quantity = Number(item.quantity) || 0;
+                                const price = Number(item.price) || 0;
+                                // Calculate item subtotal: try item.subtotal first, fallback to price * quantity
+                                const itemSubtotal = Number(item.subtotal) || (price * quantity);
+                                
+                                const feeRatio = orderSubtotal > 0 ? itemSubtotal / orderSubtotal : 0;
+                                const itemPaymentFee = orderPaymentFee * feeRatio;
+                                const itemShippingFee = orderShippingFee * feeRatio;
+                                const itemPlatformFee = orderPlatformFee * feeRatio;
+                                const itemNetPayout = itemSubtotal - itemPaymentFee - itemShippingFee - itemPlatformFee;
+
+                                const existing = paymentTypeMap.get(paymentMethod) || {
+                                  name: paymentMethod,
+                                  sold: 0,
+                                  refunded: 0,
+                                  grossSales: 0,
+                                  refunds: 0,
+                                  paymentFee: 0,
+                                  shippingFee: 0,
+                                  platformFee: 0,
+                                  netPayout: 0
+                                };
+
+                                paymentTypeMap.set(paymentMethod, {
+                                  name: paymentMethod,
+                                  sold: existing.sold + quantity,
+                                  refunded: existing.refunded,
+                                  grossSales: existing.grossSales + itemSubtotal,
+                                  refunds: existing.refunds,
+                                  paymentFee: existing.paymentFee + itemPaymentFee,
+                                  shippingFee: existing.shippingFee + itemShippingFee,
+                                  platformFee: existing.platformFee + itemPlatformFee,
+                                  netPayout: existing.netPayout + itemNetPayout
+                                });
+                              });
+                            });
+
+                            // Sort by net payout (descending) - show ALL payment types
+                            const allPaymentTypes = Array.from(paymentTypeMap.values())
+                              .sort((a, b) => b.netPayout - a.netPayout);
+
+                            if (allPaymentTypes.length === 0) {
+                              return (
+                                <tr>
+                                  <td colSpan={9} className="px-6 py-16">
+                                    <div className="flex flex-col items-center justify-center text-center text-gray-500">
+                                      <div className="w-16 h-16 rounded-full bg-gray-100 flex items-center justify-center mb-3">
+                                        <span className="text-xs font-semibold text-gray-400">⌀</span>
+                                      </div>
+                                      <div className="text-sm font-medium">No payment types to display</div>
+                                      <div className="mt-1 text-xs text-gray-400">There are no sales in the selected time period</div>
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            }
+
+                            return allPaymentTypes.map((paymentType, idx) => (
+                              <tr key={idx} className="border-t hover:bg-gray-50">
+                                <td className="px-6 py-4 text-gray-900 font-medium">{paymentType.name}</td>
+                                <td className="px-6 py-4 text-gray-700 text-right">{paymentType.sold.toLocaleString()}</td>
+                                <td className="px-6 py-4 text-red-600 text-right">{paymentType.refunded.toLocaleString()}</td>
+                                <td className="px-6 py-4 text-gray-900 text-right font-medium">{currency.format(paymentType.grossSales)}</td>
+                                <td className="px-6 py-4 text-red-600 text-right">{currency.format(paymentType.refunds)}</td>
+                                <td className="px-6 py-4 text-red-600 text-right">{currency.format(paymentType.paymentFee)}</td>
+                                <td className="px-6 py-4 text-orange-600 text-right">{currency.format(paymentType.shippingFee)}</td>
+                                <td className="px-6 py-4 text-red-600 text-right">{currency.format(paymentType.platformFee)}</td>
+                                <td className="px-6 py-4 text-green-600 text-right font-bold text-base">{currency.format(paymentType.netPayout)}</td>
+                              </tr>
+                            ));
+                          })()}
+                        </tbody>
+                      </table>
+                    </div>
+                    <div className="px-6 py-3 bg-gray-50 border-t border-gray-100">
+                      <div className="flex items-center justify-between text-xs text-gray-600">
+                        <div className="flex items-center gap-2">
+                          <span className="inline-flex items-center gap-1">
+                            <span className="w-2 h-2 bg-green-500 rounded-full"></span>
+                            Net Payout = Gross Sales - (Payment Fee + Shipping Fee + Platform Fee)
+                          </span>
+                        </div>
+                        <div className="text-gray-500">
+                          Based on {paidOrders.length} paid {paidOrders.length === 1 ? 'order' : 'orders'}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {/* By Receipts View */}
+              {sellerFilters.viewType === 'Receipts' && (
+                <>
+                  {/* Export Table - All Receipts by Payment Type */}
+                  <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+                    <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+                      <h3 className="text-sm font-semibold text-gray-800 tracking-wide">RECEIPTS BY PAYMENT TYPE</h3>
+                      <button 
+                        onClick={() => {
+                          try {
+                            console.log('[exportReceiptsCSV] Starting export with', paidOrders.length, 'paid orders');
+                            
+                            // Aggregate receipts by payment type
+                            const receiptMap = new Map<string, {
+                              paymentType: string;
+                              paymentTransactions: number;
+                              paymentAmount: number;
+                              refundTransactions: number;
+                              refundAmount: number;
+                              netPayout: number;
+                            }>();
+
+                            paidOrders.forEach(order => {
+                              const summary = order.summary || {};
+                              const fees = order.feesBreakdown || {};
+                              
+                              // Get payment method from fees.paymentMethod
+                              const paymentMethod = fees.paymentMethod || 'Unknown';
+                              
+                              const orderSubtotal = Number(summary.subtotal) || 0;
+                              const orderPaymentFee = Number(fees.paymentProcessingFee) || 0;
+                              const orderShippingFee = Number(summary.sellerShippingCharge) || 0;
+                              const orderPlatformFee = Number(fees.platformFee) || 0;
+                              const orderNetPayout = orderSubtotal - orderPaymentFee - orderShippingFee - orderPlatformFee;
+
+                              const existing = receiptMap.get(paymentMethod) || {
+                                paymentType: paymentMethod,
+                                paymentTransactions: 0,
+                                paymentAmount: 0,
+                                refundTransactions: 0,
+                                refundAmount: 0,
+                                netPayout: 0
+                              };
+
+                              receiptMap.set(paymentMethod, {
+                                paymentType: paymentMethod,
+                                paymentTransactions: existing.paymentTransactions + 1,
+                                paymentAmount: existing.paymentAmount + orderSubtotal,
+                                refundTransactions: existing.refundTransactions,
+                                refundAmount: existing.refundAmount,
+                                netPayout: existing.netPayout + orderNetPayout
+                              });
+                            });
+
+                            const allReceipts = Array.from(receiptMap.values())
+                              .sort((a, b) => b.netPayout - a.netPayout);
+
+                            const headers = [
+                              'Payment Type',
+                              'Payment Transactions',
+                              'Payment Amount',
+                              'Refund Transactions',
+                              'Refund Amount',
+                              'Net Payout'
+                            ];
+
+                            const rows = allReceipts.map(receipt => [
+                              `"${receipt.paymentType}"`,
+                              receipt.paymentTransactions,
+                              receipt.paymentAmount.toFixed(2),
+                              receipt.refundTransactions,
+                              receipt.refundAmount.toFixed(2),
+                              receipt.netPayout.toFixed(2)
+                            ]);
+
+                            const csvContent = [
+                              headers.join(','),
+                              ...rows.map(row => row.join(','))
+                            ].join('\n');
+
+                            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+                            const link = document.createElement('a');
+                            const url = URL.createObjectURL(blob);
+                            link.setAttribute('href', url);
+                            link.setAttribute('download', `receipts-${new Date().toISOString().slice(0,10)}.csv`);
+                            link.style.visibility = 'hidden';
+                            document.body.appendChild(link);
+                            link.click();
+                            document.body.removeChild(link);
+                          } catch (err) {
+                            console.error('CSV export failed:', err);
+                            setError('Failed to export receipts CSV. Please try again.');
+                          }
+                        }}
+                        disabled={paidOrders.length === 0}
+                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-teal-700 bg-teal-50 border border-teal-200 rounded-lg hover:bg-teal-100 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        </svg>
+                        Export CSV
+                      </button>
+                    </div>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead className="bg-gray-50 text-gray-600">
+                          <tr className="text-left text-xs font-semibold tracking-wide">
+                            <th className="px-6 py-3">Payment Type</th>
+                            <th className="px-6 py-3 text-right">Payment Transactions</th>
+                            <th className="px-6 py-3 text-right">Payment Amount</th>
+                            <th className="px-6 py-3 text-right">Refund Transactions</th>
+                            <th className="px-6 py-3 text-right">Refund Amount</th>
+                            <th className="px-6 py-3 text-right font-bold">Net Payout</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(() => {
+                            // Aggregate receipts by payment type
+                            const receiptMap = new Map<string, {
+                              paymentType: string;
+                              paymentTransactions: number;
+                              paymentAmount: number;
+                              refundTransactions: number;
+                              refundAmount: number;
+                              netPayout: number;
+                            }>();
+
+                            paidOrders.forEach(order => {
+                              const summary = order.summary || {};
+                              const fees = order.feesBreakdown || {};
+                              
+                              // Get payment method from fees.paymentMethod
+                              const paymentMethod = fees.paymentMethod || 'Unknown';
+                              
+                              const orderSubtotal = Number(summary.subtotal) || 0;
+                              const orderPaymentFee = Number(fees.paymentProcessingFee) || 0;
+                              const orderShippingFee = Number(summary.sellerShippingCharge) || 0;
+                              const orderPlatformFee = Number(fees.platformFee) || 0;
+                              const orderNetPayout = orderSubtotal - orderPaymentFee - orderShippingFee - orderPlatformFee;
+
+                              const existing = receiptMap.get(paymentMethod) || {
+                                paymentType: paymentMethod,
+                                paymentTransactions: 0,
+                                paymentAmount: 0,
+                                refundTransactions: 0,
+                                refundAmount: 0,
+                                netPayout: 0
+                              };
+
+                              receiptMap.set(paymentMethod, {
+                                paymentType: paymentMethod,
+                                paymentTransactions: existing.paymentTransactions + 1,
+                                paymentAmount: existing.paymentAmount + orderSubtotal,
+                                refundTransactions: existing.refundTransactions,
+                                refundAmount: existing.refundAmount,
+                                netPayout: existing.netPayout + orderNetPayout
+                              });
+                            });
+
+                            // Sort by net payout (descending)
+                            const allReceipts = Array.from(receiptMap.values())
+                              .sort((a, b) => b.netPayout - a.netPayout);
+
+                            if (allReceipts.length === 0) {
+                              return (
+                                <tr>
+                                  <td colSpan={6} className="px-6 py-16">
+                                    <div className="flex flex-col items-center justify-center text-center text-gray-500">
+                                      <div className="w-16 h-16 rounded-full bg-gray-100 flex items-center justify-center mb-3">
+                                        <span className="text-xs font-semibold text-gray-400">⌀</span>
+                                      </div>
+                                      <div className="text-sm font-medium">No receipts to display</div>
+                                      <div className="mt-1 text-xs text-gray-400">There are no sales in the selected time period</div>
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            }
+
+                            return allReceipts.map((receipt, idx) => (
+                              <tr key={idx} className="border-t hover:bg-gray-50">
+                                <td className="px-6 py-4 text-gray-900 font-medium">{receipt.paymentType}</td>
+                                <td className="px-6 py-4 text-gray-700 text-right">{receipt.paymentTransactions.toLocaleString()}</td>
+                                <td className="px-6 py-4 text-gray-900 text-right font-medium">{currency.format(receipt.paymentAmount)}</td>
+                                <td className="px-6 py-4 text-red-600 text-right">{receipt.refundTransactions.toLocaleString()}</td>
+                                <td className="px-6 py-4 text-red-600 text-right">{currency.format(receipt.refundAmount)}</td>
+                                <td className="px-6 py-4 text-green-600 text-right font-bold text-base">{currency.format(receipt.netPayout)}</td>
+                              </tr>
+                            ));
+                          })()}
+                        </tbody>
+                      </table>
+                    </div>
+                    <div className="px-6 py-3 bg-gray-50 border-t border-gray-100">
+                      <div className="flex items-center justify-between text-xs text-gray-600">
+                        <div className="flex items-center gap-2">
+                          <span className="inline-flex items-center gap-1">
+                            <span className="w-2 h-2 bg-green-500 rounded-full"></span>
+                            Net Payout = Payment Amount - (Payment Fee + Shipping Fee + Platform Fee)
                           </span>
                         </div>
                         <div className="text-gray-500">

@@ -833,13 +833,7 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
           Low stock only
         </label>
         <div className="flex-1" />
-        <button
-          onClick={() => navigate('/inventory/new')}
-          className="px-4 py-2 text-sm font-medium bg-teal-600 text-white rounded-lg hover:bg-teal-700"
-          disabled={!effectiveSellerId}
-        >
-          + Add Product
-        </button>
+    
       </div>
 
       {/* KPI metrics for inventory alerts */}

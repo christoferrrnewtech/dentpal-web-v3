@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { Wallet, CreditCard, Truck, Receipt, DollarSign, Clock, CheckCircle, AlertCircle, Banknote, XCircle, RefreshCw } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { 
@@ -55,6 +55,74 @@ const SellerWithdrawalTab = ({
   
   // Status filter for withdrawal history
   const [statusFilter, setStatusFilter] = useState<string>("all");
+
+  // Date picker states
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [dateRange, setDateRange] = useState<{ start: Date | null; end: Date | null }>({ start: null, end: null });
+  const [calendarMonth, setCalendarMonth] = useState(new Date());
+  const dateDropdownRef = useRef<HTMLDivElement>(null);
+
+  // Close date picker when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dateDropdownRef.current && !dateDropdownRef.current.contains(event.target as Node)) {
+        setShowDatePicker(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  // Helper functions for calendar
+  const toISO = (d: Date) => d.toISOString().slice(0, 10);
+  const daysInMonth = (d: Date) => new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+  const firstWeekday = (d: Date) => new Date(d.getFullYear(), d.getMonth(), 1).getDay();
+  const isInRange = (day: Date) => {
+    if (!dateRange.start || !dateRange.end) return false;
+    const t = day.getTime();
+    return t >= dateRange.start.getTime() && t <= dateRange.end.getTime();
+  };
+
+  const handleDayClick = (day: Date) => {
+    if (!dateRange.start || (dateRange.start && dateRange.end)) {
+      setDateRange({ start: day, end: null });
+    } else {
+      if (day >= dateRange.start) {
+        setDateRange({ ...dateRange, end: day });
+      } else {
+        setDateRange({ start: day, end: dateRange.start });
+      }
+    }
+  };
+
+  const applyPreset = (preset: string) => {
+    const now = new Date();
+    now.setHours(23, 59, 59, 999);
+    if (preset === 'today') {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      setDateRange({ start: today, end: now });
+      onFiltersChange({ ...sellerFilters, dateRange: 'today' });
+      setShowDatePicker(false);
+    } else {
+      const days = parseInt(preset);
+      const start = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
+      start.setHours(0, 0, 0, 0);
+      setDateRange({ start, end: now });
+      onFiltersChange({ ...sellerFilters, dateRange: `last-${days}` });
+      setShowDatePicker(false);
+    }
+  };
+
+  const applyRange = () => {
+    if (dateRange.start) {
+      const end = dateRange.end || dateRange.start;
+      // Format: custom:YYYY-MM-DD:YYYY-MM-DD
+      const customKey = `custom:${toISO(dateRange.start)}:${toISO(end)}`;
+      onFiltersChange({ ...sellerFilters, dateRange: customKey });
+      setShowDatePicker(false);
+    }
+  };
 
   // Fetch seller's withdrawal requests on mount
   useEffect(() => {
@@ -428,18 +496,87 @@ const SellerWithdrawalTab = ({
             <label className="block text-xs font-medium text-gray-700 mb-1">
               Select date
             </label>
-            <select
-              className="w-full p-2 border border-gray-200 rounded-lg text-xs focus:ring-2 focus:ring-teal-500 focus:border-transparent"
-              value={sellerFilters.dateRange}
-              onChange={(e) =>
-                onFiltersChange({ ...sellerFilters, dateRange: e.target.value })
-              }
-            >
-              <option value="last-7">Last 7 days</option>
-              <option value="last-30">Last 30 days</option>
-              <option value="last-90">Last 90 days</option>
-              <option value="last-365">Last year</option>
-            </select>
+            <div ref={dateDropdownRef} className="relative">
+              <button
+                type="button"
+                onClick={() => setShowDatePicker(v => !v)}
+                aria-haspopup="dialog"
+                aria-expanded={showDatePicker}
+                className="w-full p-2 border border-gray-200 rounded-lg text-xs bg-white hover:bg-gray-50 flex items-center justify-between"
+              >
+                <span className="truncate pr-2">
+                  {(() => {
+                    if (dateRange.start) {
+                      return `${toISO(dateRange.start)} → ${toISO(dateRange.end || dateRange.start)}`;
+                    }
+                    if (sellerFilters.dateRange.startsWith('custom:')) {
+                      const parts = sellerFilters.dateRange.split(':');
+                      if (parts.length === 3) {
+                        return `${parts[1]} → ${parts[2]}`;
+                      }
+                    }
+                    if (sellerFilters.dateRange === 'today') return 'Today';
+                    if (sellerFilters.dateRange.includes('last-')) {
+                      return 'Last ' + sellerFilters.dateRange.replace('last-','') + ' days';
+                    }
+                    return 'Select date range';
+                  })()}
+                </span>
+                <span className={`text-[11px] transition-transform ${showDatePicker ? 'rotate-180' : ''}`}>⌄</span>
+              </button>
+              {showDatePicker && (
+                <div className="absolute left-0 mt-2 z-30 w-[280px] border border-gray-200 rounded-xl bg-white shadow-xl p-3 space-y-3 animate-fade-in">
+                  {/* Presets */}
+                  <div className="flex flex-wrap gap-2">
+                    <button onClick={() => applyPreset('today')} className="px-2 py-1 text-xs rounded-md border bg-white hover:bg-teal-50">Today</button>
+                    <button onClick={() => applyPreset('7')} className="px-2 py-1 text-xs rounded-md border bg-white hover:bg-teal-50">Last 7 days</button>
+                    <button onClick={() => applyPreset('30')} className="px-2 py-1 text-xs rounded-md border bg-white hover:bg-teal-50">Last 30 days</button>
+                    {dateRange.start && (
+                      <span className="text-[10px] text-gray-500 ml-auto">{toISO(dateRange.start)} → {toISO(dateRange.end || dateRange.start)}</span>
+                    )}
+                  </div>
+                  {/* Calendar header */}
+                  <div className="flex items-center justify-between">
+                    <button type="button" onClick={() => setCalendarMonth(m => new Date(m.getFullYear(), m.getMonth()-1, 1))} className="px-2 py-1 text-xs rounded border bg-white hover:bg-gray-100">◀</button>
+                    <div className="text-xs font-medium text-gray-700">
+                      {calendarMonth.toLocaleString('en-US', { month: 'long', year: 'numeric' })}
+                    </div>
+                    <button type="button" onClick={() => setCalendarMonth(m => new Date(m.getFullYear(), m.getMonth()+1, 1))} className="px-2 py-1 text-xs rounded border bg-white hover:bg-gray-100">▶</button>
+                  </div>
+                  {/* Weekday labels */}
+                  <div className="grid grid-cols-7 text-[10px] font-medium text-gray-500">
+                    {['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d => <div key={d} className="text-center">{d}</div>)}
+                  </div>
+                  {/* Days grid with range highlight */}
+                  <div className="grid grid-cols-7 gap-1 text-xs">
+                    {Array.from({ length: firstWeekday(calendarMonth) }).map((_,i) => <div key={'spacer'+i} />)}
+                    {Array.from({ length: daysInMonth(calendarMonth) }).map((_,i) => {
+                      const day = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth(), i+1);
+                      const selectedStart = dateRange.start && day.getTime() === dateRange.start.getTime();
+                      const selectedEnd = dateRange.end && day.getTime() === dateRange.end.getTime();
+                      const inRange = isInRange(day);
+                      return (
+                        <button
+                          key={i}
+                          type="button"
+                          onClick={() => handleDayClick(day)}
+                          className={`h-7 rounded-md flex items-center justify-center transition border text-gray-700 ${selectedStart || selectedEnd ? 'bg-teal-600 text-white border-teal-600 font-semibold' : inRange ? 'bg-teal-100 border-teal-200' : 'bg-white border-gray-200 hover:bg-gray-100'} ${day.toDateString() === new Date().toDateString() && !selectedStart && !selectedEnd ? 'ring-1 ring-teal-400' : ''}`}
+                          title={toISO(day)}
+                        >{i+1}</button>
+                      );
+                    })}
+                  </div>
+                  {/* Actions */}
+                  <div className="flex items-center justify-between pt-1">
+                    <button type="button" onClick={() => { setDateRange({ start: null, end: null }); onFiltersChange({ ...sellerFilters, dateRange: 'last-30' }); }} className="text-[11px] px-2 py-1 rounded-md border bg-white hover:bg-gray-100">Clear</button>
+                    <div className="flex gap-2">
+                      <button type="button" onClick={applyRange} disabled={!dateRange.start} className="text-[11px] px-3 py-1 rounded-md bg-teal-600 text-white disabled:opacity-40">Apply</button>
+                      <button type="button" onClick={() => setShowDatePicker(false)} className="text-[11px] px-3 py-1 rounded-md border bg-white hover:bg-gray-100">Done</button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
           <div className="flex items-end gap-2 pt-2">
             <button
