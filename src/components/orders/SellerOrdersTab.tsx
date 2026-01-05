@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useEffect } from 'react';
+import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { Order } from '@/types/order';
 import { Search, RefreshCcw, ShoppingCart } from 'lucide-react';
 import { SUB_TABS, mapOrderToStage, LifecycleStage, TO_SHIP_SUB_TABS, ToShipStage } from './config';
@@ -52,9 +52,17 @@ export const OrderTab: React.FC<OrderTabProps> = ({
   const [paymentType, setPaymentType] = useState<string>('');
   const [status, setStatus] = useState<string>('');
   const [activeSubTab, setActiveSubTab] = useState<LifecycleStage>('all');
-  // New: date range pickers (from/to)
+  
+  // Date picker states (similar to Sales Summary)
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [datePickerRange, setDatePickerRange] = useState<{ start: Date | null; end: Date | null }>({ start: null, end: null });
+  const [calendarMonth, setCalendarMonth] = useState(new Date());
+  const dateDropdownRef = useRef<HTMLDivElement>(null);
+  
+  // Keep legacy date inputs for now (will be replaced by calendar picker)
   const [dateFrom, setDateFrom] = useState<string>('');
   const [dateTo, setDateTo] = useState<string>('');
+  
   // Pagination state
   const [page, setPage] = useState<number>(1);
   const [pageSize, setPageSize] = useState<number>(10);
@@ -78,6 +86,75 @@ export const OrderTab: React.FC<OrderTabProps> = ({
     pickupTime: '09:00',
   });
   const { user } = useAuth();
+
+  // Close date picker when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dateDropdownRef.current && !dateDropdownRef.current.contains(event.target as Node)) {
+        setShowDatePicker(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  // Helper functions for calendar
+  const toISO = (d: Date) => d.toISOString().slice(0, 10);
+  const daysInMonth = (d: Date) => new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+  const firstWeekday = (d: Date) => new Date(d.getFullYear(), d.getMonth(), 1).getDay();
+  const isInRange = (day: Date) => {
+    if (!datePickerRange.start || !datePickerRange.end) return false;
+    const t = day.getTime();
+    return t >= datePickerRange.start.getTime() && t <= datePickerRange.end.getTime();
+  };
+
+  const handleDayClick = (day: Date) => {
+    if (!datePickerRange.start || (datePickerRange.start && datePickerRange.end)) {
+      setDatePickerRange({ start: day, end: null });
+    } else {
+      if (day >= datePickerRange.start) {
+        setDatePickerRange({ ...datePickerRange, end: day });
+      } else {
+        setDatePickerRange({ start: day, end: datePickerRange.start });
+      }
+    }
+  };
+
+  const applyPreset = (preset: string) => {
+    const now = new Date();
+    now.setHours(23, 59, 59, 999);
+    if (preset === 'today') {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      setDatePickerRange({ start: today, end: now });
+      setDateFrom(toISO(today));
+      setDateTo(toISO(now));
+      setShowDatePicker(false);
+    } else {
+      const days = parseInt(preset);
+      const start = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
+      start.setHours(0, 0, 0, 0);
+      setDatePickerRange({ start, end: now });
+      setDateFrom(toISO(start));
+      setDateTo(toISO(now));
+      setShowDatePicker(false);
+    }
+  };
+
+  const applyDateRange = () => {
+    if (datePickerRange.start) {
+      const end = datePickerRange.end || datePickerRange.start;
+      setDateFrom(toISO(datePickerRange.start));
+      setDateTo(toISO(end));
+      setShowDatePicker(false);
+    }
+  };
+
+  const clearDateFilter = () => {
+    setDatePickerRange({ start: null, end: null });
+    setDateFrom('');
+    setDateTo('');
+  };
 
   // Reset to first page when filters or tab change
   useEffect(() => { setPage(1); }, [activeSubTab, dateFrom, dateTo]);
@@ -457,32 +534,102 @@ export const OrderTab: React.FC<OrderTabProps> = ({
         </div>
       </div>
 
-      <div className="bg-white border border-gray-200 rounded-xl p-4 shadow-sm flex flex-wrap items-end gap-3">
-        <div className="flex flex-col">
-          <label className="text-xs font-medium text-gray-600 mb-1">From date</label>
-          <input
-            type="date"
-            value={dateFrom}
-            onChange={(e)=> setDateFrom(e.target.value)}
-            className="text-sm p-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
-          />
+      {/* Date Filter Section with Calendar Picker */}
+      <div className="bg-white border border-gray-200 rounded-xl p-4 shadow-sm">
+        <div className="text-sm font-semibold text-gray-900 mb-3">Date Filter</div>
+        <div className="flex flex-col lg:flex-row lg:items-end lg:space-x-4 gap-4">
+          <div className="flex-1 min-w-[160px]">
+            <label className="block text-xs font-medium text-gray-700 mb-1">
+              Select date range
+            </label>
+            <div ref={dateDropdownRef} className="relative">
+              <button
+                type="button"
+                onClick={() => setShowDatePicker(v => !v)}
+                aria-haspopup="dialog"
+                aria-expanded={showDatePicker}
+                className="w-full p-2 border border-gray-200 rounded-lg text-xs bg-white hover:bg-gray-50 flex items-center justify-between"
+              >
+                <span className="truncate pr-2">
+                  {(() => {
+                    if (datePickerRange.start) {
+                      return `${toISO(datePickerRange.start)} → ${toISO(datePickerRange.end || datePickerRange.start)}`;
+                    }
+                    if (dateFrom && dateTo) {
+                      return `${dateFrom} → ${dateTo}`;
+                    }
+                    if (dateFrom) {
+                      return `From ${dateFrom}`;
+                    }
+                    return 'Select date range';
+                  })()}
+                </span>
+                <span className={`text-[11px] transition-transform ${showDatePicker ? 'rotate-180' : ''}`}>⌄</span>
+              </button>
+              {showDatePicker && (
+                <div className="absolute left-0 mt-2 z-30 w-[280px] border border-gray-200 rounded-xl bg-white shadow-xl p-3 space-y-3 animate-fade-in">
+                  {/* Presets */}
+                  <div className="flex flex-wrap gap-2">
+                    <button onClick={() => applyPreset('today')} className="px-2 py-1 text-xs rounded-md border bg-white hover:bg-teal-50">Today</button>
+                    <button onClick={() => applyPreset('7')} className="px-2 py-1 text-xs rounded-md border bg-white hover:bg-teal-50">Last 7 days</button>
+                    <button onClick={() => applyPreset('30')} className="px-2 py-1 text-xs rounded-md border bg-white hover:bg-teal-50">Last 30 days</button>
+                    {datePickerRange.start && (
+                      <span className="text-[10px] text-gray-500 ml-auto">{toISO(datePickerRange.start)} → {toISO(datePickerRange.end || datePickerRange.start)}</span>
+                    )}
+                  </div>
+                  {/* Calendar header */}
+                  <div className="flex items-center justify-between">
+                    <button type="button" onClick={() => setCalendarMonth(m => new Date(m.getFullYear(), m.getMonth()-1, 1))} className="px-2 py-1 text-xs rounded border bg-white hover:bg-gray-100">◀</button>
+                    <div className="text-xs font-medium text-gray-700">
+                      {calendarMonth.toLocaleString('en-US', { month: 'long', year: 'numeric' })}
+                    </div>
+                    <button type="button" onClick={() => setCalendarMonth(m => new Date(m.getFullYear(), m.getMonth()+1, 1))} className="px-2 py-1 text-xs rounded border bg-white hover:bg-gray-100">▶</button>
+                  </div>
+                  {/* Weekday labels */}
+                  <div className="grid grid-cols-7 text-[10px] font-medium text-gray-500">
+                    {['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d => <div key={d} className="text-center">{d}</div>)}
+                  </div>
+                  {/* Days grid with range highlight */}
+                  <div className="grid grid-cols-7 gap-1 text-xs">
+                    {Array.from({ length: firstWeekday(calendarMonth) }).map((_,i) => <div key={'spacer'+i} />)}
+                    {Array.from({ length: daysInMonth(calendarMonth) }).map((_,i) => {
+                      const day = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth(), i+1);
+                      const selectedStart = datePickerRange.start && day.getTime() === datePickerRange.start.getTime();
+                      const selectedEnd = datePickerRange.end && day.getTime() === datePickerRange.end.getTime();
+                      const inRange = isInRange(day);
+                      return (
+                        <button
+                          key={i}
+                          type="button"
+                          onClick={() => handleDayClick(day)}
+                          className={`h-7 rounded-md flex items-center justify-center transition border text-gray-700 ${selectedStart || selectedEnd ? 'bg-teal-600 text-white border-teal-600 font-semibold' : inRange ? 'bg-teal-100 border-teal-200' : 'bg-white border-gray-200 hover:bg-gray-100'} ${day.toDateString() === new Date().toDateString() && !selectedStart && !selectedEnd ? 'ring-1 ring-teal-400' : ''}`}
+                          title={toISO(day)}
+                        >{i+1}</button>
+                      );
+                    })}
+                  </div>
+                  {/* Actions */}
+                  <div className="flex items-center justify-between pt-1">
+                    <button type="button" onClick={clearDateFilter} className="text-[11px] px-2 py-1 rounded-md border bg-white hover:bg-gray-100">Clear</button>
+                    <div className="flex gap-2">
+                      <button type="button" onClick={applyDateRange} disabled={!datePickerRange.start} className="text-[11px] px-3 py-1 rounded-md bg-teal-600 text-white disabled:opacity-40">Apply</button>
+                      <button type="button" onClick={() => setShowDatePicker(false)} className="text-[11px] px-3 py-1 rounded-md border bg-white hover:bg-gray-100">Done</button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+          <div className="flex items-end gap-2 pt-2">
+            <button
+              type="button"
+              onClick={clearDateFilter}
+              className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-medium rounded-lg transition"
+            >
+              Reset
+            </button>
+          </div>
         </div>
-        <div className="flex flex-col">
-          <label className="text-xs font-medium text-gray-600 mb-1">To date</label>
-          <input
-            type="date"
-            value={dateTo}
-            onChange={(e)=> setDateTo(e.target.value)}
-            className="text-sm p-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
-          />
-        </div>
-        <button
-          type="button"
-          onClick={() => { setDateFrom(''); setDateTo(''); }}
-          className="ml-auto inline-flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-lg border border-gray-200 hover:bg-gray-50"
-        >
-          Clear dates
-        </button>
       </div>
 
       {activeSubTab === 'to-ship' && (
