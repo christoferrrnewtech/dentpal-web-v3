@@ -31,7 +31,6 @@ interface SidebarProps {
 const menuItems = [
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
   { id: "profile", label: "Profile", icon: IdCard },
-  { id: "reports", label: "Reports", icon: BarChart3 },
   { id: "booking", label: "Booking", icon: Calendar },
   { id: 'seller-orders', label: 'Seller Orders', icon: Calendar },
   { id: "inventory", label: "Inventory", icon: LayoutDashboard },
@@ -89,7 +88,6 @@ const Sidebar = ({ activeItem, onItemClick, onLogout }: SidebarProps) => {
           if (item.id === 'categories' && !isAdmin) return false;
           if (item.id === 'profile' && isAdmin) return false;
           if (isAdmin && ['seller-orders','inventory','add-product','sub-accounts'].includes(item.id)) return false;
-          if (isAdmin && ['reports','booking'].includes(item.id)) return false;
           const key = permissionByMenuId[item.id];
 
           if (isSubAccount) {
