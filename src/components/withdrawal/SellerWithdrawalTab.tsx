@@ -579,20 +579,21 @@ const SellerWithdrawalTab = ({
             </div>
           </div>
           <div className="flex items-end gap-2 pt-2">
-            <button
-              onClick={() =>
-                onFiltersChange({
-                  dateRange: "last-30",
-                  brand: "all",
-                  subcategory: "all",
-                  location: "all",
-                  paymentType: "all",
-                })
-              }
-              className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-medium rounded-lg transition"
-            >
-              Reset
-            </button>
+          <button
+            onClick={() => {
+              setDateRange({ start: null, end: null });
+              onFiltersChange({
+                dateRange: "last-30",
+                brand: "all",
+                subcategory: "all",
+                location: "all",
+                paymentType: "all",
+              });
+            }}
+            className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-medium rounded-lg transition"
+             >
+               Reset
+             </button>
           </div>
         </div>
       </div>
