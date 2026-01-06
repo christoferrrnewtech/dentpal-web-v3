@@ -31,7 +31,8 @@ interface SidebarProps {
 const menuItems = [
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
   { id: "profile", label: "Profile", icon: IdCard },
-  { id: "booking", label: "Booking", icon: Calendar },
+  // { id: "booking", label: "Booking", icon: Calendar }, // HIDE BOOKING FOR ADMIN
+  // Booking tab is now fully hidden for all users
   { id: 'seller-orders', label: 'Seller Orders', icon: Calendar },
   { id: "inventory", label: "Inventory", icon: LayoutDashboard },
   { id: "notifications", label: "Notifications", icon: Bell },
