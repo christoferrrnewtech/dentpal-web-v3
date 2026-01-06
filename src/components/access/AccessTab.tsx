@@ -108,6 +108,7 @@ interface User {
     'seller-orders': boolean;
     'add-product': boolean;
   };
+  Platform_fee_percentage?: number; // Platform fee percentage (default 8.88%)
   lastLogin?: string;
   createdAt: string;
 }
@@ -368,6 +369,12 @@ const AccessTab = ({ loading = false, error, setError, onTabChange, onEditUser }
   const [membersLoading, setMembersLoading] = useState(false);
   const [editing, setEditing] = useState<any | null>(null);
 
+  // Platform fee edit state
+  const [platformFeeModalOpen, setPlatformFeeModalOpen] = useState(false);
+  const [editingPlatformFee, setEditingPlatformFee] = useState<{ id: string; username: string; currentFee: number } | null>(null);
+  const [platformFeeValue, setPlatformFeeValue] = useState<string>('8.88');
+  const [platformFeeSaving, setPlatformFeeSaving] = useState(false);
+
   // Admin (grouped seller/sub-accounts) hooks declared before any early return to keep hooks order stable
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   type SellerWithSubs = User & { subAccounts?: Array<{ id: string; name?: string; email: string; permissions?: any; status?: string }> };
@@ -424,6 +431,80 @@ const AccessTab = ({ loading = false, error, setError, onTabChange, onEditUser }
     }
   };
 
+  // Helper to refresh user list from Firestore
+  const refreshUserList = async () => {
+    try {
+      const sellers = await SellersService.list();
+      const webUsers = sellers.length ? sellers.map(s => ({
+        uid: s.id,
+        email: s.email || '',
+        name: s.name || '',
+        role: (s.role as any) || 'seller',
+        isActive: typeof s.isActive === 'boolean' ? s.isActive : true,
+        permissions: s.permissions as any,
+        createdAt: s.createdAt || Date.now(),
+        Platform_fee_percentage: s.Platform_fee_percentage,
+      })) : await getWebUsers();
+      const mapped: User[] = webUsers.map((u: any) => {
+        const createdAtMs = normalizeTimestamp((u as any).createdAt);
+        const lastLoginMs = normalizeTimestamp((u as any).lastLogin);
+        const perms = ensurePermissions(u.role, (u as any).permissions);
+        return {
+          id: u.uid,
+          username: u.name,
+          email: u.email,
+          role: u.role,
+          status: (u.isActive ? 'active' : 'inactive') as 'active' | 'inactive' | 'pending',
+          permissions: perms,
+          Platform_fee_percentage: u.Platform_fee_percentage,
+          lastLogin: lastLoginMs ? new Date(lastLoginMs).toISOString() : undefined,
+          createdAt: createdAtMs ? new Date(createdAtMs).toISOString() : new Date().toISOString(),
+        };
+      });
+      setUsers(mapped);
+    } catch (e: any) {
+      console.error('Failed to refresh user list:', e);
+    }
+  };
+
+  // Platform fee handlers
+  const handleOpenPlatformFeeModal = async (seller: User) => {
+    try {
+      // Fetch the seller profile to get current platform fee
+      const sellerProfile = await SellersService.get(seller.id);
+      const currentFee = sellerProfile?.Platform_fee_percentage ?? 8.88;
+      setEditingPlatformFee({ id: seller.id, username: seller.username, currentFee });
+      setPlatformFeeValue(currentFee.toString());
+      setPlatformFeeModalOpen(true);
+    } catch (e: any) {
+      toast({ title: 'Error', description: e.message || 'Failed to load platform fee', variant: 'destructive' });
+    }
+  };
+
+  const handleSavePlatformFee = async () => {
+    if (!editingPlatformFee) return;
+    
+    const feeValue = parseFloat(platformFeeValue);
+    if (isNaN(feeValue) || feeValue < 0 || feeValue > 100) {
+      toast({ title: 'Invalid value', description: 'Please enter a valid percentage between 0 and 100', variant: 'destructive' });
+      return;
+    }
+
+    try {
+      setPlatformFeeSaving(true);
+      await SellersService.updatePlatformFee(editingPlatformFee.id, feeValue);
+      toast({ title: 'Success', description: `Platform fee updated to ${feeValue}% for ${editingPlatformFee.username}` });
+      setPlatformFeeModalOpen(false);
+      setEditingPlatformFee(null);
+      // Refresh the user list to show updated data
+      await refreshUserList();
+    } catch (e: any) {
+      toast({ title: 'Error', description: e.message || 'Failed to update platform fee', variant: 'destructive' });
+    } finally {
+      setPlatformFeeSaving(false);
+    }
+  };
+
   // Load users from Firestore on mount
   useEffect(() => {
     const load = async () => {
@@ -438,6 +519,7 @@ const AccessTab = ({ loading = false, error, setError, onTabChange, onEditUser }
           isActive: typeof s.isActive === 'boolean' ? s.isActive : true,
           permissions: s.permissions as any,
           createdAt: s.createdAt || Date.now(),
+          Platform_fee_percentage: s.Platform_fee_percentage,
         })) : await getWebUsers();
          const mapped: User[] = webUsers.map((u: any) => {
             const createdAtMs = normalizeTimestamp((u as any).createdAt);
@@ -448,8 +530,9 @@ const AccessTab = ({ loading = false, error, setError, onTabChange, onEditUser }
               username: u.name,
               email: u.email,
               role: u.role,
-              status: u.isActive ? 'active' : 'inactive',
+              status: (u.isActive ? 'active' : 'inactive') as 'active' | 'inactive' | 'pending',
               permissions: perms,
+              Platform_fee_percentage: u.Platform_fee_percentage,
               lastLogin: lastLoginMs ? new Date(lastLoginMs).toISOString() : undefined,
               createdAt: createdAtMs ? new Date(createdAtMs).toISOString() : new Date().toISOString(),
             };
@@ -512,23 +595,7 @@ const AccessTab = ({ loading = false, error, setError, onTabChange, onEditUser }
       setVendorWizardOpen(true);
       // Optionally refresh from Firestore to reflect authoritative data
       try {
-        const webUsers = await getWebUsers();
-        const mapped: User[] = webUsers.map((u: WebUserProfile) => {
-           const createdAtMs = normalizeTimestamp((u as any).createdAt);
-           const lastLoginMs = normalizeTimestamp((u as any).lastLogin);
-          const perms = ensurePermissions(u.role, (u as any).permissions);
-           return {
-             id: u.uid,
-             username: u.name,
-             email: u.email,
-             role: u.role,
-             status: u.isActive ? 'active' : 'inactive',
-             permissions: perms,
-             lastLogin: lastLoginMs ? new Date(lastLoginMs).toISOString() : undefined,
-             createdAt: createdAtMs ? new Date(createdAtMs).toISOString() : new Date().toISOString(),
-           };
-         });
-        setUsers(mapped);
+        await refreshUserList();
       } catch {}
       setNewUser({
         username: "",
@@ -589,23 +656,7 @@ const AccessTab = ({ loading = false, error, setError, onTabChange, onEditUser }
       )));
       // Refresh list from Firestore to reflect authoritative data
       try {
-        const webUsers = await getWebUsers();
-        const mapped: User[] = webUsers.map((u: WebUserProfile) => {
-           const createdAtMs = normalizeTimestamp((u as any).createdAt);
-           const lastLoginMs = normalizeTimestamp((u as any).lastLogin);
-          const perms = ensurePermissions(u.role, (u as any).permissions);
-           return {
-             id: u.uid,
-             username: u.name,
-             email: u.email,
-             role: u.role,
-             status: u.isActive ? 'active' : 'inactive',
-             permissions: perms,
-             lastLogin: lastLoginMs ? new Date(lastLoginMs).toISOString() : undefined,
-             createdAt: createdAtMs ? new Date(createdAtMs).toISOString() : new Date().toISOString(),
-           };
-         });
-        setUsers(mapped);
+        await refreshUserList();
       } catch {}
       setEditingUser(null);
       setShowAddForm(false);
@@ -645,23 +696,7 @@ const AccessTab = ({ loading = false, error, setError, onTabChange, onEditUser }
       }
       // Refresh list to reflect persisted status
       try {
-        const webUsers = await getWebUsers();
-        const mapped: User[] = webUsers.map((u: WebUserProfile) => {
-           const createdAtMs = normalizeTimestamp((u as any).createdAt);
-           const lastLoginMs = normalizeTimestamp((u as any).lastLogin);
-          const perms = ensurePermissions(u.role, (u as any).permissions);
-           return {
-             id: u.uid,
-             username: u.name,
-             email: u.email,
-             role: u.role,
-             status: u.isActive ? 'active' : 'inactive',
-             permissions: perms,
-             lastLogin: lastLoginMs ? new Date(lastLoginMs).toISOString() : undefined,
-             createdAt: createdAtMs ? new Date(createdAtMs).toISOString() : new Date().toISOString(),
-           };
-         });
-        setUsers(mapped);
+        await refreshUserList();
       } catch {}
     } catch (e: any) {
       setError?.(e.message || 'Failed to update status');
@@ -1417,7 +1452,16 @@ const AccessTab = ({ loading = false, error, setError, onTabChange, onEditUser }
                     </td>
                     <td className="px-6 py-3">
                       <div className="flex items-center gap-1">
-                        {/* Hide edit icon for main seller accounts */}
+                        {/* Edit platform fee button */}
+                        <Button 
+                          variant="ghost" 
+                          size="sm" 
+                          onClick={() => handleOpenPlatformFeeModal(seller)} 
+                          className="text-blue-600 hover:text-blue-800"
+                          title="Edit Platform Fee"
+                        >
+                          <Edit3 className="w-4 h-4"/>
+                        </Button>
                         <Button variant="ghost" size="sm" onClick={() => handleToggleActive(seller)} className={seller.status==='active'? 'text-amber-600 hover:text-amber-800':'text-green-600 hover:text-green-800'}>{seller.status==='active'? <Lock className="w-4 h-4"/>:<Unlock className="w-4 h-4"/>}</Button>
                         <Button variant="ghost" size="sm" onClick={() => handleResendInvite(seller)} className="text-gray-600 hover:text-gray-800"><Key className="w-4 h-4"/></Button>
                         <Button variant="ghost" size="sm" onClick={() => handleDeleteUser(seller.id)} className="text-red-600 hover:text-red-800"><Trash2 className="w-4 h-4"/></Button>
@@ -1872,6 +1916,69 @@ const AccessTab = ({ loading = false, error, setError, onTabChange, onEditUser }
             <Button variant="outline" onClick={()=> setSubOpen(false)}>Cancel</Button>
             <Button onClick={handleCreateSub} disabled={subLoading} className="bg-teal-600 hover:bg-teal-700 text-white">
               {subLoading ? 'Sending…' : 'Create & Send Invite'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Platform Fee Edit Modal */}
+      <Dialog open={platformFeeModalOpen} onOpenChange={setPlatformFeeModalOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Edit Platform Fee</DialogTitle>
+            <DialogDescription>
+              {editingPlatformFee && (
+                <span>Update platform fee percentage for <strong>{editingPlatformFee.username}</strong></span>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          
+          {editingPlatformFee && (
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Current Fee: <span className="text-green-600 font-semibold">{editingPlatformFee.currentFee}%</span>
+                </label>
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  New Platform Fee Percentage (%)
+                </label>
+                <Input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  max="100"
+                  value={platformFeeValue}
+                  onChange={(e) => setPlatformFeeValue(e.target.value)}
+                  placeholder="Enter percentage (e.g., 8.88)"
+                  className="w-full"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Default is 8.88%. Enter a value between 0 and 100.
+                </p>
+              </div>
+            </div>
+          )}
+
+          <DialogFooter className="mt-6">
+            <Button 
+              variant="outline" 
+              onClick={() => {
+                setPlatformFeeModalOpen(false);
+                setEditingPlatformFee(null);
+              }}
+              disabled={platformFeeSaving}
+            >
+              Cancel
+            </Button>
+            <Button 
+              onClick={handleSavePlatformFee} 
+              disabled={platformFeeSaving}
+              className="bg-green-600 hover:bg-green-700 text-white"
+            >
+              {platformFeeSaving ? 'Saving...' : 'Save Changes'}
             </Button>
           </DialogFooter>
         </DialogContent>

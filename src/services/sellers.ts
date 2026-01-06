@@ -14,6 +14,7 @@ export interface SellerProfile {
   isActive?: boolean;
   permissions?: Record<string, boolean>;
   createdAt?: number | string;
+  Platform_fee_percentage?: number; // Platform fee percentage (default 8.88%)
   // Optional vendor profile fields
   vendor?: {
     tin?: string;
@@ -111,6 +112,11 @@ const SellersService = {
   async deleteSubAccount(parentSellerId: string, memberId: string) {
     const refDoc = doc(db, SELLER_COL, parentSellerId, 'members', memberId);
     await deleteDoc(refDoc);
+  },
+  // Update platform fee percentage for a seller
+  async updatePlatformFee(sellerId: string, platformFeePercentage: number): Promise<void> {
+    const refDoc = doc(db, SELLER_COL, sellerId);
+    await updateDoc(refDoc, { Platform_fee_percentage: platformFeePercentage });
   }
 };
 
