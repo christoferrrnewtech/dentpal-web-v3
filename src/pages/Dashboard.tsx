@@ -223,6 +223,7 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
   }, [confirmationOrders]);
 
   const isPaidStatus = (s: Order['status']) => ['to_ship','processing','completed','shipping'].includes(s);
+  const isWithdrawableStatus = (s: Order['status']) => s === 'completed'; // Only completed orders are eligible for withdrawal
   const getAmount = (o: Order) => typeof o.total === 'number' ? o.total : ((o.items || []).reduce((s, it) => s + ((it.price || 0) * (it.quantity || 0)), 0) || 0);
 
   const filteredOrders = useMemo(() => {
@@ -367,7 +368,8 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
     let matchedOrders = 0;
 
     confirmationOrders.forEach((order: any) => {
-      if (!isPaidStatus(order.status)) {
+      // Only count completed orders for withdrawal metrics
+      if (!isWithdrawableStatus(order.status)) {
         return;
       }
 
@@ -393,7 +395,7 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
       }
     });
 
-    console.log('[Dashboard] Financial metrics calculated:', {
+    console.log('[Dashboard] Financial metrics calculated (completed orders only):', {
       totalGross,
       totalNetPayout,
       totalPaymentProcessingFee,
