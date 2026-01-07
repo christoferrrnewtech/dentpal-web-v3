@@ -72,7 +72,7 @@ const Dashboard = ({ user, onLogout, adminMode = false }: DashboardProps) => {
     // Basic permissions for non-admin users
     const defaultPermissions: Record<string, boolean> = {
       dashboard: true,
-      booking: true,
+      //booking: true,
       confirmation: isAdmin,
       withdrawal: isAdmin,
       access: isAdmin,
@@ -285,7 +285,7 @@ const Dashboard = ({ user, onLogout, adminMode = false }: DashboardProps) => {
   const getPageTitle = () => {
     switch (activeItem) {
       case "dashboard": return "Dashboard";
-      case "booking": return "Booking";
+     // case "booking": return "Booking";
       case "confirmation": return "Confirmation";
       case "withdrawal": return "Withdrawal";
       case "access": return "Access";

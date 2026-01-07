@@ -3455,7 +3455,7 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
     switch (activeItem) {
       case "dashboard": 
         return isAdmin ? "Dashboard" : "Sales Summary";
-      case "booking": return "Booking";
+      //case "booking": return "Booking";
       case "confirmation": return "Confirmation";
       case "withdrawal": return "Withdrawal";
       case "access": return "Access";

@@ -23,9 +23,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 // Storage integration for BannerImages uploads
-import { storage } from "@/lib/firebase";
+import { storage, database } from "@/lib/firebase";
 import { ref as storageRef, uploadBytes, getDownloadURL, deleteObject } from "firebase/storage";
-import { listAll, getMetadata, updateMetadata } from 'firebase/storage';
+import { ref as dbRef, push, set, onValue, remove, update } from "firebase/database";
 
 // Helper: load image and compress to WebP/JPEG using Canvas
 const loadImageFromFile = (file: File): Promise<HTMLImageElement> => {
@@ -48,12 +48,12 @@ const replaceExt = (name: string, newExt: string) => name.replace(/\.[^/.]+$/, '
 
 async function compressImage(
   file: File,
-  opts: { maxWidth?: number; maxHeight?: number; quality?: number; thresholdKB?: number } = {}
+  opts: { maxWidth?: number; maxHeight?: number; quality?: number; thresholdKB?: number; targetSizeKB?: number } = {}
 ): Promise<{ blob: Blob; width: number; height: number; mime: string; ext: 'webp' | 'jpeg'; name: string }> {
-  const { maxWidth = 1200, maxHeight = 1200, quality = 0.8, thresholdKB = 200 } = opts;
+  const { maxWidth = 1200, maxHeight = 1200, quality = 0.8, thresholdKB = 200, targetSizeKB = 500 } = opts;
 
-  // Skip compression for GIFs or very small files
-  if (file.type.includes('gif') || file.size <= thresholdKB * 1024) {
+  // Skip compression for GIFs
+  if (file.type.includes('gif')) {
     return { blob: file, width: 0, height: 0, mime: file.type || 'image/jpeg', ext: 'jpeg', name: file.name };
   }
 
@@ -66,7 +66,7 @@ async function compressImage(
 
   const canvas = document.createElement('canvas');
   canvas.width = targetW; canvas.height = targetH;
-  const ctx = canvas.getContext('2d');
+  let ctx = canvas.getContext('2d');
   if (!ctx) throw new Error('Canvas 2D not available');
   ctx.drawImage(img, 0, 0, targetW, targetH);
 
@@ -80,13 +80,35 @@ async function compressImage(
     return canvasToBlob(canvas, mime, q);
   });
 
-  // Simple second pass if still big
-  if (blob.size > 350 * 1024) {
-    q = 0.65;
+  // Iteratively reduce quality until target size is reached
+  const targetSize = targetSizeKB * 1024;
+  let attempts = 0;
+  const maxAttempts = 8;
+  
+  while (blob.size > targetSize && q > 0.1 && attempts < maxAttempts) {
+    q = Math.max(0.1, q - 0.1);
     blob = await canvasToBlob(canvas, mime, q);
+    attempts++;
   }
 
-  return { blob, width: targetW, height: targetH, mime, ext, name: replaceExt(file.name, ext) };
+  // If still too large, reduce dimensions further
+  if (blob.size > targetSize) {
+    const minW = 600;
+    const minH = 400;
+    let scale = 0.85;
+    while (blob.size > targetSize && (canvas.width > minW || canvas.height > minH)) {
+      canvas.width = Math.max(minW, Math.round(canvas.width * scale));
+      canvas.height = Math.max(minH, Math.round(canvas.height * scale));
+      ctx = canvas.getContext('2d');
+      if (!ctx) throw new Error('Canvas 2D not available');
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      blob = await canvasToBlob(canvas, mime, q);
+      // Small nudge on quality as we scale down
+      q = Math.max(0.2, q - 0.05);
+    }
+  }
+
+  return { blob, width: canvas.width, height: canvas.height, mime, ext, name: replaceExt(file.name, ext) };
 }
 
 interface ImageAsset {
@@ -106,6 +128,7 @@ interface ImageAsset {
   isActive: boolean;
   usageCount: number;
   path?: string; // storage path for delete/management
+  duration?: { startTime: string; endTime: string };
 }
 
 interface ImagesTabProps {
@@ -125,6 +148,13 @@ const ImagesTab = ({ loading = false, error, setError, onTabChange }: ImagesTabP
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedImages, setSelectedImages] = useState<string[]>([]);
   const [showUploadModal, setShowUploadModal] = useState(false);
+  const [showActiveModal, setShowActiveModal] = useState(false);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [showBulkDeleteModal, setShowBulkDeleteModal] = useState(false);
+  const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
+  const [activeTargetId, setActiveTargetId] = useState<string | null>(null);
+  const [activeRange, setActiveRange] = useState<{ start: Date | null; end: Date | null }>({ start: new Date(), end: new Date(Date.now() + 7*86400000) });
+  const [activeCalendarMonth, setActiveCalendarMonth] = useState<Date>(new Date());
   const [dragActive, setDragActive] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -132,6 +162,8 @@ const ImagesTab = ({ loading = false, error, setError, onTabChange }: ImagesTabP
   const [uploadFiles, setUploadFiles] = useState<File[]>([]);
   const [uploadCategory, setUploadCategory] = useState<string>("general");
   const [uploadTags, setUploadTags] = useState<string>("");
+  const [bannerName, setBannerName] = useState<string>("");
+  const [bannerURL, setBannerURL] = useState<string>("");
 
   // Only show Banners category
   const categories = [
@@ -207,7 +239,7 @@ const ImagesTab = ({ loading = false, error, setError, onTabChange }: ImagesTabP
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
     setUploadFiles(files.filter(f => f.type.startsWith('image/')));
-    setShowUploadModal(true);
+    // Don't auto-show modal, it's already shown when user clicks Upload button
   };
 
   // Helpers to validate banner size
@@ -230,77 +262,50 @@ const ImagesTab = ({ loading = false, error, setError, onTabChange }: ImagesTabP
 
   const safeFileName = (name: string) => name.replace(/[^a-zA-Z0-9_.-]/g, '_');
 
-  // Load all banner images from Firebase Storage folder BannerImages (incremental for faster UX)
-  const loadBanners = async () => {
+  // Load all banner images from Firebase Realtime Database
+  const loadBanners = () => {
     setBannerLoading(true);
-    try {
-      const folderRef = storageRef(storage, 'BannerImages');
-      const list = await listAll(folderRef);
-      const baseItems = await Promise.all(
-        list.items.map(async (item) => {
-          const [url, meta] = await Promise.all([
-            getDownloadURL(item),
-            getMetadata(item)
-          ]);
-          const custom = meta.customMetadata || {};
-          const tags = (custom.tags || '').split(',').map(t => t.trim()).filter(Boolean);
-          const isActive = custom.isActive === 'true';
-          // Dimensions deferred (set 0 initially for quick list render)
-          return {
-            id: meta.fullPath,
-            name: meta.name,
-            category: 'banners',
-            type: meta.contentType?.includes('image/gif') ? 'gif' : 'image',
-            size: Number(meta.size) || 0,
-            dimensions: { width: 0, height: 0 },
-            format: meta.name.split('.').pop()?.toUpperCase() || 'IMG',
-            url,
-            thumbnail: url,
-            uploadDate: meta.timeCreated || new Date().toISOString(),
-            lastModified: meta.updated || meta.timeCreated || new Date().toISOString(),
-            uploadedBy: custom.uploadedBy || 'unknown',
-            tags,
-            isActive,
-            usageCount: 0,
-            path: meta.fullPath,
-          } as ImageAsset;
-        })
-      );
-      setImages(baseItems);
-      // Progressive dimension resolution (non-blocking)
-      setDimensionProgress({ total: baseItems.length, done: 0 });
-      let cancelled = false;
-      const resolveDims = (asset: ImageAsset) => {
-        const img = new Image();
-        img.onload = () => {
-          if (cancelled) return;
-            setImages(prev => prev.map(it => it.id === asset.id ? { ...it, dimensions: { width: img.width, height: img.height } } : it));
-          setDimensionProgress(p => ({ total: p.total, done: Math.min(p.total, p.done + 1) }));
-        };
-        img.onerror = () => {
-          if (cancelled) return;
-          setDimensionProgress(p => ({ total: p.total, done: Math.min(p.total, p.done + 1) }));
-        };
-        // Defer loading to idle time for smoother UI
-        if (typeof (window as any).requestIdleCallback === 'function') {
-          (window as any).requestIdleCallback(() => { img.src = asset.url; });
-        } else {
-          setTimeout(() => { img.src = asset.url; }, 0);
+    const bannersRef = dbRef(database, 'Banner');
+    
+    onValue(bannersRef, (snapshot) => {
+      try {
+        const data = snapshot.val();
+        if (!data) {
+          setImages([]);
+          setBannerLoading(false);
+          return;
         }
-      };
-      // Concurrency throttle
-      const concurrency = 6;
-      for (let i = 0; i < baseItems.length; i += concurrency) {
-        baseItems.slice(i, i + concurrency).forEach(resolveDims);
+
+        const bannerArray: ImageAsset[] = Object.entries(data).map(([key, value]: [string, any]) => {
+          return {
+            id: key,
+            name: value.name || 'Untitled',
+            category: 'banners' as const,
+            type: value.type || 'image' as const,
+            size: value.size || 0,
+            dimensions: value.dimensions || { width: 0, height: 0 },
+            format: value.format || 'WEBP',
+            url: value.url || value.imageURL || '',
+            thumbnail: value.thumbnail || value.url || value.imageURL || '',
+            uploadDate: value.uploadDate || value.timestamp || new Date().toISOString(),
+            lastModified: value.lastModified || value.timestamp || new Date().toISOString(),
+            uploadedBy: 'admin',
+            tags: [],
+            isActive: value.isActive !== undefined ? value.isActive : true,
+            usageCount: value.usageCount || 0,
+            path: value.storagePath || '',
+            duration: value.duration || undefined,
+          };
+        });
+
+        setImages(bannerArray);
+        setBannerLoading(false);
+      } catch (err) {
+        console.error('Failed to load banner images', err);
+        setError?.('Failed to fetch banner images');
+        setBannerLoading(false);
       }
-      // Cleanup
-      return () => { cancelled = true; };
-    } catch (err) {
-      console.error('Failed to load banner images', err);
-      setError?.('Failed to fetch banner images');
-    } finally {
-      setBannerLoading(false);
-    }
+    });
   };
 
   // Fetch on mount
@@ -308,14 +313,29 @@ const ImagesTab = ({ loading = false, error, setError, onTabChange }: ImagesTabP
 
   const handleUpload = async () => {
     if (uploadFiles.length === 0) return;
+    if (!bannerName.trim()) {
+      setError?.("Please enter a banner name");
+      return;
+    }
 
     setError?.(null);
     try {
-      const results: ImageAsset[] = [];
-
       for (const file of uploadFiles) {
-        // Compress image before upload (to WebP by default)
-        let processed = await compressImage(file);
+        console.log('Original file size:', file.size, 'bytes');
+        
+        // Compress image before upload with aggressive settings for banners
+        // Target ~200KB max for banners
+        let processed = await compressImage(file, {
+          maxWidth: 1280,
+          maxHeight: 720,
+          quality: 0.6,
+          thresholdKB: 0, // Compress all files
+          targetSizeKB: 200 // Target max 200KB
+        });
+
+        console.log('Compressed size:', processed.blob.size, 'bytes');
+        console.log('Compression ratio:', ((1 - processed.blob.size / file.size) * 100).toFixed(1) + '%');
+        console.log('Final size:', (processed.blob.size / 1024).toFixed(1) + ' KB');
 
         // If compression was skipped (e.g., small or GIF), read dimensions from original
         let width = 0, height = 0;
@@ -328,38 +348,44 @@ const ImagesTab = ({ loading = false, error, setError, onTabChange }: ImagesTabP
         const clean = safeFileName(processed.name);
         const path = `BannerImages/${Date.now()}_${clean}`;
         const ref = storageRef(storage, path);
-        await uploadBytes(ref, processed.blob, { contentType: processed.mime, customMetadata: { tags: uploadTags, isActive: 'false', uploadedBy: 'current-user@dentpal.com' } });
+        await uploadBytes(ref, processed.blob, { contentType: processed.mime });
         const url = await getDownloadURL(ref);
 
         const format = processed.ext.toUpperCase();
 
-        results.push({
-          id: `${Date.now()}_${Math.random().toString(36).slice(2)}`,
-          name: clean,
-          category: 'banners',
+        // Save to Realtime Database
+        const bannersRef = dbRef(database, 'Banner');
+        const newBannerRef = push(bannersRef);
+        
+        const bannerData = {
+          name: bannerName,
+          url: bannerURL || url,
+          imageURL: url,
+          storagePath: path,
           type: 'image',
+          format: format,
           size: processed.blob.size,
           dimensions: { width, height },
-          format,
-          url,
           thumbnail: url,
+          timestamp: new Date().toISOString(),
           uploadDate: new Date().toISOString(),
           lastModified: new Date().toISOString(),
-          uploadedBy: "current-user@dentpal.com",
-          tags: uploadTags.split(',').map(t => t.trim()).filter(Boolean),
-          isActive: false,
+          isActive: true,
+          clicks: 0,
+          impressions: 0,
           usageCount: 0,
-          path,
-        });
-      }
+          priority: 1,
+          targetScreen: 'home',
+        };
 
-      if (results.length) {
-        setImages(prev => [...prev, ...results]);
+        await set(newBannerRef, bannerData);
       }
 
       setShowUploadModal(false);
       setUploadFiles([]);
       setUploadTags("");
+      setBannerName("");
+      setBannerURL("");
     } catch (err) {
       console.error(err);
       setError?.("Failed to upload images. Please try again.");
@@ -367,42 +393,130 @@ const ImagesTab = ({ loading = false, error, setError, onTabChange }: ImagesTabP
   };
 
   const handleDeleteImage = async (imageId: string) => {
-    const img = images.find(i => i.id === imageId);
+    setDeleteTargetId(imageId);
+    setShowDeleteModal(true);
+  };
+
+  const confirmDeleteImage = async () => {
+    if (!deleteTargetId) return;
+    const img = images.find(i => i.id === deleteTargetId);
     if (!img) return;
-    if (window.confirm("Are you sure you want to delete this image?")) {
-      try {
-        if (img.path) {
-          await deleteObject(storageRef(storage, img.path));
-        }
-      } catch (e) {
-        console.warn('Failed to delete storage object, removing locally', e);
+    
+    try {
+      // Delete from Storage
+      if (img.path) {
+        await deleteObject(storageRef(storage, img.path));
       }
-      setImages(prev => prev.filter(img => img.id !== imageId));
-      setSelectedImages(prev => prev.filter(id => id !== imageId));
+      // Delete from Realtime Database
+      const bannerRef = dbRef(database, `Banner/${deleteTargetId}`);
+      await remove(bannerRef);
+      setSelectedImages(prev => prev.filter(id => id !== deleteTargetId));
+      setShowDeleteModal(false);
+      setDeleteTargetId(null);
+    } catch (e) {
+      console.warn('Failed to delete image', e);
+      setError?.('Failed to delete image');
     }
   };
 
-  // Toggle active flag & persist to storage metadata (multiple active supported)
+  // Open dialog to set active duration or deactivate immediately
   const toggleImageStatus = async (imageId: string) => {
     const target = images.find(i => i.id === imageId);
     if (!target) return;
-    const willBeActive = !target.isActive;
-
-    if (target.path) {
-      try {
-        await updateMetadata(
-          storageRef(storage, target.path),
-          { customMetadata: { tags: target.tags.join(','), isActive: willBeActive ? 'true' : 'false', uploadedBy: target.uploadedBy } }
-        );
-      } catch (e) {
-        console.warn('Failed to update active metadata', e);
-      }
+    if (!target.isActive) {
+      // Activating -> open modal to choose date range
+      setActiveTargetId(imageId);
+      // Pre-fill range (today to +7 days)
+      setActiveRange({ start: new Date(), end: new Date(Date.now() + 7*86400000) });
+      setActiveCalendarMonth(new Date());
+      setShowActiveModal(true);
+      return;
     }
 
-    // Update only this image locally; leave others unchanged
+    // Deactivating -> persist and clear duration
+    try {
+      const bannerRef = dbRef(database, `Banner/${imageId}`);
+      await update(bannerRef, {
+        isActive: false,
+        duration: null,
+        lastModified: new Date().toISOString()
+      });
+    } catch (e) {
+      console.warn('Failed to update active status', e);
+      setError?.('Failed to update banner status');
+    }
+
     setImages(prev => prev.map(img => (
-      img.id === imageId ? { ...img, isActive: willBeActive } : img
+      img.id === imageId ? { ...img, isActive: false, duration: undefined } : img
     )));
+  };
+
+  // Helper functions for custom date picker
+  const toISO = (d: Date | null) => {
+    if (!d) return '';
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+  const daysInMonth = (month: Date) => new Date(month.getFullYear(), month.getMonth()+1, 0).getDate();
+  const firstWeekday = (month: Date) => new Date(month.getFullYear(), month.getMonth(), 1).getDay();
+  
+  const isInActiveRange = (day: Date) => {
+    const { start, end } = activeRange;
+    if (!start) return false;
+    if (start && !end) return day.getTime() === start.getTime();
+    if (start && end) return day >= start && day <= end;
+    return false;
+  };
+
+  const handleActiveDayClick = (day: Date) => {
+    setActiveRange(prev => {
+      if (!prev.start || (prev.start && prev.end)) return { start: day, end: null };
+      if (day < prev.start) return { start: day, end: prev.start };
+      return { start: prev.start, end: day };
+    });
+  };
+
+  const confirmActivate = async () => {
+    if (!activeTargetId) return;
+    const start = activeRange.start; 
+    const end = activeRange.end || activeRange.start;
+    if (!start || !end) {
+      setError?.('Please select a start and end date');
+      return;
+    }
+    const now = new Date();
+    const startDate = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+    const endDate = new Date(end.getFullYear(), end.getMonth(), end.getDate(), 23, 59, 59, 999);
+    if (endDate < startDate) {
+      setError?.('End date must be after start date');
+      return;
+    }
+    if (endDate < now) {
+      setError?.('End date must be in the future');
+      return;
+    }
+    const startTime = startDate.toISOString();
+    const endTime = endDate.toISOString();
+
+    try {
+      const bannerRef = dbRef(database, `Banner/${activeTargetId}`);
+      await update(bannerRef, {
+        isActive: true,
+        duration: { startTime, endTime },
+        lastModified: new Date().toISOString()
+      });
+      setImages(prev => prev.map(img => (
+        img.id === activeTargetId ? { ...img, isActive: true, duration: { startTime, endTime } } : img
+      )));
+      setShowActiveModal(false);
+      setActiveTargetId(null);
+      setActiveRange({ start: null, end: null });
+    } catch (e) {
+      console.warn('Failed to set active duration', e);
+      setError?.('Failed to set active duration');
+    }
   };
 
   const activeBanner = images.find(i => i.isActive);
@@ -426,19 +540,30 @@ const ImagesTab = ({ loading = false, error, setError, onTabChange }: ImagesTabP
 
   const handleBulkDelete = async () => {
     if (selectedImages.length === 0) return;
-    if (window.confirm(`Are you sure you want to delete ${selectedImages.length} selected images?`)) {
-      // Attempt to delete from storage; ignore errors to continue UX
+    setShowBulkDeleteModal(true);
+  };
+
+  const confirmBulkDelete = async () => {
+    if (selectedImages.length === 0) return;
+    
+    try {
+      // Delete from storage and database
       await Promise.all(
-        selectedImages.map(id => {
+        selectedImages.map(async id => {
           const img = images.find(i => i.id === id);
           if (img?.path) {
-            return deleteObject(storageRef(storage, img.path)).catch(() => {});
+            await deleteObject(storageRef(storage, img.path)).catch(() => {});
           }
-          return Promise.resolve();
+          // Delete from Realtime Database
+          const bannerRef = dbRef(database, `Banner/${id}`);
+          await remove(bannerRef).catch(() => {});
         })
       );
-      setImages(prev => prev.filter(img => !selectedImages.includes(img.id)));
       setSelectedImages([]);
+      setShowBulkDeleteModal(false);
+    } catch (e) {
+      console.warn('Failed to delete images', e);
+      setError?.('Failed to delete some images');
     }
   };
 
@@ -453,6 +578,22 @@ const ImagesTab = ({ loading = false, error, setError, onTabChange }: ImagesTabP
       setImages([]);
       setSelectedImages([]);
     }
+  };
+
+  // Helper to format countdown until end time, only if banner is currently running
+  const formatCountdown = (startISO: string, endISO: string) => {
+    const now = new Date().getTime();
+    const start = new Date(startISO).getTime();
+    const end = new Date(endISO).getTime();
+    if (now < start) return 'Not started';
+    if (now > end) return 'Ended';
+    const diff = Math.max(0, end - now);
+    const d = Math.floor(diff / 86400000);
+    const h = Math.floor((diff % 86400000) / 3600000);
+    const m = Math.floor((diff % 3600000) / 60000);
+    if (d > 0) return `${d}d ${h}h left`;
+    if (h > 0) return `${h}h ${m}m left`;
+    return `${m}m left`;
   };
 
   const renderImageCard = (image: ImageAsset) => (
@@ -489,6 +630,11 @@ const ImagesTab = ({ loading = false, error, setError, onTabChange }: ImagesTabP
             {image.isActive ? 'Active' : 'Set Active'}
           </span>
         </Button>
+        {image.isActive && image.duration?.startTime && image.duration?.endTime && (
+          <div className="text-[11px] bg-white/90 rounded px-2 py-0.5 border border-green-200 text-green-700 shadow-sm">
+            {formatCountdown(image.duration.startTime, image.duration.endTime)}
+          </div>
+        )}
       </div>
 
       {/* Image Preview */}
@@ -517,13 +663,6 @@ const ImagesTab = ({ loading = false, error, setError, onTabChange }: ImagesTabP
               onClick={() => window.open(image.url, '_blank')}
             >
               <Eye className="w-4 h-4" />
-            </Button>
-            <Button
-              size="sm"
-              variant="secondary"
-              className="bg-white/90 text-gray-900 hover:bg-white"
-            >
-              <Edit3 className="w-4 h-4" />
             </Button>
             <Button
               size="sm"
@@ -631,6 +770,7 @@ const ImagesTab = ({ loading = false, error, setError, onTabChange }: ImagesTabP
         {image.dimensions.width > 0 ? `${image.dimensions.width} × ${image.dimensions.height}` : 'Loading…'}
       </td>
       <td className="px-6 py-4 whitespace-nowrap">
+        <div className="flex items-center gap-2">
         <Badge 
           className={`${image.isActive 
             ? 'bg-green-100 text-green-800 border-green-200' 
@@ -640,6 +780,10 @@ const ImagesTab = ({ loading = false, error, setError, onTabChange }: ImagesTabP
           <Star className={`w-3 h-3 ${image.isActive ? 'text-green-600 fill-green-600' : 'text-gray-400'}`} />
           {image.isActive ? 'Active' : 'Inactive'}
         </Badge>
+        {image.isActive && image.duration?.startTime && image.duration?.endTime && (
+          <span className="text-[11px] text-green-700">{formatCountdown(image.duration.startTime, image.duration.endTime)}</span>
+        )}
+        </div>
       </td>
       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
         {formatDate(image.uploadDate)}
@@ -774,7 +918,7 @@ const ImagesTab = ({ loading = false, error, setError, onTabChange }: ImagesTabP
           <div className="flex items-center space-x-3">
             <Button
               variant="outline"
-              onClick={() => fileInputRef.current?.click()}
+              onClick={() => setShowUploadModal(true)}
               className="bg-teal-50 text-teal-700 border-teal-200 hover:bg-teal-100"
             >
               <Upload className="w-4 h-4 mr-2" />
@@ -821,7 +965,7 @@ const ImagesTab = ({ loading = false, error, setError, onTabChange }: ImagesTabP
               {searchTerm ? `No images match your search for "${searchTerm}".` : 'Upload your first images to get started.'}
             </p>
             <Button
-              onClick={() => fileInputRef.current?.click()}
+              onClick={() => setShowUploadModal(true)}
               className="bg-teal-600 hover:bg-teal-700 text-white px-8 py-3"
             >
               <Upload className="w-5 h-5 mr-2" />
@@ -922,67 +1066,288 @@ const ImagesTab = ({ loading = false, error, setError, onTabChange }: ImagesTabP
             </div>
 
             <div className="space-y-6">
+              {/* Banner Name */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Selected Files ({uploadFiles.length})
+                  Banner Name <span className="text-red-500">*</span>
                 </label>
-                <div className="space-y-2 max-h-32 overflow-y-auto">
-                  {uploadFiles.map((file, index) => (
-                    <div key={index} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                      <div className="flex items-center space-x-3">
-                        <FileImage className="w-5 h-5 text-gray-400" />
-                        <span className="text-sm">{file.name}</span>
-                        <Badge variant="outline" className="text-xs">
-                          {formatFileSize(file.size)}
-                        </Badge>
+                <Input
+                  placeholder="Enter banner name"
+                  value={bannerName}
+                  onChange={(e) => setBannerName(e.target.value)}
+                  required
+                />
+              </div>
+
+              {/* Banner URL (optional) */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Target URL (optional)
+                </label>
+                <Input
+                  placeholder="https://example.com"
+                  value={bannerURL}
+                  onChange={(e) => setBannerURL(e.target.value)}
+                />
+                <p className="text-xs text-gray-500 mt-1">URL to navigate when banner is clicked</p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Select Image <span className="text-red-500">*</span>
+                </label>
+                {uploadFiles.length === 0 ? (
+                  <div 
+                    className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center cursor-pointer hover:border-teal-500 transition-colors"
+                    onClick={() => fileInputRef.current?.click()}
+                  >
+                    <Upload className="w-12 h-12 text-gray-400 mx-auto mb-3" />
+                    <p className="text-sm text-gray-600">Click to select an image</p>
+                    <p className="text-xs text-gray-400 mt-1">PNG, JPG, WEBP up to 10MB</p>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {uploadFiles.map((file, index) => (
+                      <div key={index} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                        <div className="flex items-center space-x-3">
+                          <FileImage className="w-5 h-5 text-gray-400" />
+                          <span className="text-sm">{file.name}</span>
+                          <Badge variant="outline" className="text-xs">
+                            {formatFileSize(file.size)}
+                          </Badge>
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setUploadFiles([])}
+                        >
+                          <X className="w-4 h-4" />
+                        </Button>
                       </div>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => setUploadFiles(prev => prev.filter((_, i) => i !== index))}
-                      >
-                        <X className="w-4 h-4" />
-                      </Button>
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="w-full"
+                    >
+                      Change Image
+                    </Button>
+                  </div>
+                )}
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={handleFileSelect}
+                  className="hidden"
+                />
               </div>
 
               {/* Fixed category for Banners */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">Category</label>
                 <div className="text-sm text-gray-700">Banners</div>
-                <p className="text-xs text-gray-500 mt-1">Uploads save to Firebase Storage folder "BannerImages" and are compressed to reduce file size.</p>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Tags (comma-separated)</label>
-                <Input
-                  placeholder="e.g. promotion, dental, banner"
-                  value={uploadTags}
-                  onChange={(e) => setUploadTags(e.target.value)}
-                />
+                <p className="text-xs text-gray-500 mt-1">Uploads save to Firebase Storage and metadata to Realtime Database.</p>
               </div>
             </div>
 
             <div className="flex items-center justify-between mt-8 pt-6 border-t border-gray-200">
               <div className="text-sm text-gray-500">
-                {uploadFiles.length} files ready to upload
+                {uploadFiles.length} file(s) ready to upload
               </div>
               <div className="flex items-center space-x-3">
                 <Button
                   variant="outline"
-                  onClick={() => setShowUploadModal(false)}
+                  onClick={() => {
+                    setShowUploadModal(false);
+                    setBannerName("");
+                    setBannerURL("");
+                    setUploadFiles([]);
+                  }}
                 >
                   Cancel
                 </Button>
                 <Button
                   onClick={handleUpload}
-                  disabled={loading || uploadFiles.length === 0}
+                  disabled={loading || uploadFiles.length === 0 || !bannerName.trim()}
                   className="bg-teal-600 hover:bg-teal-700 text-white"
                 >
-                  {loading ? "Uploading..." : "Upload Images"}
+                  {loading ? "Uploading..." : "Upload Banner"}
                 </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Activate Duration Modal */}
+      {showActiveModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl w-full max-w-[340px] mx-4 shadow-xl p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-semibold">Set Active Duration</h3>
+              <Button variant="ghost" size="sm" onClick={() => setShowActiveModal(false)} className="h-6 w-6 p-0">
+                <X className="w-4 h-4" />
+              </Button>
+            </div>
+            <p className="text-xs text-gray-600 mb-3">Choose a start and end date for when this banner should be active.</p>
+            
+            {/* Calendar header */}
+            <div className="flex items-center justify-between mb-2">
+              <button 
+                type="button" 
+                onClick={() => setActiveCalendarMonth(m => new Date(m.getFullYear(), m.getMonth()-1, 1))} 
+                className="px-2 py-1 text-xs rounded border bg-white hover:bg-gray-100"
+              >
+                ◀
+              </button>
+              <div className="text-xs font-medium text-gray-700">
+                {activeCalendarMonth.toLocaleString('en-US', { month: 'long', year: 'numeric' })}
+              </div>
+              <button 
+                type="button" 
+                onClick={() => setActiveCalendarMonth(m => new Date(m.getFullYear(), m.getMonth()+1, 1))} 
+                className="px-2 py-1 text-xs rounded border bg-white hover:bg-gray-100"
+              >
+                ▶
+              </button>
+            </div>
+            
+            {/* Weekday labels */}
+            <div className="grid grid-cols-7 text-[10px] font-medium text-gray-500 mb-1">
+              {['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d => <div key={d} className="text-center">{d}</div>)}
+            </div>
+            
+            {/* Days grid */}
+            <div className="grid grid-cols-7 gap-1 text-xs mb-3">
+              {Array.from({ length: firstWeekday(activeCalendarMonth) }).map((_,i) => <div key={'spacer'+i} />)}
+              {Array.from({ length: daysInMonth(activeCalendarMonth) }).map((_,i) => {
+                const day = new Date(activeCalendarMonth.getFullYear(), activeCalendarMonth.getMonth(), i+1);
+                const selectedStart = activeRange.start && day.getTime() === activeRange.start.getTime();
+                const selectedEnd = activeRange.end && day.getTime() === activeRange.end.getTime();
+                const inRange = isInActiveRange(day);
+                return (
+                  <button
+                    key={i}
+                    type="button"
+                    onClick={() => handleActiveDayClick(day)}
+                    className={`h-7 rounded-md flex items-center justify-center transition border text-gray-700 ${
+                      selectedStart || selectedEnd 
+                        ? 'bg-teal-600 text-white border-teal-600 font-semibold' 
+                        : inRange 
+                          ? 'bg-teal-100 border-teal-200' 
+                          : 'bg-white border-gray-200 hover:bg-gray-100'
+                    }`}
+                    title={toISO(day)}
+                  >
+                    {i+1}
+                  </button>
+                );
+              })}
+            </div>
+            
+            {/* Display selected range */}
+            {activeRange.start && (
+              <div className="text-xs text-gray-600 mb-3 text-center">
+                {toISO(activeRange.start)} → {activeRange.end ? toISO(activeRange.end) : '...'}
+              </div>
+            )}
+            
+            {/* Actions */}
+            <div className="flex items-center justify-between pt-2 border-t">
+              <button 
+                type="button" 
+                onClick={() => setActiveRange({ start: null, end: null })} 
+                className="text-[11px] px-2 py-1 rounded-md border bg-white hover:bg-gray-100"
+              >
+                Clear
+              </button>
+              <div className="flex gap-2">
+                <button 
+                  type="button" 
+                  onClick={confirmActivate} 
+                  disabled={!activeRange.start} 
+                  className="text-xs px-3 py-1.5 rounded-md bg-teal-600 text-white disabled:opacity-40 hover:bg-teal-700"
+                >
+                  Apply
+                </button>
+                <button 
+                  type="button" 
+                  onClick={() => setShowActiveModal(false)} 
+                  className="text-xs px-3 py-1.5 rounded-md border bg-white hover:bg-gray-100"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal (Single) */}
+      {showDeleteModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl w-full max-w-md mx-4 shadow-xl p-6">
+            <div className="flex items-start gap-4">
+              <div className="flex-shrink-0 w-10 h-10 rounded-full bg-red-100 flex items-center justify-center">
+                <Trash2 className="w-5 h-5 text-red-600" />
+              </div>
+              <div className="flex-1">
+                <h3 className="text-lg font-semibold text-gray-900 mb-2">Delete Banner</h3>
+                <p className="text-sm text-gray-600 mb-4">
+                  Are you sure you want to delete this banner? This action cannot be undone.
+                </p>
+                <div className="flex items-center justify-end gap-3">
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setShowDeleteModal(false);
+                      setDeleteTargetId(null);
+                    }}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    onClick={confirmDeleteImage}
+                    className="bg-red-600 hover:bg-red-700 text-white"
+                  >
+                    Delete
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk Delete Confirmation Modal */}
+      {showBulkDeleteModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl w-full max-w-md mx-4 shadow-xl p-6">
+            <div className="flex items-start gap-4">
+              <div className="flex-shrink-0 w-10 h-10 rounded-full bg-red-100 flex items-center justify-center">
+                <Trash2 className="w-5 h-5 text-red-600" />
+              </div>
+              <div className="flex-1">
+                <h3 className="text-lg font-semibold text-gray-900 mb-2">Delete Multiple Banners</h3>
+                <p className="text-sm text-gray-600 mb-4">
+                  Are you sure you want to delete {selectedImages.length} selected banner{selectedImages.length > 1 ? 's' : ''}? This action cannot be undone.
+                </p>
+                <div className="flex items-center justify-end gap-3">
+                  <Button
+                    variant="outline"
+                    onClick={() => setShowBulkDeleteModal(false)}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    onClick={confirmBulkDelete}
+                    className="bg-red-600 hover:bg-red-700 text-white"
+                  >
+                    Delete {selectedImages.length} Banner{selectedImages.length > 1 ? 's' : ''}
+                  </Button>
+                </div>
               </div>
             </div>
           </div>
