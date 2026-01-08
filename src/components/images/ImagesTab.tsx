@@ -171,7 +171,7 @@ const ImagesTab = ({ loading = false, error, setError, onTabChange }: ImagesTabP
   ];
 
   const filteredImages = images.filter(image => {
-    const matchesCategory = image.category === "banners"; // banner-only
+    const matchesCategory = image.category === "banners"; 
     const matchesSearch = image.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          image.tags.some(tag => tag.toLowerCase().includes(searchTerm.toLowerCase()));
     return matchesCategory && matchesSearch;
@@ -239,10 +239,10 @@ const ImagesTab = ({ loading = false, error, setError, onTabChange }: ImagesTabP
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
     setUploadFiles(files.filter(f => f.type.startsWith('image/')));
-    // Don't auto-show modal, it's already shown when user clicks Upload button
+   
   };
 
-  // Helpers to validate banner size
+  
   const getImageDimensions = (file: File): Promise<{ width: number; height: number }> => {
     return new Promise((resolve, reject) => {
       const url = URL.createObjectURL(file);
@@ -324,20 +324,18 @@ const ImagesTab = ({ loading = false, error, setError, onTabChange }: ImagesTabP
         console.log('Original file size:', file.size, 'bytes');
         
         // Compress image before upload with aggressive settings for banners
-        // Target ~200KB max for banners
         let processed = await compressImage(file, {
           maxWidth: 1280,
           maxHeight: 720,
           quality: 0.6,
-          thresholdKB: 0, // Compress all files
-          targetSizeKB: 200 // Target max 200KB
+          thresholdKB: 0, 
+          targetSizeKB: 200 
         });
 
         console.log('Compressed size:', processed.blob.size, 'bytes');
         console.log('Compression ratio:', ((1 - processed.blob.size / file.size) * 100).toFixed(1) + '%');
         console.log('Final size:', (processed.blob.size / 1024).toFixed(1) + ' KB');
 
-        // If compression was skipped (e.g., small or GIF), read dimensions from original
         let width = 0, height = 0;
         if (processed.width && processed.height) {
           width = processed.width; height = processed.height;
@@ -403,37 +401,30 @@ const ImagesTab = ({ loading = false, error, setError, onTabChange }: ImagesTabP
     if (!img) return;
     
     try {
-      // Delete from Storage
       if (img.path) {
         await deleteObject(storageRef(storage, img.path));
       }
-      // Delete from Realtime Database
       const bannerRef = dbRef(database, `Banner/${deleteTargetId}`);
       await remove(bannerRef);
       setSelectedImages(prev => prev.filter(id => id !== deleteTargetId));
       setShowDeleteModal(false);
       setDeleteTargetId(null);
     } catch (e) {
-      console.warn('Failed to delete image', e);
       setError?.('Failed to delete image');
     }
   };
 
-  // Open dialog to set active duration or deactivate immediately
   const toggleImageStatus = async (imageId: string) => {
     const target = images.find(i => i.id === imageId);
     if (!target) return;
     if (!target.isActive) {
-      // Activating -> open modal to choose date range
       setActiveTargetId(imageId);
-      // Pre-fill range (today to +7 days)
       setActiveRange({ start: new Date(), end: new Date(Date.now() + 7*86400000) });
       setActiveCalendarMonth(new Date());
       setShowActiveModal(true);
       return;
     }
 
-    // Deactivating -> persist and clear duration
     try {
       const bannerRef = dbRef(database, `Banner/${imageId}`);
       await update(bannerRef, {
@@ -442,7 +433,6 @@ const ImagesTab = ({ loading = false, error, setError, onTabChange }: ImagesTabP
         lastModified: new Date().toISOString()
       });
     } catch (e) {
-      console.warn('Failed to update active status', e);
       setError?.('Failed to update banner status');
     }
 
@@ -514,7 +504,6 @@ const ImagesTab = ({ loading = false, error, setError, onTabChange }: ImagesTabP
       setActiveTargetId(null);
       setActiveRange({ start: null, end: null });
     } catch (e) {
-      console.warn('Failed to set active duration', e);
       setError?.('Failed to set active duration');
     }
   };
@@ -547,14 +536,12 @@ const ImagesTab = ({ loading = false, error, setError, onTabChange }: ImagesTabP
     if (selectedImages.length === 0) return;
     
     try {
-      // Delete from storage and database
       await Promise.all(
         selectedImages.map(async id => {
           const img = images.find(i => i.id === id);
           if (img?.path) {
             await deleteObject(storageRef(storage, img.path)).catch(() => {});
           }
-          // Delete from Realtime Database
           const bannerRef = dbRef(database, `Banner/${id}`);
           await remove(bannerRef).catch(() => {});
         })
@@ -562,7 +549,6 @@ const ImagesTab = ({ loading = false, error, setError, onTabChange }: ImagesTabP
       setSelectedImages([]);
       setShowBulkDeleteModal(false);
     } catch (e) {
-      console.warn('Failed to delete images', e);
       setError?.('Failed to delete some images');
     }
   };
@@ -580,7 +566,6 @@ const ImagesTab = ({ loading = false, error, setError, onTabChange }: ImagesTabP
     }
   };
 
-  // Helper to format countdown until end time, only if banner is currently running
   const formatCountdown = (startISO: string, endISO: string) => {
     const now = new Date().getTime();
     const start = new Date(startISO).getTime();
@@ -607,7 +592,6 @@ const ImagesTab = ({ loading = false, error, setError, onTabChange }: ImagesTabP
             : 'border-gray-200 hover:border-gray-300'
       }`}
     >
-      {/* Selection Checkbox */}
       <div className="absolute top-3 left-3 z-10">
         <input
           type="checkbox"
@@ -617,7 +601,6 @@ const ImagesTab = ({ loading = false, error, setError, onTabChange }: ImagesTabP
         />
       </div>
 
-      {/* Active Toggle */}
       <div className="absolute top-3 right-3 z-10 flex flex-col items-end gap-2">
         <Button
           variant="secondary"
@@ -637,7 +620,6 @@ const ImagesTab = ({ loading = false, error, setError, onTabChange }: ImagesTabP
         )}
       </div>
 
-      {/* Image Preview */}
       <div className="aspect-video bg-gray-100 rounded-t-xl overflow-hidden relative">
         {image.type === 'video' ? (
           <video 
@@ -653,7 +635,6 @@ const ImagesTab = ({ loading = false, error, setError, onTabChange }: ImagesTabP
           />
         )}
         
-        {/* Overlay with actions */}
         <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-40 transition-all duration-200 flex items-center justify-center">
           <div className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex space-x-2">
             <Button
@@ -675,7 +656,6 @@ const ImagesTab = ({ loading = false, error, setError, onTabChange }: ImagesTabP
           </div>
         </div>
 
-        {/* Type Badge */}
         <div className="absolute bottom-2 left-2">
           <Badge variant="secondary" className="bg-black/70 text-white text-xs">
             {image.type.toUpperCase()}
@@ -683,7 +663,6 @@ const ImagesTab = ({ loading = false, error, setError, onTabChange }: ImagesTabP
         </div>
       </div>
 
-      {/* Image Info */}
       <div className="p-4">
         <div className="flex items-start justify-between mb-2">
           <h4 className="font-medium text-gray-900 truncate flex-1 mr-2">
@@ -700,10 +679,7 @@ const ImagesTab = ({ loading = false, error, setError, onTabChange }: ImagesTabP
         </div>
 
         <div className="space-y-2">
-          <Badge className={`${getCategoryColor(image.category)} text-xs border`}>
-            <span className="mr-1">{getCategoryIcon(image.category)}</span>
-            {categories.find(cat => cat.id === image.category)?.name || image.category}
-          </Badge>
+          
 
           <div className="flex items-center justify-between text-xs text-gray-500">
             <span>{formatFileSize(image.size)}</span>
@@ -798,13 +774,7 @@ const ImagesTab = ({ loading = false, error, setError, onTabChange }: ImagesTabP
           >
             <Eye className="w-4 h-4" />
           </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="text-gray-600 hover:text-gray-800"
-          >
-            <Edit3 className="w-4 h-4" />
-          </Button>
+          
           <Button
             variant="ghost"
             size="sm"
@@ -829,7 +799,6 @@ const ImagesTab = ({ loading = false, error, setError, onTabChange }: ImagesTabP
 
   return (
     <div className="space-y-8" onDragEnter={handleDrag} onDragLeave={handleDrag} onDragOver={handleDrag}>
-      {/* Loading banner indicator */}
       {bannerLoading && images.length === 0 && (
         <div className="bg-white border border-gray-200 rounded-2xl p-6 flex items-center gap-3 text-sm text-gray-600 shadow-sm">
           <span className="animate-pulse inline-flex w-4 h-4 rounded-full bg-teal-500" /> Loading banner images…
@@ -841,7 +810,6 @@ const ImagesTab = ({ loading = false, error, setError, onTabChange }: ImagesTabP
         </div>
       )}
 
-      {/* Error Display */}
       {error && (
         <div className="bg-red-50 border border-red-200 rounded-xl p-4 flex items-center space-x-3">
           <X className="w-5 h-5 text-red-500" />
@@ -857,7 +825,6 @@ const ImagesTab = ({ loading = false, error, setError, onTabChange }: ImagesTabP
         </div>
       )}
 
-      {/* Categories Navigation */}
       <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
         <div className="flex flex-wrap gap-2">
           {categories.map(category => (
@@ -880,7 +847,6 @@ const ImagesTab = ({ loading = false, error, setError, onTabChange }: ImagesTabP
         </div>
       </div>
 
-      {/* Actions Bar */}
       <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
         <div className="flex flex-col lg:flex-row gap-4 items-start lg:items-center justify-between">
           <div className="flex items-center space-x-4 flex-1">
@@ -955,7 +921,6 @@ const ImagesTab = ({ loading = false, error, setError, onTabChange }: ImagesTabP
         </div>
       </div>
 
-      {/* Content Area */}
       {filteredImages.length === 0 ? (
         <div className="bg-white rounded-2xl border border-gray-200 p-12 text-center shadow-sm">
           <div className="max-w-md mx-auto">
@@ -1026,7 +991,6 @@ const ImagesTab = ({ loading = false, error, setError, onTabChange }: ImagesTabP
         </div>
       )}
 
-      {/* Hidden File Input */}
       <input
         ref={fileInputRef}
         type="file"
@@ -1036,7 +1000,6 @@ const ImagesTab = ({ loading = false, error, setError, onTabChange }: ImagesTabP
         className="hidden"
       />
 
-      {/* Drag & Drop Overlay */}
       {dragActive && (
         <div 
           className="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
@@ -1050,7 +1013,6 @@ const ImagesTab = ({ loading = false, error, setError, onTabChange }: ImagesTabP
         </div>
       )}
 
-      {/* Upload Modal */}
       {showUploadModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <div className="bg-white rounded-2xl p-8 max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
@@ -1066,7 +1028,6 @@ const ImagesTab = ({ loading = false, error, setError, onTabChange }: ImagesTabP
             </div>
 
             <div className="space-y-6">
-              {/* Banner Name */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Banner Name <span className="text-red-500">*</span>
@@ -1079,7 +1040,7 @@ const ImagesTab = ({ loading = false, error, setError, onTabChange }: ImagesTabP
                 />
               </div>
 
-              {/* Banner URL (optional) */}
+              {/* Banner URL  */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Target URL (optional)

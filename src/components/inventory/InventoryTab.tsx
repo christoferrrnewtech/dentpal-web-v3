@@ -13,7 +13,7 @@ import { InventoryService } from '../../services/inventory';
 import { useAuth } from '@/hooks/use-auth';
 import { getWebUsers } from '@/services/webUserService';
 import { useToast } from '@/hooks/use-toast';
-import { storage } from '@/lib/firebase';
+import { storage, auth } from '@/lib/firebase';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { ProductService } from '@/services/product';
 import CatalogTable from './CatalogTable';
@@ -51,27 +51,24 @@ const SUBCATEGORY_OPTIONS: Record<typeof CATEGORY_OPTIONS[number], string[]> = {
   ],
 };
 
-// Map UI category names to Firestore Category document IDs
+  // TODO: replace with real Category IDs when available
 const CATEGORY_NAME_TO_ID: Record<string, string> = {
   'Disposables': 'EsDNnmc72LZNMHk3SmeV',
   'Dental Equipment': 'PtqCTLGduo6vay2umpMY',
   'Consumables': 'iXMJ7vcFIcMjQBVfIHZp',
-  // UI shows "Equipment" but the doc has "Equipments"; map both to same ID
   'Equipment': 'z5BRrsDIy92XEK1PzdM4',
   'Equipments': 'z5BRrsDIy92XEK1PzdM4',
 };
 
-// Optional: map some subcategory names to IDs if known (placeholder until real IDs provided)
 const SUBCATEGORY_NAME_TO_ID: Record<string, string> = {
   // TODO: replace with real subcategory IDs when available
   'Bonding Agents': 'OEtF1TsohK0Re8RT9rOf',
 };
 
-// New: shared item status type for UI
 type ItemStatus = 'active' | 'inactive' | 'draft' | 'pending_qc' | 'violation' | 'deleted';
 
 interface InventoryTabProps {
-  sellerId?: string; // filter by seller id
+  sellerId?: string; 
 }
 
 const mockItems: InventoryItem[] = [
@@ -86,44 +83,39 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
   const { filtered, query, setQuery, draft, selectItem, setDelta, setReason, resetDraft } = useInventory(items);
   const [submitting, setSubmitting] = useState(false);
   const [activeTab, setActiveTab] = useState<'add' | 'history' | 'active' | 'stockout' | 'listing'>('add');
-  const [catalogTab, setCatalogTab] = useState<'all' | 'active' | 'inactive' | 'draft' | 'pending_qc' | 'violation' | 'deleted'>('all');
+  const [catalogTab, setCatalogTab] = useState<'all' | 'active' | 'inactive' | 'draft' | 'pending_qc' | 'violation' | 'deleted' | 'logs'>('all');
   const [filterName, setFilterName] = useState<string>('');
   const [filterCategory, setFilterCategory] = useState<string>('');
   const [sortBy, setSortBy] = useState<'name' | 'stock' | 'updatedAt'>('name');
 
-  // History tab state
   const [history, setHistory] = useState<Array<{ id: string; adjustmentNo: string; dateISO: string; reason: string; itemName: string; stockAfter: number }>>([]);
   const [historyDate, setHistoryDate] = useState<string>('');
   const [historyReason, setHistoryReason] = useState<string>('');
 
-  // Auth + toast
+  // New: Logs state
+  const [logs, setLogs] = useState<Array<any>>([]);
+
   const { uid, isSeller, isAdmin } = useAuth();
   const { toast } = useToast();
   const navigate = useNavigate();
 
-  // Image upload state
-  // removed: immediate uploading flag; we only preview before create
+ 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Admin seller picker state
   const [sellers, setSellers] = useState<Array<{ uid: string; name?: string; email: string }>>([]);
   const [selectedSellerId, setSelectedSellerId] = useState<string | null>(null);
 
-  // Compute effective sellerId for data ops
-  // For sub-accounts, always use parentId so they see owner inventory
+  
   const { isSubAccount, parentId } = useAuth();
   const effectiveSellerId = sellerId ?? (isSeller ? (isSubAccount ? (parentId || uid) : uid) : selectedSellerId);
 
-  // New: low-stock only filter
   const [lowOnly, setLowOnly] = useState<boolean>(false);
 
-  // Add Product modal state
   const [showAdd, setShowAdd] = useState(false);
   const [newItem, setNewItem] = useState<{
     name: string;
     description: string;
-    imageUrl: string; // persisted URL after create
-    // New: local selection before upload
+    imageUrl: string; 
     imageFile?: File | null;
     imagePreview?: string | null;
     category: string;
@@ -136,7 +128,6 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
     suggestedThreshold: number;
     unit: string;
     inStock: number;
-    // New: default/simple variation name when no variants
     simpleVariantName?: string;
   }>({
     name: '',
@@ -162,15 +153,11 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
     simpleVariantName: '',
   });
 
-  // New: simple availability flags for the Add Product modal (simple product row)
   const [available, setAvailable] = useState<boolean>(true);
   const [preOrder, setPreOrder] = useState<boolean>(false);
 
-  // Variant state (manual rows only) + local preview fields
   const [variants, setVariants] = useState<Array<{ key: string; options: Record<string, string>; price: number; stock: number; sku?: string; specialPrice?: number; available?: boolean; imageUrl?: string; imageFile?: File | null; imagePreview?: string | null; name?: string }>>([]);
-  // removed: variantUploading flag; previews only before create
   const variantFileInputs = useRef<Record<string, HTMLInputElement | null>>({});
-  // When a new variant is added, auto-trigger its file picker
   const [pendingVariantPick, setPendingVariantPick] = useState<string | null>(null);
 
   const triggerVariantFilePick = (key: string) => {
@@ -193,21 +180,18 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
     const preview = URL.createObjectURL(file);
     setVariants((list) => list.map(v => {
       if (v.key !== key) return v;
-      // Revoke previous preview if existed
       if (v.imagePreview) URL.revokeObjectURL(v.imagePreview);
       return { ...v, imageFile: file, imagePreview: preview };
     }));
     if (variantFileInputs.current[key]) variantFileInputs.current[key]!.value = '';
   };
 
-  // New: add a blank variant row (manual variant)
   const addBlankVariant = () => {
     const key = `manual-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     setVariants((prev) => [...prev, { key, options: {}, price: 0, stock: 0, sku: undefined, specialPrice: 0, available: true, imageUrl: undefined, imageFile: null, imagePreview: null, name: '' }]);
     setPendingVariantPick(key);
   };
 
-  // Load sellers for admin to choose
   useEffect(() => {
     let mounted = true;
     (async () => {
@@ -217,7 +201,6 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
         if (!mounted) return;
         const mapped = rows.map(u => ({ uid: (u as any).uid, name: (u as any).name, email: (u as any).email }));
         setSellers(mapped);
-        // Auto-select first seller if none picked yet
         if (!selectedSellerId && mapped.length > 0) {
           setSelectedSellerId(mapped[0].uid);
         }
@@ -229,7 +212,6 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
     return () => { mounted = false; };
   }, [isAdmin]);
 
-  // Subscribe to inventory for effective seller
   useEffect(() => {
     if (!effectiveSellerId) {
       setItems([]);
@@ -237,13 +219,10 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
       return;
     }
     setLoading(true);
-    // Switched: use Product as the source of truth
     const unsub = ProductService.listenBySeller(effectiveSellerId, (rows) => {
-      // Map product rows to InventoryItem-like shape used by the table
       const mapped = rows.map(r => ({
         id: r.id,
         name: r.name,
-        // Default threshold to 5 if not set
         suggestedThreshold: r.suggestedThreshold != null ? Number(r.suggestedThreshold) : 5,
         inStock: r.inStock,
         unit: undefined,
@@ -270,11 +249,19 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
     return () => unsub();
   }, [effectiveSellerId]);
 
-  // Subscribe to adjustments for effective seller
   useEffect(() => {
     if (!effectiveSellerId) { setHistory([]); return; }
     const unsub = InventoryService.listenAdjustmentsBySeller(effectiveSellerId, (rows) => {
       setHistory(rows);
+    });
+    return () => unsub();
+  }, [effectiveSellerId]);
+
+  // New: Listen to product logs
+  useEffect(() => {
+    if (!effectiveSellerId) { setLogs([]); return; }
+    const unsub = ProductService.listenProductLogsBySeller(effectiveSellerId, (rows) => {
+      setLogs(rows);
     });
     return () => unsub();
   }, [effectiveSellerId]);
@@ -306,7 +293,6 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
     try {
       setSubmitting(true);
 
-      // Upload images now (product + variants), using previews selected earlier
       let productImageUrl: string | undefined = newItem.imageUrl?.trim() || undefined;
       let imageVersion: string | null = null;
       if (newItem.imageFile) {
@@ -319,7 +305,6 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
         imageVersion = ts;
       }
 
-      // Prepare variants payload first and capture variant image versions
       const variationImageVersions: Record<string, string> = {};
       const variantsToSave = [] as Array<{ key: string; options: Record<string, string>; price: number; stock: number; sku?: string; specialPrice?: number; available?: boolean; imageUrl?: string; name?: string }>;
       for (let idx = 0; idx < variants.length; idx++) {
@@ -337,12 +322,10 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
         variantsToSave.push({ key: v.key, options: v.options, price: Number(v.price) || 0, stock: Number(v.stock) || 0, sku: v.sku, specialPrice: v.specialPrice, available: v.available, imageUrl: vUrl, name: (v.name || '').trim() || undefined });
       }
 
-      // Compute lowestPrice for Product
       const lowestPrice = variantsToSave.length > 0
         ? Math.min(...variantsToSave.map(v => (v.specialPrice != null && v.specialPrice > 0 ? Number(v.specialPrice) : Number(v.price)) || 0))
         : (newItem.specialPrice && newItem.specialPrice > 0 ? Number(newItem.specialPrice) : Number(newItem.price) || 0);
 
-      // Create Product document (catalog) with required schema
       const productRef = await ProductService.createProduct({
         sellerId: effectiveSellerId!,
         name: newItem.name.trim(),
@@ -351,17 +334,14 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
         imageVersion,
         categoryID: CATEGORY_NAME_TO_ID[newItem.category] || null,
         subCategoryID: SUBCATEGORY_NAME_TO_ID[newItem.subcategory] || null,
-        // If saving as draft, keep inactive and mark status as draft
         isActive: createStatus === 'draft' ? false : true,
         status: createStatus === 'draft' ? 'draft' : undefined,
         clickCounter: 0,
         lowestPrice,
         variationImageVersions,
-        // New: persist suggested threshold (null when 0)
         suggestedThreshold: newItem.suggestedThreshold > 0 ? newItem.suggestedThreshold : null,
       } as any);
 
-      // Add Variation subcollection under Product (always create at least one)
       const variationsForProduct = (variantsToSave.length > 0)
         ? variantsToSave.map((v, i) => ({
             sku: v.sku,
@@ -384,9 +364,7 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
 
       await ProductService.addVariations(productRef.id, variationsForProduct);
 
-      // Revoke product preview URL if set
       if (newItem.imagePreview) URL.revokeObjectURL(newItem.imagePreview);
-      // Revoke all variant previews
       variants.forEach(v => { if (v.imagePreview) URL.revokeObjectURL(v.imagePreview); });
 
       setShowAdd(false);
@@ -422,7 +400,6 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
-  // Compute filtered catalog items based on current tab and filters
   const filteredCatalog = useMemo(() => {
     const nameQuery = (filterName || '').trim().toLowerCase();
     return items
@@ -464,33 +441,28 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
           if (diff !== 0) return diff;
           return (a.name || '').localeCompare(b.name || '');
         }
-        // default: name asc
         return (a.name || '').localeCompare(b.name || '');
       });
   }, [items, catalogTab, filterName, filterCategory, sortBy, lowOnly]);
 
-  // Edit flow: open item data in form
   const [editingId, setEditingId] = useState<string | null>(null);
 
-  // Load item into form for editing
   const openEdit = useCallback(async (id: string) => {
     setSubmitting(true);
     try {
-      // Fetch from Product + Variation instead of legacy inventory_items
       const detail = await ProductService.getProductDetail(id);
       if (!detail) { setSubmitting(false); return; }
       const p: any = detail.product;
       const vars: any[] = Array.isArray(detail.variations) ? detail.variations : [];
 
-      // Prefill product-level fields
       setNewItem({
         name: String(p.name || ''),
         description: String(p.description || ''),
         imageUrl: String(p.imageURL || ''),
         imageFile: null,
         imagePreview: null,
-        category: '', // unknown without reverse lookup
-        subcategory: '', // unknown without reverse lookup
+        category: '', 
+        subcategory: '', 
         price: Number(p.price ?? 0) || 0,
         specialPrice: Number(p.specialPrice ?? 0) || 0,
         sku: '',
@@ -506,14 +478,13 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
         inStock: vars.reduce((sum, v: any) => sum + (Number(v.stock || 0)), 0),
       });
 
-      // Prefill variants from Variation subcollection
       setVariants(vars.map((v: any, i: number) => ({
         key: v.id || `var-${i}`,
         options: {},
         price: Number(v.price || 0),
         stock: Number(v.stock || 0),
         sku: v.sku || v.SKU || undefined,
-        specialPrice: undefined, // per-variation discount not modeled yet
+        specialPrice: undefined, 
         available: true,
         imageUrl: v.imageURL || undefined,
         imageFile: null,
@@ -532,9 +503,7 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
     }
   }, []);
 
-  // Open a fresh Add Product modal (ensure no edit state bleeds over)
   const openAddNew = useCallback(() => {
-    // Revoke previews if any
     if (newItem.imagePreview) URL.revokeObjectURL(newItem.imagePreview);
     variants.forEach(v => { if (v.imagePreview) URL.revokeObjectURL(v.imagePreview); });
     setEditingId(null);
@@ -545,7 +514,6 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
     setShowAdd(true);
   }, [newItem.imagePreview, variants]);
 
-  // Submit handler decides create vs update
   const handleSaveItem = useCallback(async (statusOverride?: ItemStatus) => {
     if (!effectiveSellerId) {
       toast({ title: 'Select a seller first', description: 'Choose a seller to save items under.' });
@@ -558,7 +526,6 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
     try {
       setSubmitting(true);
 
-      // Upload any newly selected images
       let productImageUrl: string | undefined = newItem.imageUrl?.trim() || undefined;
       let imageVersion: string | null = null;
       if (newItem.imageFile) {
@@ -571,7 +538,6 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
         imageVersion = ts;
       }
 
-      // Prepare variants payload and upload new variant images if any
       const variantsToSave = [] as Array<{ key: string; options: Record<string, string>; price: number; stock: number; sku?: string; specialPrice?: number; available?: boolean; imageUrl?: string; name?: string }>;
       for (let idx = 0; idx < variants.length; idx++) {
         const v = variants[idx];
@@ -588,24 +554,18 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
       }
 
       if (editingId) {
-        // Update existing Product (basic fields only for now)
         await ProductService.updateProduct(editingId, {
           name: newItem.name.trim(),
           description: newItem.description.trim(),
           ...(productImageUrl !== undefined ? { imageURL: productImageUrl } : {} as any),
-          // category mapping omitted until reverse map is available
           ...(statusOverride ? { status: statusOverride } : {} as any),
-          // New: persist threshold updates
           suggestedThreshold: newItem.suggestedThreshold > 0 ? newItem.suggestedThreshold : null,
         });
-        // Note: variation updates not yet implemented in this flow
       } else {
-        // Create new product in Product collection (not inventory_items)
         await handleCreateItem(statusOverride);
         return;
       }
 
-      // Cleanup previews
       if (newItem.imagePreview) URL.revokeObjectURL(newItem.imagePreview);
       variants.forEach(v => { if (v.imagePreview) URL.revokeObjectURL(v.imagePreview); });
 
@@ -623,7 +583,6 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
     }
   }, [newItem, effectiveSellerId, variants, available, preOrder, editingId]);
 
-  // Counts for status badges
   const statusCounts = useMemo(() => {
     const counts = { active: 0, inactive: 0, draft: 0, pending_qc: 0, violation: 0, deleted: 0 } as const;
     const acc: Record<keyof typeof counts, number> = { active: 0, inactive: 0, draft: 0, pending_qc: 0, violation: 0, deleted: 0 };
@@ -634,7 +593,6 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
     return acc;
   }, [items]);
 
-  // Stock summary banner (counts of low/out)
   const stockSummary = useMemo(() => {
     let low = 0, out = 0;
     items.forEach(i => {
@@ -647,20 +605,16 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
     return { low, out };
   }, [items]);
 
-  // Price editing dialog state
   const [priceDialogOpen, setPriceDialogOpen] = useState(false);
   const [priceEditingItem, setPriceEditingItem] = useState<InventoryItem | null>(null);
   const [priceForm, setPriceForm] = useState<{ price: number | '' ; specialPrice: number | '' ; promoMode: 'long' | 'dated'; start?: string; end?: string }>({ price: '', specialPrice: '', promoMode: 'long', start: undefined, end: undefined });
 
-  // New: inline stock adjust dialog state
   const [stockDialogOpen, setStockDialogOpen] = useState(false);
   const [stockEditingItem, setStockEditingItem] = useState<InventoryItem | null>(null);
   const [stockForm, setStockForm] = useState<{ delta: number | ''; reason: string; variationId?: string }>(() => ({ delta: '', reason: '' }));
   const [stockVariations, setStockVariations] = useState<Array<{ id: string; name?: string | null; stock: number }>>([]);
-  // New: per-variation rows for bulk adjust
   const [stockRows, setStockRows] = useState<Array<{ id: string; name?: string | null; stock: number; delta: number | ''; reason: string }>>([]);
 
-  // Delete dialog state
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<InventoryItem | null>(null);
 
@@ -676,7 +630,6 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
     setPriceDialogOpen(true);
   };
 
-  // Restored: save price dialog
   const savePriceDialog = async () => {
     if (!priceEditingItem) return;
     try {
@@ -693,7 +646,7 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
         payload.promoStart = startMs;
         payload.promoEnd = endMs;
       }
-      await ProductService.updatePriceAndPromo(priceEditingItem.id, payload);
+      await ProductService.updatePriceAndPromo(priceEditingItem.id, payload, uid || undefined, auth.currentUser?.email || undefined);
       setPriceDialogOpen(false);
       setPriceEditingItem(null);
       toast({ title: 'Price updated', description: 'The product pricing has been saved.' });
@@ -705,15 +658,12 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
     }
   };
 
-  // New: open stock dialog
   const openStockDialog = async (item: InventoryItem) => {
     setStockEditingItem(item);
     setStockForm({ delta: '', reason: '', variationId: undefined });
     try {
-      // Load variations for this product
       let vars = await ProductService.getVariations(item.id);
 
-      // If none exist, create a default one and reload list
       if (!vars || vars.length === 0) {
         try {
           const vid = await ProductService.ensureDefaultVariation(item.id);
@@ -725,7 +675,6 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
 
       const normalized = vars.map((v: any) => ({ id: v.id, name: v.name ?? '', stock: Number(v.stock ?? 0) }));
       setStockVariations(normalized);
-      // Build editable rows (one per variation)
       setStockRows(normalized.map(v => ({ id: v.id, name: v.name, stock: v.stock, delta: '', reason: '' })));
     } catch (e) {
       console.error('Failed to load variations', e);
@@ -741,10 +690,9 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
       setSubmitting(true);
       const tasks = stockRows
         .filter(r => r.delta !== '' && Number(r.delta) !== 0 && r.reason)
-        .map(r => ProductService.adjustVariationStock(stockEditingItem.id, r.id, Number(r.delta)));
+        .map(r => ProductService.adjustVariationStock(stockEditingItem.id, r.id, Number(r.delta), uid || undefined, auth.currentUser?.email || undefined));
 
       if (tasks.length === 0) {
-        // Require at least one row to have a valid delta and reason
         toast({ title: 'No changes', description: 'Enter a delta and reason for at least one variation.' });
         return;
       }
@@ -761,7 +709,6 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
     }
   };
 
-  // Open delete confirmation dialog
   const openDeleteDialog = (item: InventoryItem) => {
     setDeleteTarget(item);
     setDeleteDialogOpen(true);
@@ -769,7 +716,6 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
 
   return (
     <div className="space-y-8">
-      {/* New Catalog Tabs */}
       <div className="flex flex-wrap gap-2 border-b border-gray-200 pb-2">
         {[
           { key: 'all', label: 'All' },
@@ -779,6 +725,7 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
           { key: 'pending_qc', label: 'Pending QC' },
           { key: 'violation', label: 'Violation' },
           { key: 'deleted', label: 'Archive' },
+          { key: 'logs', label: 'Logs' }, // Added Logs tab
         ].map(t => (
           <button
             key={t.key}
@@ -800,7 +747,6 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
         ))}
       </div>
 
-      {/* Filters */}
       <div className="flex flex-wrap gap-3 items-center">
         <input
           value={filterName}
@@ -868,28 +814,78 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
         </div>
       </div>
 
-      {/* Catalog Table */}
-      <CatalogTable
-        items={filteredCatalog}
-        tabKey={catalogTab}
-        onToggleActive={async (id, next) => {
-          await ProductService.toggleActive(id, next);
-        }}
-        onEdit={openEdit}
-        onEditPrice={openPriceDialog}
-        onEditStock={openStockDialog}
-        onDelete={(item) => { setDeleteTarget(item); setDeleteDialogOpen(true); }}
-        onRestore={async (item) => {
-          try {
-            await ProductService.restore(item.id);
-            setCatalogTab('inactive');
-            toast({ title: 'Product restored', description: 'Moved to Inactive tab. Toggle to activate when ready.' });
-          } catch (e) {
-            console.error('Restore failed', e);
-            toast({ title: 'Failed to restore', description: 'Please try again.' });
-          }
-        }}
-      />
+      {/* Catalog Table or Logs Table */}
+      {catalogTab === 'logs' ? (
+        <div className="border rounded-lg overflow-hidden bg-white">
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-xs">
+              <thead className="bg-gray-50 border-b">
+                <tr>
+                  <th className="text-left p-3 font-medium text-gray-600">Date & Time</th>
+                  <th className="text-left p-3 font-medium text-gray-600">Action</th>
+                  <th className="text-left p-3 font-medium text-gray-600">Product</th>
+                  <th className="text-left p-3 font-medium text-gray-600">Detail</th>
+                  <th className="text-left p-3 font-medium text-gray-600">User</th>
+                </tr>
+              </thead>
+              <tbody>
+                {logs.length === 0 && (
+                  <tr>
+                    <td colSpan={5} className="p-8 text-center text-gray-500">
+                      No logs found. Stock and price adjustments will appear here.
+                    </td>
+                  </tr>
+                )}
+                {logs.map((log) => (
+                  <tr key={log.id} className="border-b hover:bg-gray-50">
+                    <td className="p-3 text-gray-700">
+                      {log.at ? new Date(log.at).toLocaleString() : 'N/A'}
+                    </td>
+                    <td className="p-3">
+                      <span className={`inline-flex items-center px-2 py-1 rounded-full text-[10px] font-medium ${
+                        log.action === 'adjust_stock' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'
+                      }`}>
+                        {log.action === 'adjust_stock' ? 'Stock Adjustment' : 'Price Adjustment'}
+                      </span>
+                    </td>
+                    <td className="p-3 text-gray-900 font-medium">
+                      {log.productName || 'Unknown Product'}
+                    </td>
+                    <td className="p-3 text-gray-600">
+                      {log.detail || 'No details'}
+                    </td>
+                    <td className="p-3 text-gray-600">
+                      {log.userName || log.userId || 'Unknown User'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ) : (
+        <CatalogTable
+          items={filteredCatalog}
+          tabKey={catalogTab}
+          onToggleActive={async (id, next) => {
+            await ProductService.toggleActive(id, next);
+          }}
+          onEdit={openEdit}
+          onEditPrice={openPriceDialog}
+          onEditStock={openStockDialog}
+          onDelete={(item) => { setDeleteTarget(item); setDeleteDialogOpen(true); }}
+          onRestore={async (item) => {
+            try {
+              await ProductService.restore(item.id);
+              setCatalogTab('inactive');
+              toast({ title: 'Product restored', description: 'Moved to Inactive tab. Toggle to activate when ready.' });
+            } catch (e) {
+              console.error('Restore failed', e);
+              toast({ title: 'Failed to restore', description: 'Please try again.' });
+            }
+          }}
+        />
+      )}
 
       {/* Delete Confirmation Dialog */}
       {deleteDialogOpen && deleteTarget && (
@@ -1074,7 +1070,6 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
       )}
 
       {/* Add/Edit Product Modal */}
-      {/* The modal remains for edit for now; creation uses the dedicated page */}
       {showAdd && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
           <div className="absolute inset-0 bg-black/40" onClick={() => !submitting && (setShowAdd(false), setEditingId(null))} />
@@ -1267,11 +1262,9 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
                     >
                       + Add Variant
                     </button>
-                    {/* Removed header-level Add Image button */}
                   </div>
                 </div>
 
-                {/* Simple product price/stock if no variants */}
                 {variants.length === 0 && (
                   <div className="border rounded overflow-hidden">
                     <div className="grid grid-cols-7 text-xs bg-gray-50">
