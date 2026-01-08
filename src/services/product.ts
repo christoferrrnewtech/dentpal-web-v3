@@ -28,6 +28,78 @@ export type CreateProductInput = {
 const PRODUCT_COLLECTION = 'Product';
 
 export const ProductService = {
+    // Add a log entry to the Logs subcollection for a product
+    async addProductLog(productId: string, log: {
+      action: 'adjust_stock' | 'adjust_price';
+      userId: string;
+      userName?: string;
+      detail: string;
+      before?: any;
+      after?: any;
+      at?: number;
+    }) {
+      try {
+        const col = collection(db, PRODUCT_COLLECTION, productId, 'Logs');
+        await addDoc(col, {
+          ...log,
+          at: log.at ?? Date.now(),
+          createdAt: serverTimestamp(),
+        });
+      } catch (e) {
+        console.error('addProductLog failed', e);
+      }
+    },
+
+  // Fetch logs for a specific product
+  async getProductLogs(productId: string) {
+    try {
+      const col = collection(db, PRODUCT_COLLECTION, productId, 'Logs');
+      const q = query(col, orderBy('at', 'desc'));
+      const snap = await getDocs(q);
+      return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    } catch (e) {
+      console.error('getProductLogs failed', e);
+      return [];
+    }
+  },
+
+  // Listen to logs for a seller (across all products)
+  listenProductLogsBySeller(sellerId: string, cb: (logs: any[]) => void) {
+    try {
+      const productsQuery = query(collection(db, PRODUCT_COLLECTION), where('sellerId', '==', sellerId));
+      
+      // This is a simplified approach - fetch all products then their logs
+      // For production, consider a more efficient approach with Cloud Functions
+      const unsub = onSnapshot(productsQuery, async (snap) => {
+        const allLogs: any[] = [];
+        
+        for (const productDoc of snap.docs) {
+          const logsCol = collection(db, PRODUCT_COLLECTION, productDoc.id, 'Logs');
+          const logsQuery = query(logsCol, orderBy('at', 'desc'));
+          const logsSnap = await getDocs(logsQuery);
+          
+          logsSnap.docs.forEach(logDoc => {
+            allLogs.push({
+              id: logDoc.id,
+              productId: productDoc.id,
+              productName: productDoc.data().name || 'Unknown',
+              ...logDoc.data(),
+            });
+          });
+        }
+        
+        // Sort all logs by timestamp
+        allLogs.sort((a, b) => (b.at || 0) - (a.at || 0));
+        cb(allLogs);
+      });
+      
+      return unsub;
+    } catch (e) {
+      console.error('listenProductLogsBySeller failed', e);
+      return () => {};
+    }
+  },
+
   async createProduct(input: CreateProductInput) {
     const initialStatus = input.status ?? 'pending_qc';
     const payload = {
@@ -296,9 +368,29 @@ export const ProductService = {
   },
 
   // New: Adjust stock for a specific variation
-  async adjustVariationStock(productId: string, variationId: string, delta: number) {
+  async adjustVariationStock(productId: string, variationId: string, delta: number, userId?: string, userName?: string) {
     const vRef = doc(db, PRODUCT_COLLECTION, productId, 'Variation', variationId);
+    
+    // Get current stock and variation name before adjustment
+    const vSnap = await getDoc(vRef);
+    const currentStock = vSnap.exists() ? (vSnap.data().stock || 0) : 0;
+    const variationName = vSnap.exists() ? (vSnap.data().name || 'Unknown') : 'Unknown';
+    const newStock = currentStock + Number(delta);
+    
     await updateDoc(vRef, { stock: increment(Number(delta) || 0), updatedAt: serverTimestamp() });
+    
+    // Log the adjustment
+    if (userId) {
+      await this.addProductLog(productId, {
+        action: 'adjust_stock',
+        userId,
+        userName,
+        detail: `Stock adjusted by ${delta} for variation "${variationName}"`,
+        before: { stock: currentStock, variationId, variationName },
+        after: { stock: newStock, variationId, variationName },
+      });
+    }
+    
     // Nudge parent product so product snapshot listeners refresh totals
     const pRef = doc(db, PRODUCT_COLLECTION, productId);
     await updateDoc(pRef, { updatedAt: serverTimestamp() });
@@ -347,8 +439,19 @@ export const ProductService = {
   },
 
   // New helper: update product-level price, special price and promo window
-  async updatePriceAndPromo(productId: string, payload: { price: number | null; specialPrice: number | null; promoStart: number | null; promoEnd: number | null; }) {
+  async updatePriceAndPromo(productId: string, payload: { price: number | null; specialPrice: number | null; promoStart: number | null; promoEnd: number | null; }, userId?: string, userName?: string) {
     const pRef = doc(db, PRODUCT_COLLECTION, productId);
+    
+    // Get current prices before adjustment
+    const pSnap = await getDoc(pRef);
+    const currentData = pSnap.exists() ? pSnap.data() : {};
+    const before = {
+      price: currentData.price || null,
+      specialPrice: currentData.specialPrice || null,
+      promoStart: currentData.promoStart || null,
+      promoEnd: currentData.promoEnd || null,
+    };
+    
     // Decide lowestPrice to aid list display
     const lowest = [payload.price, payload.specialPrice].filter((x) => x != null).map(Number);
     const nextLowest = lowest.length ? Math.min(...lowest) : null;
@@ -360,6 +463,18 @@ export const ProductService = {
       lowestPrice: nextLowest,
       updatedAt: serverTimestamp(),
     });
+    
+    // Log the price adjustment
+    if (userId) {
+      await this.addProductLog(productId, {
+        action: 'adjust_price',
+        userId,
+        userName,
+        detail: `Price updated: ${before.price} → ${payload.price}, Special: ${before.specialPrice} → ${payload.specialPrice}`,
+        before,
+        after: payload,
+      });
+    }
   },
 
   // New: Soft delete a product (move to Deleted tab)

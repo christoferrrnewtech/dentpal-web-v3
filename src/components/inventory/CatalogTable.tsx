@@ -6,11 +6,10 @@ interface Props {
   items: InventoryItem[];
   onToggleActive: (id: string, nextActive: boolean) => void;
   onEdit: (id: string) => void;
-  onEditPrice?: (item: InventoryItem) => void; // New: inline price editor trigger
-  onEditStock?: (item: InventoryItem) => void; // New: inline stock adjust trigger
-  onDelete?: (item: InventoryItem) => void; // New: delete trigger
-  onRestore?: (item: InventoryItem) => void; // New: restore trigger for deleted items
-  // New: optional context for current tab to switch columns
+  onEditPrice?: (item: InventoryItem) => void; 
+  onEditStock?: (item: InventoryItem) => void; 
+  onDelete?: (item: InventoryItem) => void; 
+  onRestore?: (item: InventoryItem) => void; 
   tabKey?: 'all' | 'active' | 'inactive' | 'draft' | 'pending_qc' | 'violation' | 'deleted';
 }
 
@@ -18,7 +17,6 @@ const CatalogTable: React.FC<Props> = ({ items, onToggleActive, onEdit, onEditPr
   const isViolationView = tabKey === 'violation';
   const isPendingView = tabKey === 'pending_qc';
 
-  // Filters per column
   const [filters, setFilters] = React.useState({
     product: '',
     priceMin: '',
@@ -32,7 +30,6 @@ const CatalogTable: React.FC<Props> = ({ items, onToggleActive, onEdit, onEditPr
   const toggleFilter = (key: string) => setOpenFilter((p) => ({ ...p, [key]: !p[key] }));
   const closeAllFilters = () => setOpenFilter({});
 
-  // Derived: filtered list
   const filteredItems = React.useMemo(() => {
     const nameQ = filters.product.trim().toLowerCase();
     const priceMin = filters.priceMin ? Number(filters.priceMin) : null;
@@ -41,17 +38,16 @@ const CatalogTable: React.FC<Props> = ({ items, onToggleActive, onEdit, onEditPr
     const stockMax = filters.stockMax ? Number(filters.stockMax) : null;
 
     return items.filter((i) => {
-      // Product name filter
+
       if (nameQ && !String(i.name || '').toLowerCase().includes(nameQ)) return false;
-      // Price range (when column present)
       const price = i.specialPrice != null && Number(i.specialPrice) > 0 ? Number(i.specialPrice) : (i.price != null ? Number(i.price) : null);
       if ((priceMin != null) && price != null && !(price >= priceMin)) return false;
       if ((priceMax != null) && price != null && !(price <= priceMax)) return false;
-      // Stock range
+
       const stock = i.inStock != null ? Number(i.inStock) : null;
       if ((stockMin != null) && stock != null && !(stock >= stockMin)) return false;
       if ((stockMax != null) && stock != null && !(stock <= stockMax)) return false;
-      // Active/status filter
+
       const s = (i.status as any) || 'active';
       if (filters.active !== 'all') {
         if (filters.active === 'active' && s !== 'active') return false;
@@ -65,7 +61,6 @@ const CatalogTable: React.FC<Props> = ({ items, onToggleActive, onEdit, onEditPr
     });
   }, [items, filters]);
 
-  // Simple client-side pagination
   const [page, setPage] = React.useState(1);
   const pageSize = 10;
   const totalPages = Math.max(1, Math.ceil(filteredItems.length / pageSize));
@@ -75,7 +70,6 @@ const CatalogTable: React.FC<Props> = ({ items, onToggleActive, onEdit, onEditPr
     return filteredItems.slice(start, start + pageSize);
   }, [filteredItems, page]);
 
-  // Helper components: Filter popovers
   const HeaderWithFilter: React.FC<{ label: string; fkey: string; children: React.ReactNode; className?: string }> = ({ label, fkey, children, className }) => (
     <th className={`px-4 py-2 relative ${className || ''}`}>
       <div className="flex items-center gap-2 text-left text-[11px] font-semibold text-gray-600 tracking-wide">
@@ -387,7 +381,6 @@ const CatalogTable: React.FC<Props> = ({ items, onToggleActive, onEdit, onEditPr
         </tbody>
       </table>
 
-      {/* Pagination */}
       <div className="flex items-center justify-between px-4 py-3 border-t bg-white text-xs text-gray-600">
         <div>
           Page {page} of {totalPages}

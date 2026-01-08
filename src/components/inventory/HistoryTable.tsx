@@ -27,24 +27,18 @@ const HistoryTable: React.FC<HistoryTableProps> = ({ data }) => {
           <tbody>
             {data.map((row, index) => (
               <tr key={index} className="border-b last:border-0">
-                {/* Adjustment + mobile meta */}
                 <td className="px-4 py-2">
                   <div className="min-w-0">
                     <div className="font-medium text-gray-900 truncate">{row.adjustmentNo}</div>
-                    {/* Mobile-only extra info */}
                     <div className="sm:hidden mt-0.5 text-xs text-gray-500 flex flex-wrap gap-x-2 gap-y-0.5">
                       <span className="">{row.reason}</span>
                       <span className="">• {row.itemName}</span>
                     </div>
                   </div>
                 </td>
-                {/* Date */}
                 <td className="px-4 py-2 text-gray-700">{row.date}</td>
-                {/* Reason (hidden on small) */}
                 <td className="px-4 py-2 text-gray-700 hidden sm:table-cell">{row.reason}</td>
-                {/* Item (hidden until md) */}
                 <td className="px-4 py-2 text-gray-700 hidden md:table-cell">{row.itemName}</td>
-                {/* Stock After */}
                 <td className="px-4 py-2 text-gray-700">{row.stockAfter}</td>
               </tr>
             ))}
