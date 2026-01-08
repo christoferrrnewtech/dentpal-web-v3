@@ -734,69 +734,102 @@ src/
 3. **Testing Strategy**:
    - TypeScript for compile-time checks
    - ESLint for code quality
-   - Manual testing in development
 
-## 🎯 Features
+   # DentPal Web v3
 
-### Authentication System
+   A modern dental management web application built with React, TypeScript, Vite, Tailwind CSS, and Firebase.
 
-- **Login/Signup Forms**: Responsive forms with validation and modern design
-- **Remember Me Feature**: Persistent login option with checkbox for user convenience
-- **State Management**: User session handling with local storage support
-- **Route Protection**: Conditional rendering based on auth state
-- **Professional Branding**: Clean logo integration without borders for better visual impact
-- **Split-screen Layout**: Desktop layout with branding section and form section for modern UX
+   ---
 
-### Dashboard Interface
+   ## 🚀 Quick Start
 
-- **Responsive Sidebar**: Collapsible navigation with icons
-- **Statistics Cards**: Key metrics display with trend indicators (Patients, Appointments, Revenue, Treatment Completion)
-- **Data Visualization**: Revenue charts using Recharts
-- **Multi-page Navigation**: Dashboard, Booking, Confirmation, Withdrawal, Access, Images, Users
-- **Dental Practice Features**: Patient management, appointment booking, image gallery, financial tracking
+   ### 1. Prerequisites
 
-### UI Components
+   - **macOS** (or Linux/WSL)
+   - **Homebrew** (for macOS)
+   - **Node.js** (v18+ recommended)
+   - **npm** (comes with Node.js)
+   - **Firebase account** (for deployment)
 
-- **40+ shadcn/ui Components**: Buttons, cards, forms, dialogs, etc.
-- **Responsive Design**: Mobile-first approach
-- **Dark Mode Ready**: Theme system prepared for dark mode
-- **Accessibility**: WCAG 2.1 AA compliant components
+   ### 2. Install System Dependencies
 
-## 🔄 Configuration Files
-
-### TypeScript Configuration
-
-- **tsconfig.json**: Main TypeScript configuration with path mapping
-- **tsconfig.app.json**: Application-specific settings
-- **tsconfig.node.json**: Node.js/Vite configuration
-
-### Build Configuration
-
-- **vite.config.ts**: Vite build settings with React plugin
-- **postcss.config.js**: PostCSS with Tailwind and Autoprefixer
-- **tailwind.config.ts**: Tailwind configuration with design system
-
-### Quality Assurance
-
-- **eslint.config.js**: ESLint rules for React and TypeScript
-- **components.json**: shadcn/ui configuration
-
-## 📋 Recent Development History
-
-### Version 3.1.0 - Authentication Enhancement (December 2024)
-
-**Features Added:**
-
-- ✅ Remember Me checkbox in login form with proper state management
-- ✅ Professional logo integration without background styling
-- ✅ Responsive logo sizing (192px desktop, 96px mobile)
-- ✅ Split-screen authentication layout with turquoise gradient background
-- ✅ Enhanced form validation and user feedback
-- ✅ Mobile-optimized authentication interface
-
-**Technical Improvements:**
+   ```bash
+   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 
 - ✅ Checkbox component integration from shadcn/ui
+   brew install node
+   node -v
+   npm -v
+   ```
+
+   ### 3. Project Setup
+
+   Clone the repository and install dependencies:
+
+   ```bash
+   git clone <your-repo-url>
+   cd dentpal-web-v3
+   npm install
+   ```
+
+   ### 4. Environment Variables
+
+   Create a `.env` file in the project root.  
+   **Do not commit this file.**  
+   Request your API key from the project admin.
+
+   ```
+   VITE_FIREBASE_API_KEY=your-api-key-here
+   # Add other required environment variables as instructed
+   ```
+
+   ### 5. Development
+
+   Start the development server:
+
+   ```bash
+   npm run dev
+   ```
+
+   Visit [http://localhost:5173](http://localhost:5173) in your browser.
+
+   ---
+
+   ## 🚀 Deployment
+
+   ### 1. Install Firebase CLI
+
+   ```bash
+   npm install -g firebase-tools
+   ```
+
+   ### 2. Login to Firebase
+
+   ```bash
+   firebase login
+   ```
+
+   ### 3. Build the Project
+
+   ```bash
+   npm run build
+   ```
+
+   ### 4. Deploy to Firebase Hosting
+
+   ```bash
+   firebase deploy --only hosting:dentpal-site
+   ```
+
+   ---
+
+   ## 📝 Notes
+
+   - For API keys and sensitive credentials, always request access from the project admin.
+   - Do not share or commit sensitive information.
+   - For troubleshooting, see the "Common Issues" section below or contact the team.
+
+   ---
 - ✅ Consistent teal color scheme across authentication components
 - ✅ Clean logo presentation without borders or backgrounds
 - ✅ Responsive design patterns for multiple screen sizes

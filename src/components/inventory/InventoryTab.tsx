@@ -17,8 +17,9 @@ import { storage, auth } from '@/lib/firebase';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { ProductService } from '@/services/product';
 import CatalogTable from './CatalogTable';
-import { CalendarClock, Package, AlertTriangle, CircleSlash, CheckCircle2 } from 'lucide-react';
+import { CalendarClock, Package, AlertTriangle, CircleSlash, CheckCircle2, Search } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import DateRangePicker from '@/components/ui/DateRangePicker';
 
 // Category and subcategory options
 const CATEGORY_OPTIONS = ['Consumables', 'Dental Equipment', 'Disposables', 'Equipment'] as const;
@@ -94,6 +95,18 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
 
   // New: Logs state
   const [logs, setLogs] = useState<Array<any>>([]);
+  const [logsLoading, setLogsLoading] = useState(false);
+  const [logsDateRange, setLogsDateRange] = useState<{ start: Date | null; end: Date | null }>(() => {
+    // Default to last 30 days including today
+    const end = new Date();
+    const start = new Date();
+    start.setDate(start.getDate() - 30);
+    return { start, end };
+  });
+  const [logsActionFilter, setLogsActionFilter] = useState<string>('all');
+  const [logsProductSearch, setLogsProductSearch] = useState<string>('');
+  const [logsPage, setLogsPage] = useState<number>(1);
+  const logsPerPage = 50;
 
   const { uid, isSeller, isAdmin } = useAuth();
   const { toast } = useToast();
@@ -259,12 +272,21 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
 
   // New: Listen to product logs
   useEffect(() => {
-    if (!effectiveSellerId) { setLogs([]); return; }
-    const unsub = ProductService.listenProductLogsBySeller(effectiveSellerId, (rows) => {
-      setLogs(rows);
-    });
+    if (!effectiveSellerId) { setLogs([]); setLogsLoading(false); return; }
+    setLogsLoading(true);
+    const unsub = ProductService.listenProductLogsBySeller(
+      effectiveSellerId, 
+      (rows) => {
+        setLogs(rows);
+        setLogsLoading(false);
+      },
+      { 
+        startDate: logsDateRange.start, 
+        endDate: logsDateRange.end 
+      }
+    );
     return () => unsub();
-  }, [effectiveSellerId]);
+  }, [effectiveSellerId, logsDateRange.start, logsDateRange.end]);
 
   const handleSubmit = useCallback(async () => {
     if (!draft.itemId || !draft.reason || draft.delta === 0) return;
@@ -444,6 +466,34 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
         return (a.name || '').localeCompare(b.name || '');
       });
   }, [items, catalogTab, filterName, filterCategory, sortBy, lowOnly]);
+
+  // Filter and paginate logs (date range is now handled by Firebase query)
+  const filteredLogs = useMemo(() => {
+    let filtered = logs;
+
+    // Action type filter
+    if (logsActionFilter !== 'all') {
+      filtered = filtered.filter(log => log.action === logsActionFilter);
+    }
+
+    // Product name search
+    if (logsProductSearch.trim()) {
+      const search = logsProductSearch.toLowerCase();
+      filtered = filtered.filter(log => 
+        (log.productName || '').toLowerCase().includes(search)
+      );
+    }
+
+    return filtered;
+  }, [logs, logsActionFilter, logsProductSearch]);
+
+  const paginatedLogs = useMemo(() => {
+    const start = (logsPage - 1) * logsPerPage;
+    const end = start + logsPerPage;
+    return filteredLogs.slice(start, end);
+  }, [filteredLogs, logsPage, logsPerPage]);
+
+  const totalLogsPages = Math.ceil(filteredLogs.length / logsPerPage);
 
   const [editingId, setEditingId] = useState<string | null>(null);
 
@@ -816,52 +866,143 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
 
       {/* Catalog Table or Logs Table */}
       {catalogTab === 'logs' ? (
-        <div className="border rounded-lg overflow-hidden bg-white">
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-xs">
-              <thead className="bg-gray-50 border-b">
-                <tr>
-                  <th className="text-left p-3 font-medium text-gray-600">Date & Time</th>
-                  <th className="text-left p-3 font-medium text-gray-600">Action</th>
-                  <th className="text-left p-3 font-medium text-gray-600">Product</th>
-                  <th className="text-left p-3 font-medium text-gray-600">Detail</th>
-                  <th className="text-left p-3 font-medium text-gray-600">User</th>
-                </tr>
-              </thead>
-              <tbody>
-                {logs.length === 0 && (
-                  <tr>
-                    <td colSpan={5} className="p-8 text-center text-gray-500">
-                      No logs found. Stock and price adjustments will appear here.
-                    </td>
-                  </tr>
-                )}
-                {logs.map((log) => (
-                  <tr key={log.id} className="border-b hover:bg-gray-50">
-                    <td className="p-3 text-gray-700">
-                      {log.at ? new Date(log.at).toLocaleString() : 'N/A'}
-                    </td>
-                    <td className="p-3">
-                      <span className={`inline-flex items-center px-2 py-1 rounded-full text-[10px] font-medium ${
-                        log.action === 'adjust_stock' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'
-                      }`}>
-                        {log.action === 'adjust_stock' ? 'Stock Adjustment' : 'Price Adjustment'}
-                      </span>
-                    </td>
-                    <td className="p-3 text-gray-900 font-medium">
-                      {log.productName || 'Unknown Product'}
-                    </td>
-                    <td className="p-3 text-gray-600">
-                      {log.detail || 'No details'}
-                    </td>
-                    <td className="p-3 text-gray-600">
-                      {log.userName || log.userId || 'Unknown User'}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+        <div className="space-y-4">
+          {/* Logs Filters */}
+          <div className="bg-white border border-gray-200 rounded-lg p-3 flex flex-wrap items-center gap-3">
+            <DateRangePicker
+              value={logsDateRange}
+              onChange={setLogsDateRange}
+              onApply={() => setLogsPage(1)}
+              label="Select date range"
+            />
+            
+            <select
+              value={logsActionFilter}
+              onChange={(e) => { setLogsActionFilter(e.target.value); setLogsPage(1); }}
+              className="text-sm p-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+            >
+              <option value="all">All Actions</option>
+              <option value="adjust_stock">Stock Adjustments</option>
+              <option value="adjust_price">Price Adjustments</option>
+            </select>
+
+            <div className="flex items-center gap-2 flex-1 min-w-[200px]">
+              <Search className="w-4 h-4 text-gray-500" />
+              <input
+                type="text"
+                value={logsProductSearch}
+                onChange={(e) => { setLogsProductSearch(e.target.value); setLogsPage(1); }}
+                placeholder="Search product name"
+                className="flex-1 text-sm p-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+              />
+            </div>
+
+            <div className="text-xs text-gray-500">
+              {filteredLogs.length} log{filteredLogs.length !== 1 ? 's' : ''}
+            </div>
           </div>
+
+          {/* Logs Table */}
+          <div className="border rounded-lg overflow-hidden bg-white">
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-xs">
+                <thead className="bg-gray-50 border-b">
+                  <tr>
+                    <th className="text-left p-3 font-medium text-gray-600">Date & Time</th>
+                    <th className="text-left p-3 font-medium text-gray-600">Action</th>
+                    <th className="text-left p-3 font-medium text-gray-600">Product</th>
+                    <th className="text-left p-3 font-medium text-gray-600">Detail</th>
+                    <th className="text-left p-3 font-medium text-gray-600">User</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {logsLoading && (
+                    <>
+                      {Array.from({ length: 5 }).map((_, idx) => (
+                        <tr key={idx} className="border-b">
+                          <td className="p-3">
+                            <div className="h-4 bg-gray-200 rounded animate-pulse w-32" />
+                          </td>
+                          <td className="p-3">
+                            <div className="h-5 bg-gray-200 rounded-full animate-pulse w-24" />
+                          </td>
+                          <td className="p-3">
+                            <div className="h-4 bg-gray-200 rounded animate-pulse w-40" />
+                          </td>
+                          <td className="p-3">
+                            <div className="h-4 bg-gray-200 rounded animate-pulse w-48" />
+                          </td>
+                          <td className="p-3">
+                            <div className="h-4 bg-gray-200 rounded animate-pulse w-28" />
+                          </td>
+                        </tr>
+                      ))}
+                    </>
+                  )}
+                  {!logsLoading && paginatedLogs.length === 0 && (
+                    <tr>
+                      <td colSpan={5} className="p-8 text-center text-gray-500">
+                        {logs.length === 0 
+                          ? 'No logs found. Stock and price adjustments will appear here.'
+                          : 'No logs match your filters. Try adjusting your search criteria.'}
+                      </td>
+                    </tr>
+                  )}
+                  {!logsLoading && paginatedLogs.map((log) => (
+                    <tr key={log.id} className="border-b hover:bg-gray-50">
+                      <td className="p-3 text-gray-700">
+                        {log.at ? new Date(log.at).toLocaleString() : 'N/A'}
+                      </td>
+                      <td className="p-3">
+                        <span className={`inline-flex items-center px-2 py-1 rounded-full text-[10px] font-medium ${
+                          log.action === 'adjust_stock' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'
+                        }`}>
+                          {log.action === 'adjust_stock' ? 'Stock Adjustment' : 'Price Adjustment'}
+                        </span>
+                      </td>
+                      <td className="p-3 text-gray-900 font-medium">
+                        {log.productName || 'Unknown Product'}
+                      </td>
+                      <td className="p-3 text-gray-600">
+                        {log.detail || 'No details'}
+                      </td>
+                      <td className="p-3 text-gray-600">
+                        {log.userName || log.userId || 'Unknown User'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Pagination */}
+          {!logsLoading && totalLogsPages > 1 && (
+            <div className="flex items-center justify-between bg-white border border-gray-200 rounded-lg p-3">
+              <div className="text-xs text-gray-600">
+                Showing {((logsPage - 1) * logsPerPage) + 1} to {Math.min(logsPage * logsPerPage, filteredLogs.length)} of {filteredLogs.length}
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setLogsPage(p => Math.max(1, p - 1))}
+                  disabled={logsPage === 1}
+                  className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  Previous
+                </button>
+                <div className="text-xs text-gray-600">
+                  Page {logsPage} of {totalLogsPages}
+                </div>
+                <button
+                  onClick={() => setLogsPage(p => Math.min(totalLogsPages, p + 1))}
+                  disabled={logsPage === totalLogsPages}
+                  className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       ) : (
         <CatalogTable
