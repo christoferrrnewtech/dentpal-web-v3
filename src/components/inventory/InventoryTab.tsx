@@ -124,6 +124,7 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
 
   const [lowOnly, setLowOnly] = useState<boolean>(false);
 
+  // New item state
   const [showAdd, setShowAdd] = useState(false);
   const [newItem, setNewItem] = useState<{
     name: string;
@@ -909,7 +910,7 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
                 <thead className="bg-gray-50 border-b">
                   <tr>
                     <th className="text-left p-3 font-medium text-gray-600">Date & Time</th>
-                    <th className="text-left p-3 font-medium text-gray-600">Action</th>
+                    <th className="text-center p-3 font-medium text-gray-600">Action</th>
                     <th className="text-left p-3 font-medium text-gray-600">Product</th>
                     <th className="text-left p-3 font-medium text-gray-600">Detail</th>
                     <th className="text-left p-3 font-medium text-gray-600">User</th>
@@ -948,29 +949,42 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId }) => {
                       </td>
                     </tr>
                   )}
-                  {!logsLoading && paginatedLogs.map((log) => (
-                    <tr key={log.id} className="border-b hover:bg-gray-50">
-                      <td className="p-3 text-gray-700">
-                        {log.at ? new Date(log.at).toLocaleString() : 'N/A'}
-                      </td>
-                      <td className="p-3">
-                        <span className={`inline-flex items-center px-2 py-1 rounded-full text-[10px] font-medium ${
-                          log.action === 'adjust_stock' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'
-                        }`}>
-                          {log.action === 'adjust_stock' ? 'Stock Adjustment' : 'Price Adjustment'}
-                        </span>
-                      </td>
-                      <td className="p-3 text-gray-900 font-medium">
-                        {log.productName || 'Unknown Product'}
-                      </td>
-                      <td className="p-3 text-gray-600">
-                        {log.detail || 'No details'}
-                      </td>
-                      <td className="p-3 text-gray-600">
-                        {log.userName || log.userId || 'Unknown User'}
-                      </td>
-                    </tr>
-                  ))}
+                  {!logsLoading && paginatedLogs.map((log) => {
+                    // Format date without milliseconds
+                    let dateStr = 'N/A';
+                    if (log.at) {
+                      const d = new Date(log.at);
+                      dateStr = d.toLocaleString(undefined, {
+                        year: 'numeric',
+                        month: '2-digit',
+                        day: '2-digit',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        second: '2-digit',
+                      });
+                    }
+                    return (
+                      <tr key={log.id} className="border-b hover:bg-gray-50">
+                        <td className="p-3 text-gray-700">{dateStr}</td>
+                        <td className="p-3 text-center">
+                          <span className={`inline-flex items-center px-2 py-1 rounded-full text-[10px] font-medium ${
+                            log.action === 'adjust_stock' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'
+                          }`}>
+                            {log.action === 'adjust_stock' ? 'Stock Adjustment' : 'Price Adjustment'}
+                          </span>
+                        </td>
+                        <td className="p-3 text-gray-900 font-medium">
+                          {log.productName || 'Unknown Product'}
+                        </td>
+                        <td className="p-3 text-gray-600">
+                          {log.detail || 'No details'}
+                        </td>
+                        <td className="p-3 text-gray-600">
+                          {log.userName || log.userId || 'Unknown User'}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
