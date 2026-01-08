@@ -1,5 +1,5 @@
 import { db } from '@/lib/firebase';
-import { addDoc, collection, serverTimestamp, onSnapshot, query, where, updateDoc, doc, getDocs, getDoc, orderBy, increment } from 'firebase/firestore';
+import { addDoc, collection, serverTimestamp, onSnapshot, query, where, updateDoc, doc, getDocs, getDoc, orderBy, increment, collectionGroup, limit, startAfter, endBefore } from 'firebase/firestore';
 
 export type CreateProductInput = {
   sellerId: string;
@@ -37,11 +37,14 @@ export const ProductService = {
       before?: any;
       after?: any;
       at?: number;
+      sellerId: string;
+      productName: string;
     }) {
       try {
         const col = collection(db, PRODUCT_COLLECTION, productId, 'Logs');
         await addDoc(col, {
           ...log,
+          productId,
           at: log.at ?? Date.now(),
           createdAt: serverTimestamp(),
         });
@@ -64,35 +67,56 @@ export const ProductService = {
   },
 
   // Listen to logs for a seller (across all products)
-  listenProductLogsBySeller(sellerId: string, cb: (logs: any[]) => void) {
+  listenProductLogsBySeller(sellerId: string, cb: (logs: any[]) => void, options?: { startDate?: Date | null; endDate?: Date | null }) {
     try {
-      const productsQuery = query(collection(db, PRODUCT_COLLECTION), where('sellerId', '==', sellerId));
-      
-      // This is a simplified approach - fetch all products then their logs
-      // For production, consider a more efficient approach with Cloud Functions
-      const unsub = onSnapshot(productsQuery, async (snap) => {
-        const allLogs: any[] = [];
-        
-        for (const productDoc of snap.docs) {
-          const logsCol = collection(db, PRODUCT_COLLECTION, productDoc.id, 'Logs');
-          const logsQuery = query(logsCol, orderBy('at', 'desc'));
-          const logsSnap = await getDocs(logsQuery);
-          
-          logsSnap.docs.forEach(logDoc => {
-            allLogs.push({
-              id: logDoc.id,
-              productId: productDoc.id,
-              productName: productDoc.data().name || 'Unknown',
-              ...logDoc.data(),
-            });
-          });
+      const pageSize = options?.pageSize || 50;
+
+      // Use provided date range or default to last 30 days
+      let cutoffStart: number;
+      let cutoffEnd: number;
+      if (options?.startDate) {
+        cutoffStart = options.startDate.getTime();
+        cutoffEnd = options?.endDate ? options.endDate.getTime() : Date.now();
+      } else {
+        const now = Date.now();
+        cutoffStart = now - 30 * 24 * 60 * 60 * 1000; // 30 days ago
+        cutoffEnd = now;
+      }
+
+      let logsQueryBase = [
+        collectionGroup(db, 'Logs'),
+        where('sellerId', '==', sellerId),
+        where('at', '>=', cutoffStart),
+        where('at', '<=', cutoffEnd),
+        orderBy('at', 'desc'),
+      ];
+
+      // Pagination: next/prev
+      if (options?.direction === 'next' && options?.startAfterDoc) {
+        logsQueryBase.push(startAfter(options.startAfterDoc));
+      } else if (options?.direction === 'prev' && options?.endBeforeDoc) {
+        logsQueryBase.push(endBefore(options.endBeforeDoc));
+      }
+      logsQueryBase.push(limit(pageSize));
+
+      const logsQuery = query.apply(null, logsQueryBase);
+
+      const unsub = onSnapshot(logsQuery, (snap) => {
+        const docs = snap.docs;
+        const logs = docs.map((d) => ({ id: d.id, ...d.data() }));
+        const hasNextPage = docs.length === pageSize;
+        const hasPrevPage = !!options?.startAfterDoc || !!options?.endBeforeDoc;
+        const lastDoc = docs.length > 0 ? docs[docs.length - 1] : null;
+        const firstDoc = docs.length > 0 ? docs[0] : null;
+        cb(logs, { hasNextPage, hasPrevPage, lastDoc, firstDoc });
+      },
+      (error) => {
+        console.error('[listenProductLogsBySeller] Error:', error);
+        if (error.message.includes('index')) {
+          console.error('[listenProductLogsBySeller] INDEX REQUIRED! Check console for Firebase index creation link.');
         }
-        
-        // Sort all logs by timestamp
-        allLogs.sort((a, b) => (b.at || 0) - (a.at || 0));
-        cb(allLogs);
+        cb([], { hasNextPage: false, hasPrevPage: false, lastDoc: null, firstDoc: null });
       });
-      
       return unsub;
     } catch (e) {
       console.error('listenProductLogsBySeller failed', e);
@@ -381,6 +405,13 @@ export const ProductService = {
     
     // Log the adjustment
     if (userId) {
+      // Get product details for logging
+      const pRef = doc(db, PRODUCT_COLLECTION, productId);
+      const pSnap = await getDoc(pRef);
+      const productData = pSnap.exists() ? pSnap.data() : {};
+      const productName = productData.name || 'Unknown Product';
+      const sellerId = productData.sellerId || '';
+      
       await this.addProductLog(productId, {
         action: 'adjust_stock',
         userId,
@@ -388,6 +419,8 @@ export const ProductService = {
         detail: `Stock adjusted by ${delta} for variation "${variationName}"`,
         before: { stock: currentStock, variationId, variationName },
         after: { stock: newStock, variationId, variationName },
+        sellerId,
+        productName,
       });
     }
     
@@ -452,6 +485,10 @@ export const ProductService = {
       promoEnd: currentData.promoEnd || null,
     };
     
+    // Get product details for logging
+    const productName = currentData.name || 'Unknown Product';
+    const sellerId = currentData.sellerId || '';
+    
     // Decide lowestPrice to aid list display
     const lowest = [payload.price, payload.specialPrice].filter((x) => x != null).map(Number);
     const nextLowest = lowest.length ? Math.min(...lowest) : null;
@@ -473,6 +510,8 @@ export const ProductService = {
         detail: `Price updated: ${before.price} → ${payload.price}, Special: ${before.specialPrice} → ${payload.specialPrice}`,
         before,
         after: payload,
+        sellerId,
+        productName,
       });
     }
   },

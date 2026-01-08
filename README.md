@@ -1,4 +1,4 @@
-# DentPal - Dental Management
+# DentPal - Ecommerce Platform for Dentist
 
 [![Professional Frontend](https://img.shields.io/badge/Status-Production%20Ready-brightgreen)](https://github.com)
 [![React](https://img.shields.io/badge/React-18.3.1-blue)](https://reactjs.org/)
@@ -106,116 +106,16 @@ DentPal follows enterprise-grade React architecture patterns:
 ├─────────────────────────────────────────────────────────────────┤
 │  TypeScript 5.8+ (Strict Mode, Interface Definitions)          │
 ├─────────────────────────────────────────────────────────────────┤
-│                    Styling & UI                                 │
-├─────────────────────────────────────────────────────────────────┤
-│  Tailwind CSS 3.4 + shadcn/ui + Custom Design System          │
-├─────────────────────────────────────────────────────────────────┤
-│                    Build & Development                          │
-├─────────────────────────────────────────────────────────────────┤
-│  Vite 5.4 (HMR, ESBuild, Optimized Bundling)                 │
-└─────────────────────────────────────────────────────────────────┘
-```
 
-## 📁 Project Structure
-
-```
-dentpal-web-v3/
-├── public/                     # Static assets
-│   ├── placeholder.svg         # Image placeholders
-│   └── robot.txt              # SEO robots file
-│
-├── src/                       # Source code
-│   ├── components/            # Reusable React components
-│   │   ├── auth/              # Authentication system
-│   │   │   ├── AuthLayout.tsx # Auth page layout with branding
-│   │   │   ├── LoginForm.tsx  # Login form with Remember Me
-│   │   │   └── SignupForm.tsx # Registration form
-│   │   │
-│   │   ├── booking/           # Booking workflow components
-│   │   │   ├── ScanTab.tsx    # Barcode scanning & order creation
-│   │   │   ├── ProcessTab.tsx # Order processing queue
-│   │   │   └── CompletedTab.tsx # Order history & analytics
-│   │   │
-│   │   ├── confirmation/      # Confirmation management
-│   │   │   └── ConfirmationTab.tsx # Order confirmation interface
-│   │   │
-│   │   ├── withdrawal/        # Financial withdrawal system
-│   │   │   └── WithdrawalTab.tsx # Withdrawal requests & history
-│   │   │
-│   │   ├── access/           # User & access management
-│   │   │   └── AccessTab.tsx # User roles & permissions
-│   │   │
-│   │   ├── images/           # Image management system
-│   │   │   └── ImagesTab.tsx # Multi-category image handling
-│   │   │
-│   │   ├── dashboard/        # Dashboard core components
-│   │   │   ├── Sidebar.tsx   # Navigation sidebar
-│   │   │   ├── DashboardHeader.tsx # Page headers
-│   │   │   ├── StatsCard.tsx # Metric display cards
-│   │   │   ├── RecentOrders.tsx # Order summaries
-│   │   │   └── RevenueChart.tsx # Financial charts
-│   │   │
-│   │   └── ui/               # shadcn/ui component library
-│   │       ├── button.tsx    # Button variants & styles
-│   │       ├── input.tsx     # Form input components
-│   │       ├── card.tsx      # Card layout components
-│   │       ├── badge.tsx     # Status & label badges
-│   │       ├── dialog.tsx    # Modal & popup dialogs
-│   │       ├── table.tsx     # Data table components
-│   │       └── ... (50+ UI components)
-│   │
-│   ├── hooks/                # Custom React hooks
-│   │   ├── use-mobile.tsx    # Mobile detection hook
-│   │   └── use-toast.tsx     # Toast notification system
-│   │
-│   ├── lib/                  # Utility libraries
-│   │   └── utils.ts          # Common utility functions
-│   │
-│   ├── pages/                # Top-level page components
-│   │   ├── Auth.tsx          # Authentication page
-│   │   ├── Dashboard.tsx     # Main dashboard orchestrator
-│   │   ├── Booking.tsx       # Booking workflow container
-│   │   ├── NotFound.tsx      # 404 error page
-│   │   └── index.tsx         # Page exports
-│   │
-│   ├── types/                # TypeScript type definitions
-│   │   └── order.ts          # Order & booking types
-│   │
-│   ├── App.tsx               # Root application component
-│   ├── main.tsx              # Application entry point
-│   └── index.css             # Global styles & Tailwind imports
-│
-├── Configuration Files
-├── components.json           # shadcn/ui component configuration
-├── tailwind.config.ts        # Tailwind CSS configuration
-├── tsconfig.json            # TypeScript configuration
-├── tsconfig.app.json        # App-specific TypeScript config
-├── tsconfig.node.json       # Node.js TypeScript config
-├── vite.config.ts           # Vite bundler configuration
-├── postcss.config.js        # PostCSS configuration
-├── eslint.config.js         # ESLint code quality rules
-├── package.json             # Project dependencies & scripts
-└── README.md                # Project documentation
-```
-
-## 🛠️ Technology Stack
-
-### **Core Technologies**
 
 - **React 18.3.1**: Latest React with Concurrent Features, Suspense, and Error Boundaries
 - **TypeScript 5.8.3**: Strict type checking with advanced type inference
 - **Vite 5.4.20**: Ultra-fast build tool with Hot Module Replacement (HMR)
-
 ### **UI/UX Framework**
 
 - **Tailwind CSS 3.4.17**: Utility-first CSS framework with custom design system
 - **shadcn/ui**: High-quality, accessible component library built on Radix UI
 - **Lucide React**: Beautiful, customizable icon library with 1000+ icons
-- **Recharts**: Responsive charting library for data visualization
-
-### **Development Tools**
-
-- **ESLint**: Code quality and consistency enforcement
 - **PostCSS**: CSS processing with autoprefixer and optimizations
 - **React Router**: Client-side routing with lazy loading support
 
@@ -257,7 +157,6 @@ npm install
 
 ```env
 VITE_FIREBASE_API_KEY=your-api-key
-VITE_FIREBASE_AUTH_DOMAIN=dentpal-161e5.firebaseapp.com
 VITE_FIREBASE_PROJECT_ID=dentpal-161e5
 VITE_FIREBASE_STORAGE_BUCKET=dentpal-161e5.appspot.com
 VITE_FIREBASE_MESSAGING_SENDER_ID=your-sender-id
@@ -285,15 +184,10 @@ cd backend
 ```bash
 npm install
 ```
-
 7. **Configure backend environment** (Copy `.env.example` to `.env`)
 
 ```bash
-cp .env.example .env
-# Edit .env with your Firebase Admin credentials
-```
 
-8. **Start backend development server**
 
 ```bash
 npm run dev
@@ -734,69 +628,102 @@ src/
 3. **Testing Strategy**:
    - TypeScript for compile-time checks
    - ESLint for code quality
-   - Manual testing in development
 
-## 🎯 Features
+   # DentPal Web v3
 
-### Authentication System
+   A modern dental management web application built with React, TypeScript, Vite, Tailwind CSS, and Firebase.
 
-- **Login/Signup Forms**: Responsive forms with validation and modern design
-- **Remember Me Feature**: Persistent login option with checkbox for user convenience
-- **State Management**: User session handling with local storage support
-- **Route Protection**: Conditional rendering based on auth state
-- **Professional Branding**: Clean logo integration without borders for better visual impact
-- **Split-screen Layout**: Desktop layout with branding section and form section for modern UX
+   ---
 
-### Dashboard Interface
+   ## 🚀 Quick Start
 
-- **Responsive Sidebar**: Collapsible navigation with icons
-- **Statistics Cards**: Key metrics display with trend indicators (Patients, Appointments, Revenue, Treatment Completion)
-- **Data Visualization**: Revenue charts using Recharts
-- **Multi-page Navigation**: Dashboard, Booking, Confirmation, Withdrawal, Access, Images, Users
-- **Dental Practice Features**: Patient management, appointment booking, image gallery, financial tracking
+   ### 1. Prerequisites
 
-### UI Components
+   - **macOS** (or Linux/WSL)
+   - **Homebrew** (for macOS)
+   - **Node.js** (v18+ recommended)
+   - **npm** (comes with Node.js)
+   - **Firebase account** (for deployment)
 
-- **40+ shadcn/ui Components**: Buttons, cards, forms, dialogs, etc.
-- **Responsive Design**: Mobile-first approach
-- **Dark Mode Ready**: Theme system prepared for dark mode
-- **Accessibility**: WCAG 2.1 AA compliant components
+   ### 2. Install System Dependencies
 
-## 🔄 Configuration Files
-
-### TypeScript Configuration
-
-- **tsconfig.json**: Main TypeScript configuration with path mapping
-- **tsconfig.app.json**: Application-specific settings
-- **tsconfig.node.json**: Node.js/Vite configuration
-
-### Build Configuration
-
-- **vite.config.ts**: Vite build settings with React plugin
-- **postcss.config.js**: PostCSS with Tailwind and Autoprefixer
-- **tailwind.config.ts**: Tailwind configuration with design system
-
-### Quality Assurance
-
-- **eslint.config.js**: ESLint rules for React and TypeScript
-- **components.json**: shadcn/ui configuration
-
-## 📋 Recent Development History
-
-### Version 3.1.0 - Authentication Enhancement (December 2024)
-
-**Features Added:**
-
-- ✅ Remember Me checkbox in login form with proper state management
-- ✅ Professional logo integration without background styling
-- ✅ Responsive logo sizing (192px desktop, 96px mobile)
-- ✅ Split-screen authentication layout with turquoise gradient background
-- ✅ Enhanced form validation and user feedback
-- ✅ Mobile-optimized authentication interface
-
-**Technical Improvements:**
+   ```bash
+   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 
 - ✅ Checkbox component integration from shadcn/ui
+   brew install node
+   node -v
+   npm -v
+   ```
+
+   ### 3. Project Setup
+
+   Clone the repository and install dependencies:
+
+   ```bash
+   git clone <your-repo-url>
+   cd dentpal-web-v3
+   npm install
+   ```
+
+   ### 4. Environment Variables
+
+   Create a `.env` file in the project root.  
+   **Do not commit this file.**  
+   Request your API key from the project admin.
+
+   ```
+   VITE_FIREBASE_API_KEY=your-api-key-here
+   # Add other required environment variables as instructed
+   ```
+
+   ### 5. Development
+
+   Start the development server:
+
+   ```bash
+   npm run dev
+   ```
+
+   Visit [http://localhost:5173](http://localhost:5173) in your browser.
+
+   ---
+
+   ## 🚀 Deployment
+
+   ### 1. Install Firebase CLI
+
+   ```bash
+   npm install -g firebase-tools
+   ```
+
+   ### 2. Login to Firebase
+
+   ```bash
+   firebase login
+   ```
+
+   ### 3. Build the Project
+
+   ```bash
+   npm run build
+   ```
+
+   ### 4. Deploy to Firebase Hosting
+
+   ```bash
+   firebase deploy --only hosting:dentpal-site
+   ```
+
+   ---
+
+   ## 📝 Notes
+
+   - For API keys and sensitive credentials, always request access from the project admin.
+   - Do not share or commit sensitive information.
+   - For troubleshooting, see the "Common Issues" section below or contact the team.
+
+   ---
 - ✅ Consistent teal color scheme across authentication components
 - ✅ Clean logo presentation without borders or backgrounds
 - ✅ Responsive design patterns for multiple screen sizes
