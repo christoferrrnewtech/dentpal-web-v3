@@ -1,5 +1,5 @@
 import { db } from '@/lib/firebase';
-import { addDoc, collection, serverTimestamp, onSnapshot, query, where, updateDoc, doc, getDocs, getDoc, orderBy, increment, collectionGroup, limit } from 'firebase/firestore';
+import { addDoc, collection, serverTimestamp, onSnapshot, query, where, updateDoc, doc, getDocs, getDoc, orderBy, increment, collectionGroup, limit, startAfter, endBefore } from 'firebase/firestore';
 
 export type CreateProductInput = {
   sellerId: string;
