@@ -16,6 +16,8 @@ export type WebUserPermissions = {
   reports: boolean; // New: Reports visibility
   warranty: boolean; // NEW: Admin Warranty tab
   categories?: boolean; // NEW: Admin Categories tab (optional, admin-only)
+  chats: boolean; // NEW: Chat/messaging feature
+  notifications: boolean; // NEW: Notifications feature
 };
 
 export interface WebUserProfile {

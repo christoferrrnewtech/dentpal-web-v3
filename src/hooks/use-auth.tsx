@@ -27,6 +27,10 @@ export const PERMISSIONS_BY_ROLE: Record<WebUserRole, WebUserPermissions> = {
     warranty: true,
     // NEW: categories manager (admin only)
     categories: true,
+    // NEW: chats enabled for admin
+    chats: true,
+    // NEW: notifications enabled for admin
+    notifications: true,
   },
   seller: {
     dashboard: true,
@@ -46,6 +50,10 @@ export const PERMISSIONS_BY_ROLE: Record<WebUserRole, WebUserPermissions> = {
     warranty: false,
     // NEW: categories hidden for sellers
     categories: false,
+    // NEW: chats enabled by default for sellers
+    chats: true,
+    // NEW: notifications enabled by default for sellers
+    notifications: true,
   }
 };
 

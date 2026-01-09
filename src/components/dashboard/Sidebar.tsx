@@ -16,7 +16,8 @@ import {
   PlusSquare,
   Bell,
   ShieldCheck,
-  FolderTree
+  FolderTree,
+  MessageSquare
 } from "lucide-react";
 import dentalLogo from "@/assets/dentpal_logo.png";
 import { useAuth } from "@/hooks/use-auth";
@@ -35,6 +36,7 @@ const menuItems = [
   // Booking tab is now fully hidden for all users
   { id: 'seller-orders', label: 'Seller Orders', icon: Calendar },
   { id: "inventory", label: "Inventory", icon: LayoutDashboard },
+  { id: "chats", label: "Chats", icon: MessageSquare },
   { id: "notifications", label: "Notifications", icon: Bell },
   { id: "add-product", label: "Add Product", icon: PlusSquare },
   { id: "product-qc", label: "QC Product", icon: CheckCircle },
@@ -78,6 +80,7 @@ const Sidebar = ({ activeItem, onItemClick, onLogout }: SidebarProps) => {
     images: "images",
     users: "users",
     notifications: 'notifications',
+    chats: 'chats',
   };
 
   const visibleMenuItems = loading
@@ -110,7 +113,7 @@ const Sidebar = ({ activeItem, onItemClick, onLogout }: SidebarProps) => {
         }
 
         if (isSeller && !isAdmin) {
-          const sellerOrder = ['dashboard', 'seller-orders', 'reports', 'withdrawal', 'inventory', 'add-product', 'sub-accounts', 'profile'];
+          const sellerOrder = ['dashboard', 'seller-orders', 'reports', 'withdrawal', 'inventory', 'add-product', 'chats', 'notifications', 'sub-accounts', 'profile'];
           const map = new Map(permitted.map((i) => [i.id, i] as const));
           const ordered = sellerOrder.map((id) => map.get(id)).filter(Boolean) as typeof permitted;
           return ordered;
