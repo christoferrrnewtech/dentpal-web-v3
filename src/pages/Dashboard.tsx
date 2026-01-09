@@ -14,6 +14,8 @@ import UsersTab from "@/components/users/UsersTab";
 import OrderTab from '@/components/orders/SellerOrdersTab';
 import InventoryTab from '@/components/inventory/InventoryTab';
 import ProductQCTab from '@/components/admin/ProductQCTab';
+import PoliciesTab from '@/components/policies/PoliciesTab';
+import ChatsTab from '@/components/chats/ChatsTab';
 import { Order } from "@/types/order";
 import { DollarSign, Users, ShoppingCart, TrendingUp, Filter, Download } from "lucide-react";
 // Add permission-aware auth hook
@@ -223,6 +225,7 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
   }, [confirmationOrders]);
 
   const isPaidStatus = (s: Order['status']) => ['to_ship','processing','completed','shipping'].includes(s);
+  const isWithdrawableStatus = (s: Order['status']) => s === 'completed'; // Only completed orders are eligible for withdrawal
   const getAmount = (o: Order) => typeof o.total === 'number' ? o.total : ((o.items || []).reduce((s, it) => s + ((it.price || 0) * (it.quantity || 0)), 0) || 0);
 
   const filteredOrders = useMemo(() => {
@@ -367,7 +370,8 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
     let matchedOrders = 0;
 
     confirmationOrders.forEach((order: any) => {
-      if (!isPaidStatus(order.status)) {
+      // Only count completed orders for withdrawal metrics
+      if (!isWithdrawableStatus(order.status)) {
         return;
       }
 
@@ -393,7 +397,7 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
       }
     });
 
-    console.log('[Dashboard] Financial metrics calculated:', {
+    console.log('[Dashboard] Financial metrics calculated (completed orders only):', {
       totalGross,
       totalNetPayout,
       totalPaymentProcessingFee,
@@ -3446,6 +3450,12 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
       case 'categories':
         if (!isAdmin) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
         return <CategoryManager />;
+      case "policies":
+        if (!isAdmin) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
+        return <PoliciesTab />;
+      case 'chats':
+        if (!isAllowed('chats')) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
+        return <ChatsTab isSeller={!isAdmin} currentUserId={uid || undefined} />;
       default:
         return null;
     }
@@ -3455,7 +3465,8 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
     switch (activeItem) {
       case "dashboard": 
         return isAdmin ? "Dashboard" : "Sales Summary";
-      //case "booking": return "Booking";
+      case "policies":
+        return "Terms & Policies";
       case "confirmation": return "Confirmation";
       case "withdrawal": return "Withdrawal";
       case "access": return "Access";
@@ -3467,6 +3478,7 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
       case "users": return "Users";
       case 'warranty': return 'Warranty';
       case 'categories': return 'Categories';
+      case 'chats': return 'Chats';
       default: return "Dashboard";
     }
   };
@@ -3478,6 +3490,8 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
           return `Welcome back, ${user.name || user.email}`;
         }
         return `Welcome back, ${user.name || user.email}`;
+      case "policies":
+        return "Add and manage your platform's terms, conditions, and policies here.";
       case "profile":
         return "Manage seller profile, documents, and security";
       case "reports":
@@ -3504,6 +3518,8 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
         return 'Set warranty durations by category and subcategory';
       case 'categories':
         return 'Create, rename, and delete categories and their subcategories';
+      case 'chats':
+        return 'Message with buyers and sellers';
       default:
         return "";
     }

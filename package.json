@@ -56,6 +56,7 @@
     "jspdf-autotable": "^5.0.2",
     "leaflet": "1.9.4",
     "lucide-react": "^0.462.0",
+    "mammoth": "^1.11.0",
     "next-themes": "^0.3.0",
     "pdfjs-dist": "^5.4.296",
     "ph-locations": "^1.1.3",

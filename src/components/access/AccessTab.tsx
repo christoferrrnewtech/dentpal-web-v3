@@ -81,6 +81,7 @@ function normalizeTimestamp(value: any): number | null {
     inventory: true,
     'seller-orders': true,
     'add-product': true,
+    policies: role === 'admin',
   });
 
   // Normalize any loaded permissions to include all keys for the role
@@ -107,6 +108,7 @@ interface User {
     inventory: boolean;
     'seller-orders': boolean;
     'add-product': boolean;
+    policies: boolean;
   };
   Platform_fee_percentage?: number; // Platform fee percentage (default 8.88%)
   lastLogin?: string;
@@ -142,6 +144,7 @@ const AccessTab = ({ loading = false, error, setError, onTabChange, onEditUser }
         inventory: true,
         'seller-orders': true,
         'add-product': true,
+        policies: true,
       },
       lastLogin: "2024-09-09T10:30:00Z",
       createdAt: "2024-01-15T00:00:00Z"
@@ -570,7 +573,8 @@ const AccessTab = ({ loading = false, error, setError, onTabChange, onEditUser }
           users: false,
           inventory: false,
           'seller-orders': true,
-          'add-product': true
+          'add-product': true,
+          policies: false
         }
       );
 
@@ -1028,7 +1032,7 @@ const AccessTab = ({ loading = false, error, setError, onTabChange, onEditUser }
                 {Object.entries(currentUser.permissions || {}).map(([permission, enabled]) => (
                   <div key={permission} className="flex items-center justify-between">
                     <label className="text-sm font-medium text-gray-700 capitalize">
-                      {permission === 'seller-orders' ? 'orders' : permission.replace('-', ' ')}
+                      {permission === 'seller-orders' ? 'orders' : permission === 'policies' ? 'terms & policies' : permission.replace('-', ' ')}
                     </label>
                     <div className="flex items-center space-x-2">
                       <input
@@ -1160,8 +1164,8 @@ const AccessTab = ({ loading = false, error, setError, onTabChange, onEditUser }
                       <div className="flex flex-wrap gap-1 max-w-md">
                         {Object.entries(user.permissions || {})
                           .filter(([permission, enabled]) => {
-                            // Hide certain permissions from display
-                            const hiddenPermissions = ['bookings', 'booking'];
+                            // Hide seller-specific permissions from admin display
+                            const hiddenPermissions = ['bookings', 'booking', 'inventory', 'seller-orders', 'add-product'];
                             return enabled && !hiddenPermissions.includes(permission);
                           })
                           .map(([permission]) => (
@@ -1170,13 +1174,13 @@ const AccessTab = ({ loading = false, error, setError, onTabChange, onEditUser }
                               variant="secondary" 
                               className="text-xs bg-green-100 text-green-800 border border-green-200"
                             >
-                              {permission === 'seller-orders' 
-                                ? 'orders' 
+                              {permission === 'policies' 
+                                ? 'Policies' 
                                 : permission.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
                             </Badge>
                           ))}
                         {Object.entries(user.permissions || {}).filter(([permission, enabled]) => {
-                          const hiddenPermissions = ['bookings', 'booking'];
+                          const hiddenPermissions = ['bookings', 'booking', 'inventory', 'seller-orders', 'add-product'];
                           return enabled && !hiddenPermissions.includes(permission);
                         }).length === 0 && (
                           <span className="text-xs text-gray-400 italic">No permissions</span>
@@ -1197,6 +1201,7 @@ const AccessTab = ({ loading = false, error, setError, onTabChange, onEditUser }
                           onClick={() => {
                             setEditingUser(user);
                             setShowAddForm(false);
+                            setIsEditDialogOpen(true);
                           }}
                         >
                           <Edit3 className="w-4 h-4" />
@@ -1725,9 +1730,11 @@ const AccessTab = ({ loading = false, error, setError, onTabChange, onEditUser }
               <div>
                 <h4 className="text-sm font-medium text-gray-900 mb-3">Access permissions</h4>
                 <div className="space-y-3 max-h-72 overflow-auto pr-1">
-                  {Object.entries(editingUser.permissions || {}).map(([permission, enabled]) => (
+                  {Object.entries(editingUser.permissions || {})
+                    .filter(([permission]) => !['bookings', 'inventory', 'seller-orders', 'add-product'].includes(permission))
+                    .map(([permission, enabled]) => (
                     <div key={permission} className="flex items-center justify-between">
-                      <label className="text-sm text-gray-700 capitalize">{permission}</label>
+                      <label className="text-sm text-gray-700 capitalize">{permission === 'seller-orders' ? 'orders' : permission === 'policies' ? 'terms & policies' : permission.replace('-', ' ')}</label>
                       <input
                         type="checkbox"
                         checked={!!enabled}

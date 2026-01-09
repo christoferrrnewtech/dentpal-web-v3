@@ -25,5 +25,6 @@ export const auth = getAuth(app);
 export const db = getFirestore(app);
 export const storage = getStorage(app);
 export const functions = getFunctions(app);
-export const database = getDatabase(app);
+// Use the correct database URL for asia-southeast1 region
+export const database = getDatabase(app, 'https://dentpal-161e5-default-rtdb.asia-southeast1.firebasedatabase.app');
 export default app;
