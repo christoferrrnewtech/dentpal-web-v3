@@ -47,6 +47,7 @@ const menuItems = [
   { id: "access", label: "Access", icon: Key },
   { id: "images", label: "Images", icon: Images },
   { id: "users", label: "Users", icon: Users },
+  { id: "policies", label: "Terms & Policies", icon: ShieldCheck },
 ];
 
 const Sidebar = ({ activeItem, onItemClick, onLogout }: SidebarProps) => {
@@ -80,6 +81,7 @@ const Sidebar = ({ activeItem, onItemClick, onLogout }: SidebarProps) => {
     images: "images",
     users: "users",
     notifications: 'notifications',
+    policies: "policies",
     chats: 'chats',
   };
 

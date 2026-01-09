@@ -14,6 +14,7 @@ export type WebUserPermissions = {
   'add-product': boolean; // New: Allow access to Add Product/Manage Product
   'product-qc': boolean; // New: Admin Pending QC tab
   reports: boolean; // New: Reports visibility
+  policies: boolean; // NEW: Terms & Policies tab
   warranty: boolean; // NEW: Admin Warranty tab
   categories?: boolean; // NEW: Admin Categories tab (optional, admin-only)
   chats: boolean; // NEW: Chat/messaging feature

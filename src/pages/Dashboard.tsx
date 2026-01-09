@@ -14,6 +14,7 @@ import UsersTab from "@/components/users/UsersTab";
 import OrderTab from '@/components/orders/SellerOrdersTab';
 import InventoryTab from '@/components/inventory/InventoryTab';
 import ProductQCTab from '@/components/admin/ProductQCTab';
+import PoliciesTab from '@/components/policies/PoliciesTab';
 import ChatsTab from '@/components/chats/ChatsTab';
 import { Order } from "@/types/order";
 import { DollarSign, Users, ShoppingCart, TrendingUp, Filter, Download } from "lucide-react";
@@ -3449,6 +3450,9 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
       case 'categories':
         if (!isAdmin) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
         return <CategoryManager />;
+      case "policies":
+        if (!isAdmin) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
+        return <PoliciesTab />;
       case 'chats':
         if (!isAllowed('chats')) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
         return <ChatsTab isSeller={!isAdmin} currentUserId={uid || undefined} />;
@@ -3461,7 +3465,8 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
     switch (activeItem) {
       case "dashboard": 
         return isAdmin ? "Dashboard" : "Sales Summary";
-      //case "booking": return "Booking";
+      case "policies":
+        return "Terms & Policies";
       case "confirmation": return "Confirmation";
       case "withdrawal": return "Withdrawal";
       case "access": return "Access";
@@ -3485,6 +3490,8 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
           return `Welcome back, ${user.name || user.email}`;
         }
         return `Welcome back, ${user.name || user.email}`;
+      case "policies":
+        return "Add and manage your platform's terms, conditions, and policies here.";
       case "profile":
         return "Manage seller profile, documents, and security";
       case "reports":

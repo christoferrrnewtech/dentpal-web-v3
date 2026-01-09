@@ -23,6 +23,7 @@ export const PERMISSIONS_BY_ROLE: Record<WebUserRole, WebUserPermissions> = {
     'add-product': true,
     'product-qc': true,
     reports: true,
+    policies: true,
     // NEW: warranty tab default for admin
     warranty: true,
     // NEW: categories manager (admin only)
@@ -46,6 +47,7 @@ export const PERMISSIONS_BY_ROLE: Record<WebUserRole, WebUserPermissions> = {
     'add-product': true,
     'product-qc': false,
     reports: true,
+    policies: false,
     // NEW: warranty hidden for sellers
     warranty: false,
     // NEW: categories hidden for sellers
