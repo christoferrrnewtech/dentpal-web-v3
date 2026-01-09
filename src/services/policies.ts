@@ -64,16 +64,21 @@ export const uploadPolicy = async (
     // Get download URL
     const downloadUrl = await getDownloadURL(storageRef);
     
-    // Get latest version number for this type
+    // Get latest version number for this type (integer-based)
     const existingDocs = await getPoliciesByType(type);
-    const latestVersion = existingDocs.length > 0 
-      ? parseFloat(existingDocs[0].version) + 0.1 
-      : 1.0;
-    
+    let latestVersion = 1;
+    if (existingDocs.length > 0) {
+      // Find max version as integer
+      const maxVersion = Math.max(...existingDocs.map(doc => {
+        const v = parseInt(doc.version, 10);
+        return isNaN(v) ? 1 : v;
+      }));
+      latestVersion = maxVersion + 1;
+    }
     // Create metadata in Firestore
     const policyData = {
       type,
-      version: latestVersion.toFixed(1),
+      version: latestVersion.toString(),
       fileName: sanitizedFileName,
       storageUrl: storagePath,
       downloadUrl,
@@ -149,17 +154,19 @@ export const getActivePolicy = async (type: PolicyType): Promise<PolicyDocument 
   try {
     const q = query(
       collection(db, POLICIES_COLLECTION),
-      where('type', '==', type),
-      where('isActive', '==', true),
-      where('status', '==', 'published')
+      where('type', '==', type)
     );
-    
     const snapshot = await getDocs(q);
     if (snapshot.empty) return null;
-    
+    // Client-side filter for isActive and published
+    const activeDoc = snapshot.docs.find(doc => {
+      const data = doc.data();
+      return data.isActive === true && data.status === 'published';
+    });
+    if (!activeDoc) return null;
     return {
-      id: snapshot.docs[0].id,
-      ...snapshot.docs[0].data(),
+      id: activeDoc.id,
+      ...activeDoc.data(),
     } as PolicyDocument;
   } catch (error) {
     console.error('Error fetching active policy:', error);
@@ -177,8 +184,7 @@ export const publishPolicy = async (policyId: string, type: PolicyType): Promise
     const deactivatePromises = existingPolicies
       .filter(p => p.id !== policyId && p.isActive)
       .map(p => updateDoc(doc(db, POLICIES_COLLECTION, p.id), { 
-        isActive: false,
-        status: 'draft'
+        isActive: false
       }));
     
     await Promise.all(deactivatePromises);
@@ -215,16 +221,26 @@ export const updatePolicyStatus = async (
  * Delete a policy (both Firestore metadata and Storage file)
  */
 export const deletePolicy = async (policyId: string, storageUrl: string): Promise<void> => {
+  let firestoreError: any = null;
+  let storageError: any = null;
+  // Delete Firestore record first
   try {
-    // Delete from Storage
-    const storageRef = ref(storage, storageUrl);
-    await deleteObject(storageRef);
-    
-    // Delete from Firestore
     await deleteDoc(doc(db, POLICIES_COLLECTION, policyId));
   } catch (error) {
-    console.error('Error deleting policy:', error);
-    throw error;
+    firestoreError = error;
+    console.error('Error deleting Firestore policy metadata:', error);
+  }
+  // Delete Storage object next
+  try {
+    const storageRef = ref(storage, storageUrl);
+    await deleteObject(storageRef);
+  } catch (error) {
+    storageError = error;
+    console.error('Error deleting policy file from Storage:', error);
+  }
+  // If either failed, throw a combined error
+  if (firestoreError || storageError) {
+    throw new Error(`Delete errors: ${firestoreError ? firestoreError.message : ''} ${storageError ? storageError.message : ''}`.trim());
   }
 };
 
