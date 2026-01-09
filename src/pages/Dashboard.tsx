@@ -15,6 +15,7 @@ import OrderTab from '@/components/orders/SellerOrdersTab';
 import InventoryTab from '@/components/inventory/InventoryTab';
 import ProductQCTab from '@/components/admin/ProductQCTab';
 import PoliciesTab from '@/components/policies/PoliciesTab';
+import ChatsTab from '@/components/chats/ChatsTab';
 import { Order } from "@/types/order";
 import { DollarSign, Users, ShoppingCart, TrendingUp, Filter, Download } from "lucide-react";
 // Add permission-aware auth hook
@@ -3452,6 +3453,9 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
       case "policies":
         if (!isAdmin) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
         return <PoliciesTab />;
+      case 'chats':
+        if (!isAllowed('chats')) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
+        return <ChatsTab isSeller={!isAdmin} currentUserId={uid || undefined} />;
       default:
         return null;
     }
@@ -3474,6 +3478,7 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
       case "users": return "Users";
       case 'warranty': return 'Warranty';
       case 'categories': return 'Categories';
+      case 'chats': return 'Chats';
       default: return "Dashboard";
     }
   };
@@ -3513,6 +3518,8 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
         return 'Set warranty durations by category and subcategory';
       case 'categories':
         return 'Create, rename, and delete categories and their subcategories';
+      case 'chats':
+        return 'Message with buyers and sellers';
       default:
         return "";
     }
