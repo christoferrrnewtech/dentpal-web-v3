@@ -4,6 +4,7 @@ import DashboardHeader from "@/components/dashboard/DashboardHeader";
 // import StatsCard from "@/components/dashboard/StatsCard";
 // import RecentOrders from "@/components/dashboard/RecentOrders";
 import RevenueChart from "@/components/dashboard/RevenueChart";
+import { LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from "recharts";
 import Booking from "@/pages/Booking";
 import ConfirmationTab from "@/components/confirmation/ConfirmationTab";
 import WithdrawalTab from "@/components/withdrawal/WithdrawalTab";
@@ -70,6 +71,7 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
   // New: seller dashboard UI state
   const [showTutorial, setShowTutorial] = useState(false);
   const [sellerFilters, setSellerFilters] = useState({ dateRange: 'last-30', brand: 'all', subcategory: 'all', location: 'all', paymentType: 'all', viewType: 'summary' });
+  const [itemChartType, setItemChartType] = useState<'line' | 'bar' | 'pie'>('bar');
   // Admin filters (date picker range, province, city, seller/shop name)
   const [adminFilters, setAdminFilters] = useState<{ dateFrom: string; dateTo: string; province: string; city: string; seller: string }>({ dateFrom: '', dateTo: '', province: 'all', city: 'all', seller: 'all' });
   // Date range picker state (moved back after refactor)
@@ -473,7 +475,7 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
     'seller-orders': 'seller-orders',
     inventory: 'inventory',
     'add-product': 'add-product',
-    notifications: 'dashboard',
+   // notifications: 'dashboard',
     'product-qc': 'product-qc',
     'warranty': 'warranty',
     'categories': 'categories',
@@ -1389,7 +1391,8 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
                             <h4 className="text-sm font-medium text-gray-700">Sales by Item Chart</h4>
                             <select 
                               className="px-3 py-1.5 text-xs border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
-                              defaultValue="bar"
+                              value={itemChartType}
+                              onChange={(e) => setItemChartType(e.target.value as 'line' | 'bar' | 'pie')}
                             >
                               <option value="line">Line Chart</option>
                               <option value="bar">Bar Chart</option>
@@ -1428,28 +1431,128 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
                             }
 
                             const maxSales = Math.max(...chartData.map(d => d.sales));
-                            return (
-                              <div className="space-y-3">
-                                {chartData.map((item, idx) => (
-                                  <div key={idx} className="space-y-1">
-                                    <div className="flex items-center justify-between text-xs">
-                                      <span className="font-medium text-gray-700 truncate pr-2">{item.name}</span>
-                                      <span className="font-semibold text-gray-900">{currency.format(item.sales)}</span>
-                                    </div>
-                                    <div className="w-full bg-gray-100 rounded-full h-6 relative overflow-hidden">
-                                      <div 
-                                        className="bg-gradient-to-r from-teal-500 to-teal-600 h-full rounded-full transition-all duration-500 flex items-center justify-end pr-2"
-                                        style={{ width: `${(item.sales / maxSales) * 100}%` }}
+                            const COLORS = ['#14b8a6', '#06b6d4', '#3b82f6', '#8b5cf6', '#ec4899'];
+
+                            // Line Chart
+                            if (itemChartType === 'line') {
+                              return (
+                                <div className="h-64 w-full">
+                                  <ResponsiveContainer width="100%" height="100%">
+                                    <LineChart data={chartData} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
+                                      <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                                      <XAxis 
+                                        dataKey="name" 
+                                        stroke="#9ca3af"
+                                        fontSize={11}
+                                        angle={-45}
+                                        textAnchor="end"
+                                        height={80}
+                                        interval={0}
+                                      />
+                                      <YAxis 
+                                        stroke="#9ca3af"
+                                        fontSize={11}
+                                        tickFormatter={(value) => currency.format(value)}
+                                      />
+                                      <Tooltip 
+                                        contentStyle={{
+                                          backgroundColor: "white",
+                                          border: "1px solid #e5e7eb",
+                                          borderRadius: "8px",
+                                          fontSize: "12px",
+                                        }}
+                                        formatter={(value: any) => [currency.format(value), 'Sales']}
+                                      />
+                                      <Line 
+                                        type="monotone" 
+                                        dataKey="sales" 
+                                        stroke="#14b8a6" 
+                                        strokeWidth={2}
+                                        dot={{ fill: '#14b8a6', r: 4 }}
+                                        activeDot={{ r: 6 }}
+                                      />
+                                    </LineChart>
+                                  </ResponsiveContainer>
+                                </div>
+                              );
+                            }
+
+                            // Pie Chart
+                            if (itemChartType === 'pie') {
+                              return (
+                                <div className="h-64 w-full">
+                                  <ResponsiveContainer width="100%" height="100%">
+                                    <PieChart>
+                                      <Pie
+                                        data={chartData}
+                                        dataKey="sales"
+                                        nameKey="name"
+                                        cx="50%"
+                                        cy="50%"
+                                        outerRadius={90}
                                       >
-                                        {(item.sales / maxSales) > 0.3 && (
-                                          <span className="text-[10px] font-medium text-white">
-                                            {((item.sales / maxSales) * 100).toFixed(0)}%
-                                          </span>
-                                        )}
-                                      </div>
-                                    </div>
-                                  </div>
-                                ))}
+                                        {chartData.map((entry, index) => (
+                                          <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                                        ))}
+                                      </Pie>
+                                      <Tooltip 
+                                        contentStyle={{
+                                          backgroundColor: "white",
+                                          border: "1px solid #e5e7eb",
+                                          borderRadius: "8px",
+                                          fontSize: "12px",
+                                          padding: "8px 12px",
+                                        }}
+                                        formatter={(value: any, name: string) => [currency.format(value), 'Sales']}
+                                      />
+                                      <Legend 
+                                        verticalAlign="bottom" 
+                                        height={36}
+                                        iconType="circle"
+                                        iconSize={8}
+                                        wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }}
+                                      />
+                                    </PieChart>
+                                  </ResponsiveContainer>
+                                </div>
+                              );
+                            }
+
+                            // Bar Chart (default/original with horizontal bars)
+                            return (
+                              <div className="h-64 w-full">
+                                <ResponsiveContainer width="100%" height="100%">
+                                  <BarChart data={chartData} layout="vertical" margin={{ top: 5, right: 20, bottom: 5, left: 100 }}>
+                                    <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" horizontal={false} />
+                                    <XAxis 
+                                      type="number"
+                                      stroke="#9ca3af"
+                                      fontSize={11}
+                                      tickFormatter={(value) => currency.format(value)}
+                                    />
+                                    <YAxis 
+                                      type="category"
+                                      dataKey="name" 
+                                      stroke="#9ca3af"
+                                      fontSize={11}
+                                      width={90}
+                                    />
+                                    <Tooltip 
+                                      contentStyle={{
+                                        backgroundColor: "white",
+                                        border: "1px solid #e5e7eb",
+                                        borderRadius: "8px",
+                                        fontSize: "12px",
+                                      }}
+                                      formatter={(value: any) => [currency.format(value), 'Sales']}
+                                    />
+                                    <Bar 
+                                      dataKey="sales" 
+                                      fill="#14b8a6"
+                                      radius={[0, 8, 8, 0]}
+                                    />
+                                  </BarChart>
+                                </ResponsiveContainer>
                               </div>
                             );
                           })()}
