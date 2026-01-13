@@ -141,7 +141,13 @@ const PoliciesTab: React.FC = () => {
 
   // Handle publish
   const handlePublish = async (policy: PolicyDocument) => {
-    if (!confirm(`Publish this ${policy.type === 'terms-of-service' ? 'Terms of Service' : 'Privacy Policy'}? This will replace the current active policy.`)) {
+    const policyTypeLabel = 
+      policy.type === 'terms-of-service' ? 'Merchant Terms of Service' :
+      policy.type === 'privacy-policy' ? 'Merchant Privacy Policy' :
+      policy.type === 'user-terms-of-service' ? 'User Terms of Service' :
+      'User Privacy Policy';
+    
+    if (!confirm(`Publish this ${policyTypeLabel}? This will replace the current active policy.`)) {
       return;
     }
 
@@ -207,6 +213,8 @@ const PoliciesTab: React.FC = () => {
   // Group policies by type
   const termsOfService = policies.filter(p => p.type === 'terms-of-service');
   const privacyPolicies = policies.filter(p => p.type === 'privacy-policy');
+  const userTermsOfService = policies.filter(p => p.type === 'user-terms-of-service');
+  const userPrivacyPolicies = policies.filter(p => p.type === 'user-privacy-policy');
 
   const renderPolicyCard = (policy: PolicyDocument) => (
     <div key={policy.id} className="bg-white border rounded-lg p-4 hover:shadow-md transition-shadow">
@@ -260,15 +268,6 @@ const PoliciesTab: React.FC = () => {
               <CheckCircle className="w-4 h-4" />
             </Button>
           )}
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => handleDelete(policy)}
-            className="text-red-600 hover:text-red-700"
-            title="Delete"
-          >
-            <Trash2 className="w-4 h-4" />
-          </Button>
         </div>
       </div>
     </div>
@@ -276,19 +275,6 @@ const PoliciesTab: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="bg-gradient-to-r from-green-600 to-teal-600 rounded-2xl p-6 text-white shadow-lg">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold mb-2">Terms & Policies</h1>
-            <p className="text-green-100">
-              Manage platform policies: Terms of Service and Privacy Policy
-            </p>
-          </div>
-          <Shield className="w-12 h-12 text-green-200" />
-        </div>
-      </div>
-
       {/* Upload Button */}
       <div className="bg-white rounded-xl border p-4">
         <Button 
@@ -342,6 +328,48 @@ const PoliciesTab: React.FC = () => {
         )}
       </div>
 
+      {/* User Terms of Service Section */}
+      <div className="bg-white rounded-xl border p-6">
+        <div className="flex items-center gap-2 mb-4">
+          <FileText className="w-5 h-5 text-blue-600" />
+          <h2 className="text-xl font-semibold">User Terms of Service</h2>
+          <Badge variant="secondary">{userTermsOfService.length} versions</Badge>
+        </div>
+        {loading ? (
+          <div className="text-center py-8 text-gray-500">Loading...</div>
+        ) : userTermsOfService.length === 0 ? (
+          <div className="text-center py-8 text-gray-500">
+            <AlertCircle className="w-12 h-12 mx-auto mb-3 text-gray-400" />
+            <p>No User Terms of Service uploaded yet</p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {userTermsOfService.map(renderPolicyCard)}
+          </div>
+        )}
+      </div>
+
+      {/* User Privacy Policy Section */}
+      <div className="bg-white rounded-xl border p-6">
+        <div className="flex items-center gap-2 mb-4">
+          <Shield className="w-5 h-5 text-blue-600" />
+          <h2 className="text-xl font-semibold">User Privacy Policy</h2>
+          <Badge variant="secondary">{userPrivacyPolicies.length} versions</Badge>
+        </div>
+        {loading ? (
+          <div className="text-center py-8 text-gray-500">Loading...</div>
+        ) : userPrivacyPolicies.length === 0 ? (
+          <div className="text-center py-8 text-gray-500">
+            <AlertCircle className="w-12 h-12 mx-auto mb-3 text-gray-400" />
+            <p>No User Privacy Policy uploaded yet</p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {userPrivacyPolicies.map(renderPolicyCard)}
+          </div>
+        )}
+      </div>
+
       {/* Upload Dialog */}
       <Dialog open={uploadDialogOpen} onOpenChange={setUploadDialogOpen}>
         <DialogContent className="sm:max-w-lg">
@@ -362,6 +390,8 @@ const PoliciesTab: React.FC = () => {
               >
                 <option value="terms-of-service">Merchant Terms of Service</option>
                 <option value="privacy-policy">Merchant Privacy Policy</option>
+                <option value="user-terms-of-service">User Terms of Service</option>
+                <option value="user-privacy-policy">User Privacy Policy</option>
               </select>
             </div>
             

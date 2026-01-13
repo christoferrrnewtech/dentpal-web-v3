@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { RefreshCw, Clock, CheckCircle, XCircle, AlertCircle, Banknote, Search, Filter } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import {
@@ -7,6 +7,8 @@ import {
   rejectWithdrawalRequest,
 } from "@/services/withdrawal";
 import type { WithdrawalRequest, WithdrawalStatus } from "@/types/withdrawal";
+import { db } from "@/lib/firebase";
+import { collection, getDocs } from "firebase/firestore";
 
 interface WithdrawalTabProps {
   loading: boolean;
@@ -34,17 +36,46 @@ const WithdrawalTab = ({
 
   // Filters
   const [selectedStatus, setSelectedStatus] = useState<string>("all");
-  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedMerchant, setSelectedMerchant] = useState<string>("all");
   const [activeSection, setActiveSection] = useState<"pending" | "history">("pending");
+  
+  // Date range picker state
+  const [dateRange, setDateRange] = useState<{ start: Date | null; end: Date | null }>({ start: null, end: null });
+  const [calendarMonth, setCalendarMonth] = useState<Date>(new Date());
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const dateDropdownRef = useRef<HTMLDivElement | null>(null);
 
   // Rejection modal
   const [showRejectModal, setShowRejectModal] = useState(false);
   const [rejectingId, setRejectingId] = useState<string | null>(null);
   const [rejectionReason, setRejectionReason] = useState("");
+  
+  // Merchants from Firebase Seller collection
+  const [merchants, setMerchants] = useState<Array<{ id: string; name: string }>>([]);
 
   // Fetch all withdrawal requests
   useEffect(() => {
     fetchRequests();
+  }, []);
+  
+  // Fetch sellers from Firebase
+  useEffect(() => {
+    const fetchSellers = async () => {
+      try {
+        const sellersRef = collection(db, 'Seller');
+        const snapshot = await getDocs(sellersRef);
+        const sellersList = snapshot.docs.map(doc => ({
+          id: doc.id,
+          name: doc.data().name || doc.data().shopName || doc.data().storeName || doc.data().email || 'Unknown Seller'
+        }));
+        // Sort by name
+        sellersList.sort((a, b) => a.name.localeCompare(b.name));
+        setMerchants(sellersList);
+      } catch (error) {
+        console.error('Error fetching sellers:', error);
+      }
+    };
+    fetchSellers();
   }, []);
 
   const fetchRequests = async () => {
@@ -66,6 +97,29 @@ const WithdrawalTab = ({
     currency: "PHP",
     maximumFractionDigits: 2,
   });
+  
+  // Date helper functions
+  const toISO = (d: Date | null) => d ? new Date(d.getFullYear(), d.getMonth(), d.getDate()).toISOString().slice(0,10) : '';
+  const daysInMonth = (month: Date) => new Date(month.getFullYear(), month.getMonth()+1, 0).getDate();
+  const firstWeekday = (month: Date) => new Date(month.getFullYear(), month.getMonth(), 1).getDay();
+  const isInRange = (day: Date) => {
+    const { start, end } = dateRange;
+    if (!start) return false;
+    if (!end) return day.getTime() === start.getTime();
+    return day.getTime() >= start.getTime() && day.getTime() <= end.getTime();
+  };
+  
+  // Close date picker on outside click
+  useEffect(() => {
+    if (!showDatePicker) return;
+    const handler = (e: MouseEvent) => {
+      if (!dateDropdownRef.current?.contains(e.target as Node)) {
+        setShowDatePicker(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showDatePicker]);
 
   // Filtered requests based on section and filters
   const filteredRequests = useMemo(() => {
@@ -78,25 +132,28 @@ const WithdrawalTab = ({
       filtered = filtered.filter((r) => r.status !== "pending");
     }
 
-    // Filter by status (for history section)
-    if (activeSection === "history" && selectedStatus !== "all") {
+    // Filter by status
+    if (selectedStatus !== "all") {
       filtered = filtered.filter((r) => r.status === selectedStatus);
     }
 
-    // Filter by search query
-    if (searchQuery.trim()) {
-      const query = searchQuery.toLowerCase();
-      filtered = filtered.filter(
-        (r) =>
-          r.sellerName.toLowerCase().includes(query) ||
-          r.sellerEmail.toLowerCase().includes(query) ||
-          r.referenceNumber?.toLowerCase().includes(query) ||
-          r.receiver.bankAccountName.toLowerCase().includes(query)
-      );
+    // Filter by merchant
+    if (selectedMerchant !== "all") {
+      filtered = filtered.filter((r) => r.sellerId === selectedMerchant);
+    }
+    
+    // Filter by date range
+    if (dateRange.start) {
+      const startTime = dateRange.start.getTime();
+      const endTime = dateRange.end ? dateRange.end.getTime() : startTime;
+      filtered = filtered.filter((r) => {
+        const requestTime = new Date(r.createdAt).getTime();
+        return requestTime >= startTime && requestTime <= endTime + 86400000; // +1 day to include end date
+      });
     }
 
     return filtered;
-  }, [withdrawalRequests, activeSection, selectedStatus, searchQuery]);
+  }, [withdrawalRequests, activeSection, selectedStatus, selectedMerchant, dateRange]);
 
   // Stats
   const stats = useMemo(() => {
@@ -221,17 +278,38 @@ const WithdrawalTab = ({
       minute: "2-digit",
     });
   };
+  
+  // Date picker handlers
+  const handleDayClick = (day: Date) => {
+    if (!dateRange.start || (dateRange.start && dateRange.end)) {
+      setDateRange({ start: day, end: null });
+    } else {
+      if (day.getTime() < dateRange.start.getTime()) {
+        setDateRange({ start: day, end: dateRange.start });
+      } else {
+        setDateRange({ start: dateRange.start, end: day });
+      }
+    }
+  };
+  
+  const applyPreset = (preset: string) => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    if (preset === 'today') {
+      setDateRange({ start: today, end: today });
+    } else {
+      const days = parseInt(preset);
+      const start = new Date(today);
+      start.setDate(start.getDate() - days + 1);
+      setDateRange({ start, end: today });
+    }
+  };
 
   return (
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-2xl font-bold text-gray-900">Withdrawal Requests</h2>
-          <p className="text-sm text-gray-500 mt-1">
-            Review and manage seller payout requests
-          </p>
-        </div>
         <button
           onClick={fetchRequests}
           disabled={fetchingRequests}
@@ -252,7 +330,8 @@ const WithdrawalTab = ({
         </div>
       )}
 
-      {/* Stats Cards */}
+      {/* Stats Cards (hidden for admin, see request) */}
+      {/**
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <div className="bg-gradient-to-r from-yellow-50 to-amber-50 border border-yellow-200 rounded-xl p-4">
           <div className="flex items-center justify-between">
@@ -310,6 +389,7 @@ const WithdrawalTab = ({
           </div>
         </div>
       </div>
+      */}
 
       {/* Section Tabs */}
       <div className="flex space-x-1 bg-gray-100 rounded-xl p-1">
@@ -341,37 +421,124 @@ const WithdrawalTab = ({
       </div>
 
       {/* Filters */}
-      <div className="bg-white rounded-xl border border-gray-200 p-4">
-        <div className="flex flex-col md:flex-row md:items-center gap-4">
-          <div className="flex-1">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-              <input
-                type="text"
-                placeholder="Search by seller name, email, or reference..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-teal-500 focus:border-transparent"
-              />
+      <div className="bg-white rounded-xl border border-gray-200 p-5">
+        <div className="text-sm font-semibold text-gray-900 mb-3">Filters</div>
+        <div className="flex flex-col lg:flex-row lg:items-end lg:space-x-4 gap-4">
+          {/* Date Filter */}
+          <div className="flex-1 min-w-[200px]">
+            <label className="block text-xs font-medium text-gray-700 mb-1">Date</label>
+            <div ref={dateDropdownRef} className="relative">
+              <button
+                type="button"
+                onClick={() => setShowDatePicker(v => !v)}
+                className="w-full p-2 border border-gray-200 rounded-lg text-xs bg-white hover:bg-gray-50 flex items-center justify-between"
+              >
+                <span className="truncate pr-2">
+                  {dateRange.start ? `${toISO(dateRange.start)} → ${toISO(dateRange.end || dateRange.start)}` : 'Select date range'}
+                </span>
+                <span className={`text-[11px] transition-transform ${showDatePicker ? 'rotate-180' : ''}`}>⌄</span>
+              </button>
+              {showDatePicker && (
+                <div className="absolute left-0 mt-2 z-30 w-[280px] border border-gray-200 rounded-xl bg-white shadow-xl p-3 space-y-3 animate-fade-in">
+                  {/* Presets */}
+                  <div className="flex flex-wrap gap-2">
+                    <button onClick={() => applyPreset('today')} className="px-2 py-1 text-xs rounded-md border bg-white hover:bg-teal-50">Today</button>
+                    <button onClick={() => applyPreset('7')} className="px-2 py-1 text-xs rounded-md border bg-white hover:bg-teal-50">Last 7 days</button>
+                    <button onClick={() => applyPreset('30')} className="px-2 py-1 text-xs rounded-md border bg-white hover:bg-teal-50">Last 30 days</button>
+                    {dateRange.start && (
+                      <span className="text-[10px] text-gray-500 ml-auto">{toISO(dateRange.start)} → {toISO(dateRange.end || dateRange.start)}</span>
+                    )}
+                  </div>
+                  {/* Calendar header */}
+                  <div className="flex items-center justify-between">
+                    <button type="button" onClick={() => setCalendarMonth(m => new Date(m.getFullYear(), m.getMonth()-1, 1))} className="px-2 py-1 text-xs rounded border bg-white hover:bg-gray-100">◀</button>
+                    <div className="text-xs font-medium text-gray-700">
+                      {calendarMonth.toLocaleString('en-US', { month: 'long', year: 'numeric' })}
+                    </div>
+                    <button type="button" onClick={() => setCalendarMonth(m => new Date(m.getFullYear(), m.getMonth()+1, 1))} className="px-2 py-1 text-xs rounded border bg-white hover:bg-gray-100">▶</button>
+                  </div>
+                  {/* Weekday labels */}
+                  <div className="grid grid-cols-7 text-[10px] font-medium text-gray-500">
+                    {['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d => <div key={d} className="text-center">{d}</div>)}
+                  </div>
+                  {/* Days grid */}
+                  <div className="grid grid-cols-7 gap-1 text-xs">
+                    {Array.from({ length: firstWeekday(calendarMonth) }).map((_,i) => <div key={'spacer'+i} />)}
+                    {Array.from({ length: daysInMonth(calendarMonth) }).map((_,i) => {
+                      const day = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth(), i+1);
+                      const selectedStart = dateRange.start && day.getTime() === dateRange.start.getTime();
+                      const selectedEnd = dateRange.end && day.getTime() === dateRange.end.getTime();
+                      const inRange = isInRange(day);
+                      return (
+                        <button
+                          key={i}
+                          type="button"
+                          onClick={() => handleDayClick(day)}
+                          className={`h-7 rounded-md flex items-center justify-center transition border text-gray-700 ${selectedStart || selectedEnd ? 'bg-teal-600 text-white border-teal-600 font-semibold' : inRange ? 'bg-teal-100 border-teal-200' : 'bg-white border-gray-200 hover:bg-gray-100'}`}
+                          title={toISO(day)}
+                        >{i+1}</button>
+                      );
+                    })}
+                  </div>
+                  {/* Actions */}
+                  <div className="flex items-center justify-between pt-1">
+                    <button type="button" onClick={() => setDateRange({ start: null, end: null })} className="text-[11px] px-2 py-1 rounded-md border bg-white hover:bg-gray-100">Clear</button>
+                    <button type="button" onClick={() => setShowDatePicker(false)} className="text-[11px] px-3 py-1 rounded-md bg-teal-600 text-white">Done</button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
-          {activeSection === "history" && (
-            <div className="flex items-center gap-2">
-              <Filter className="w-4 h-4 text-gray-400" />
-              <select
-                value={selectedStatus}
-                onChange={(e) => setSelectedStatus(e.target.value)}
-                className="px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-teal-500 focus:border-transparent"
-              >
-                <option value="all">All Statuses</option>
-                <option value="approved">Approved</option>
-                <option value="processing">Processing</option>
-                <option value="completed">Completed</option>
-                <option value="rejected">Rejected</option>
-                <option value="failed">Failed</option>
-              </select>
-            </div>
-          )}
+          
+          {/* Status Filter */}
+          <div className="flex-1 min-w-[160px]">
+            <label className="block text-xs font-medium text-gray-700 mb-1">Status</label>
+            <select
+              value={selectedStatus}
+              onChange={(e) => setSelectedStatus(e.target.value)}
+              className="w-full p-2 border border-gray-200 rounded-lg text-xs focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+            >
+              <option value="all">All Statuses</option>
+              <option value="pending">On Hold</option>
+              <option value="processing">Processing</option>
+              <option value="completed">Completed</option>
+            </select>
+          </div>
+          
+          {/* Merchant Filter */}
+          <div className="flex-1 min-w-[200px]">
+            <label className="block text-xs font-medium text-gray-700 mb-1">Merchant</label>
+            <select
+              value={selectedMerchant}
+              onChange={(e) => setSelectedMerchant(e.target.value)}
+              className="w-full p-2 border border-gray-200 rounded-lg text-xs focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+            >
+              <option value="all">All Merchants</option>
+              {merchants.map(m => (
+                <option key={m.id} value={m.id}>{m.name}</option>
+              ))}
+            </select>
+          </div>
+          
+          {/* Apply/Reset Buttons */}
+          <div className="flex items-end gap-2 pt-2">
+            <button 
+              onClick={fetchRequests}
+              className="px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white text-xs font-medium rounded-lg shadow-sm transition"
+            >
+              Apply
+            </button>
+            <button
+              onClick={() => {
+                setSelectedStatus('all');
+                setSelectedMerchant('all');
+                setDateRange({ start: null, end: null });
+              }}
+              className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-medium rounded-lg transition"
+            >
+              Reset
+            </button>
+          </div>
         </div>
       </div>
 

@@ -18,7 +18,7 @@ import {
 } from 'firebase/storage';
 import { db, storage } from '@/lib/firebase';
 
-export type PolicyType = 'terms-of-service' | 'privacy-policy';
+export type PolicyType = 'terms-of-service' | 'privacy-policy' | 'user-terms-of-service' | 'user-privacy-policy';
 export type PolicyStatus = 'draft' | 'published';
 
 export interface PolicyDocument {

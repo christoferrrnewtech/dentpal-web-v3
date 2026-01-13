@@ -93,6 +93,8 @@ const Sidebar = ({ activeItem, onItemClick, onLogout }: SidebarProps) => {
           if (item.id === 'warranty' && !isAdmin) return false;
           if (item.id === 'categories' && !isAdmin) return false;
           if (item.id === 'profile' && isAdmin) return false;
+          if (item.id === 'chats' && isAdmin) return false; // Hide chats for admin
+          if (item.id === 'confirmation' && isAdmin) return false; // Hide confirmation for admin
           if (isAdmin && ['seller-orders','inventory','add-product','sub-accounts'].includes(item.id)) return false;
           const key = permissionByMenuId[item.id];
 

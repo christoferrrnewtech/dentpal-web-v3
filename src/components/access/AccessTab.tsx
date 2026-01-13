@@ -81,6 +81,8 @@ function normalizeTimestamp(value: any): number | null {
     inventory: true,
     'seller-orders': true,
     'add-product': true,
+    'product-qc': role === 'admin',
+    categories: role === 'admin',
     policies: role === 'admin',
   });
 
@@ -1029,10 +1031,20 @@ const AccessTab = ({ loading = false, error, setError, onTabChange, onEditUser }
             <div className="space-y-4">
               <h4 className="text-lg font-medium text-gray-900">Manage Access</h4>
               <div className="space-y-3">
-                {Object.entries(currentUser.permissions || {}).map(([permission, enabled]) => (
+                {Object.entries(currentUser.permissions || {})
+                  .filter(([permission]) => {
+                    // Hide these permissions for Admin role
+                    const hiddenAdminPermissions = ['profile', 'bookings', 'confirmation', 'inventory', 'seller-orders', 'add-product'];
+                    return !hiddenAdminPermissions.includes(permission);
+                  })
+                  .map(([permission, enabled]) => (
                   <div key={permission} className="flex items-center justify-between">
                     <label className="text-sm font-medium text-gray-700 capitalize">
-                      {permission === 'seller-orders' ? 'orders' : permission === 'policies' ? 'terms & policies' : permission.replace('-', ' ')}
+                      {permission === 'seller-orders' ? 'orders' : 
+                       permission === 'policies' ? 'terms & policies' : 
+                       permission === 'product-qc' ? 'QC Product' :
+                       permission === 'categories' ? 'Categories' :
+                       permission.replace('-', ' ')}
                     </label>
                     <div className="flex items-center space-x-2">
                       <input
