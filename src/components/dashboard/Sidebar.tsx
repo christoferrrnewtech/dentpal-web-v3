@@ -17,7 +17,15 @@ import {
   Bell,
   ShieldCheck,
   FolderTree,
-  MessageSquare
+  MessageSquare,
+  Package,
+  History,
+  ChevronDown,
+  ChevronRight,
+  ClipboardList,
+  Edit,
+  Plus,
+  List
 } from "lucide-react";
 import dentalLogo from "@/assets/dentpal_logo.png";
 import { useAuth } from "@/hooks/use-auth";
@@ -29,16 +37,42 @@ interface SidebarProps {
   onLogout: () => void;
 }
 
-const menuItems = [
+interface MenuItem {
+  id: string;
+  label: string;
+  icon: any;
+  subItems?: Array<{ id: string; label: string; icon: any }>;
+}
+
+const menuItems: MenuItem[] = [
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
   { id: "profile", label: "Profile", icon: IdCard },
   // { id: "booking", label: "Booking", icon: Calendar }, // HIDE BOOKING FOR ADMIN
   // Booking tab is now fully hidden for all users
   { id: 'seller-orders', label: 'Seller Orders', icon: Calendar },
-  { id: "inventory", label: "Inventory", icon: LayoutDashboard },
+  { id: 'reports', label: 'Reports', icon: BarChart3 },
+  { 
+    id: "inventory", 
+    label: "Inventory", 
+    icon: Package,
+    subItems: [
+      { id: "inventory-all", label: "All", icon: List },
+      { id: "inventory-history", label: "History", icon: History }
+    ]
+  },
+  { 
+    id: "inventory-control", 
+    label: "Inventory Control", 
+    icon: ClipboardList,
+    subItems: [
+      { id: "stock-adjustment", label: "Stock Adjustment", icon: Package },
+      { id: "price-management", label: "Price Management", icon: CreditCard },
+      { id: "item-management", label: "Item Management", icon: Edit }
+    ]
+  },
+  { id: "items", label: "Items", icon: PlusSquare },
   { id: "chats", label: "Chats", icon: MessageSquare },
   //{ id: "notifications", label: "Notifications", icon: Bell },
-  { id: "add-product", label: "Add Product", icon: PlusSquare },
   { id: "product-qc", label: "QC Product", icon: CheckCircle },
   { id: "categories", label: "Categories", icon: FolderTree },
   { id: "confirmation", label: "Confirmation", icon: CheckCircle },
@@ -52,6 +86,7 @@ const menuItems = [
 
 const Sidebar = ({ activeItem, onItemClick, onLogout }: SidebarProps) => {
   const [isCollapsed, setIsCollapsed] = useState(false);
+  const [expandedMenus, setExpandedMenus] = useState<Set<string>>(new Set(['inventory', 'inventory-control'])); // Expanded by default
   const { hasPermission, loading, isAdmin, isSeller, isSubAccount, role } = useAuth();
   const { vendorProfileComplete } = useProfileCompletion();
 
@@ -70,7 +105,12 @@ const Sidebar = ({ activeItem, onItemClick, onLogout }: SidebarProps) => {
     booking: "bookings",
     'seller-orders': 'seller-orders',
     inventory: 'inventory',
-    'add-product': 'add-product',
+    'inventory-all': 'inventory',
+    'inventory-history': 'inventory',
+    'inventory-control': 'inventory',
+    'stock-adjustment': 'inventory',
+    'price-management': 'add-product',
+    items: 'add-product',
     'product-qc': 'product-qc',
     warranty: 'warranty',
     categories: 'categories',
@@ -85,6 +125,18 @@ const Sidebar = ({ activeItem, onItemClick, onLogout }: SidebarProps) => {
     chats: 'chats',
   };
 
+  const toggleMenu = (menuId: string) => {
+    setExpandedMenus(prev => {
+      const next = new Set(prev);
+      if (next.has(menuId)) {
+        next.delete(menuId);
+      } else {
+        next.add(menuId);
+      }
+      return next;
+    });
+  };
+
   const visibleMenuItems = loading
     ? []
     : (() => {
@@ -95,7 +147,7 @@ const Sidebar = ({ activeItem, onItemClick, onLogout }: SidebarProps) => {
           if (item.id === 'profile' && isAdmin) return false;
           if (item.id === 'chats' && isAdmin) return false; // Hide chats for admin
           if (item.id === 'confirmation' && isAdmin) return false; // Hide confirmation for admin
-          if (isAdmin && ['seller-orders','inventory','add-product','sub-accounts'].includes(item.id)) return false;
+          if (isAdmin && ['seller-orders','inventory','inventory-control','stock-adjustment','price-management','items','sub-accounts'].includes(item.id)) return false;
           const key = permissionByMenuId[item.id];
 
           if (isSubAccount) {
@@ -117,7 +169,7 @@ const Sidebar = ({ activeItem, onItemClick, onLogout }: SidebarProps) => {
         }
 
         if (isSeller && !isAdmin) {
-          const sellerOrder = ['dashboard', 'seller-orders', 'reports', 'withdrawal', 'inventory', 'add-product', 'chats', 'sub-accounts', 'profile'];
+          const sellerOrder = ['dashboard', 'seller-orders', 'reports', 'withdrawal', 'inventory', 'inventory-control', 'items', 'chats', 'sub-accounts', 'profile'];
           const map = new Map(permitted.map((i) => [i.id, i] as const));
           const ordered = sellerOrder.map((id) => map.get(id)).filter(Boolean) as typeof permitted;
           return ordered;
@@ -172,28 +224,72 @@ const Sidebar = ({ activeItem, onItemClick, onLogout }: SidebarProps) => {
       </div>
 
       {/* Navigation */}
-      <div className="flex-1 p-4">
-        <nav className="space-y-2">
+      <div className="flex-1 p-4 overflow-y-auto">
+        <nav className="space-y-1">
           {visibleMenuItems.map((item) => {
             const Icon = item.icon;
-            const isActive = activeItem === item.id;
+            const isActive = activeItem === item.id || item.subItems?.some(sub => sub.id === activeItem);
+            const isExpanded = expandedMenus.has(item.id);
+            const hasSubItems = item.subItems && item.subItems.length > 0;
+            
             const displayLabel = (isSeller && !isAdmin)
               ? (item.id === 'dashboard' ? 'Sales Summary' : item.id === 'seller-orders' ? 'Orders' : item.id === 'reports' ? 'Report' : item.label)
               : item.label;
             
             return (
-              <button
-                key={item.id}
-                onClick={() => onItemClick(item.id)}
-                className={`w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition-all duration-200 ${
-                  isActive
-                    ? "bg-primary text-primary-foreground shadow-md"
-                    : "text-muted-foreground hover:text-foreground hover:bg-accent"
-                }`}
-              >
-                <Icon className="w-5 h-5 flex-shrink-0" />
-                {!isCollapsed && <span className="font-medium">{displayLabel}</span>}
-              </button>
+              <div key={item.id}>
+                <button
+                  onClick={() => {
+                    if (hasSubItems) {
+                      toggleMenu(item.id);
+                    } else {
+                      onItemClick(item.id);
+                    }
+                  }}
+                  className={`w-full flex items-center justify-between px-3 py-2 rounded-lg transition-all duration-200 ${
+                    isActive
+                      ? "bg-primary text-primary-foreground shadow-md"
+                      : "text-muted-foreground hover:text-foreground hover:bg-accent"
+                  }`}
+                >
+                  <div className="flex items-center space-x-3">
+                    <Icon className="w-5 h-5 flex-shrink-0" />
+                    {!isCollapsed && <span className="font-medium">{displayLabel}</span>}
+                  </div>
+                  {!isCollapsed && hasSubItems && (
+                    isExpanded ? (
+                      <ChevronDown className="w-4 h-4 flex-shrink-0" />
+                    ) : (
+                      <ChevronRight className="w-4 h-4 flex-shrink-0" />
+                    )
+                  )}
+                </button>
+                
+                {/* Sub-items */}
+                {!isCollapsed && hasSubItems && isExpanded && (
+                  <div className="ml-6 mt-1 space-y-1 border-l-2 border-border pl-2">
+                    {item.subItems!.map((subItem) => {
+                      const SubIcon = subItem.icon;
+                      const isSubActive = activeItem === subItem.id;
+                      
+                      return (
+                        <button
+                          key={subItem.id}
+                          onClick={() => onItemClick(subItem.id)}
+                          className={`w-full flex items-center space-x-3 px-3 py-1.5 rounded-lg transition-all duration-200 text-sm ${
+                            isSubActive
+                              ? "bg-primary text-primary-foreground"
+                              : "text-muted-foreground hover:text-foreground hover:bg-accent"
+                          }`}
+                        >
+                          <SubIcon className="w-4 h-4 flex-shrink-0" />
+                          <span className="font-medium">{subItem.label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
             );
           })}
         </nav>
