@@ -16,6 +16,7 @@ interface Props {
 const CatalogTable: React.FC<Props> = ({ items, onToggleActive, onEdit, onEditPrice, onEditStock, onDelete, onRestore, tabKey }) => {
   const isViolationView = tabKey === 'violation';
   const isPendingView = tabKey === 'pending_qc';
+  const showActionsColumn = Boolean(onEdit || onDelete || onRestore);
 
   const [filters, setFilters] = React.useState({
     product: '',
@@ -135,7 +136,7 @@ const CatalogTable: React.FC<Props> = ({ items, onToggleActive, onEdit, onEditPr
                     </div>
                   </div>
                 </HeaderWithFilter>
-                {(onEdit || onDelete) && (
+                {showActionsColumn && (
                   <th className="px-4 py-2 text-left text-[11px] font-semibold text-gray-600 tracking-wide">ACTIONS</th>
                 )}
               </>
@@ -183,7 +184,7 @@ const CatalogTable: React.FC<Props> = ({ items, onToggleActive, onEdit, onEditPr
                     </select>
                   </div>
                 </HeaderWithFilter>
-                {(onEdit || onDelete) && (
+                {showActionsColumn && (
                   <th className="px-4 py-2 text-left text-[11px] font-semibold text-gray-600 tracking-wide">ACTIONS</th>
                 )}
               </>
@@ -219,16 +220,20 @@ const CatalogTable: React.FC<Props> = ({ items, onToggleActive, onEdit, onEditPr
                     <td className="px-4 py-2 text-gray-700 align-top">
                       <div className="max-w-[520px] whitespace-pre-wrap break-words text-xs">{i.qcReason || '—'}</div>
                     </td>
-                    <td className="px-4 py-2">
-                      <div className="flex items-center gap-2">
-                        <button
-                          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-white border border-gray-300 hover:bg-gray-50 shadow-sm"
-                          onClick={() => onEdit(i.id)}
-                        >
-                          <Edit3 className="w-3.5 h-3.5" /> Edit
-                        </button>
-                      </div>
-                    </td>
+                    {showActionsColumn && (
+                      <td className="px-4 py-2">
+                        <div className="flex items-center gap-2">
+                          {onEdit && (
+                            <button
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-white border border-gray-300 hover:bg-gray-50 shadow-sm"
+                              onClick={() => onEdit(i.id)}
+                            >
+                              <Edit3 className="w-3.5 h-3.5" /> Edit
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    )}
                   </>
                 ) : isPendingView ? (
                   <>
@@ -289,7 +294,7 @@ const CatalogTable: React.FC<Props> = ({ items, onToggleActive, onEdit, onEditPr
                         <span>{i.inStock}</span>
                       )}
                     </td>
-                    {(onEdit || onDelete) && (
+                    {showActionsColumn && (
                       <td className="px-4 py-2">
                         <div className="flex items-center gap-2">
                           {onEdit && (
@@ -385,7 +390,7 @@ const CatalogTable: React.FC<Props> = ({ items, onToggleActive, onEdit, onEditPr
                         />
                       </label>
                     </td>
-                    {(onEdit || onDelete || onRestore) && (
+                    {showActionsColumn && (
                       <td className="px-4 py-2">
                         <div className="flex items-center gap-2">
                           {isDeleted ? (
@@ -429,7 +434,7 @@ const CatalogTable: React.FC<Props> = ({ items, onToggleActive, onEdit, onEditPr
           })}
           {paged.length === 0 && (
             <tr>
-              <td colSpan={isViolationView ? 3 : isPendingView ? 5 : 5} className="px-4 py-8 text-center text-xs text-gray-500">No products found.</td>
+              <td colSpan={isViolationView ? (1 + 1 + (showActionsColumn ? 1 : 0)) : isPendingView ? (1 + 1 + 1 + 1 + (showActionsColumn ? 1 : 0)) : (1 + 1 + 1 + 1 + (showActionsColumn ? 1 : 0))} className="px-4 py-8 text-center text-xs text-gray-500">No products found.</td>
             </tr>
           )}
         </tbody>
