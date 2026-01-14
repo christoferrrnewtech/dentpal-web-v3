@@ -44,6 +44,9 @@ export interface InventoryItem {
   hasVariants?: boolean;
   variants?: ProductVariant[];
   qcReason?: string;
+  variationCount?: number;
+  categoryID?: string;
+  subCategoryID?: string;
 }
 
 export interface StockAdjustmentDraft {

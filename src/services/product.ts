@@ -328,6 +328,7 @@ export const ProductService = {
     cb: (rows: Array<{
       id: string;
       name: string;
+      description?: string;
       imageUrl?: string;
       price?: number;
       specialPrice?: number;
@@ -336,10 +337,13 @@ export const ProductService = {
       updatedAt: number;
       sku?: string;
       category?: string;
+      categoryID?: string;
       subcategory?: string;
+      subCategoryID?: string;
       qcReason?: string;
       // New: expose threshold
       suggestedThreshold?: number | null;
+      variationCount?: number;
     }>) => void
   ) {
     const qRef = query(collection(db, PRODUCT_COLLECTION), where('sellerId', '==', sellerId));
@@ -348,10 +352,12 @@ export const ProductService = {
         const pd: any = d.data();
         // Sum variation stocks
         let totalStock = 0;
+        let variationCount = 0;
         let derivedPrice: number | undefined = pd.lowestPrice != null ? Number(pd.lowestPrice) : undefined;
         try {
           const varSnap = await getDocs(collection(db, PRODUCT_COLLECTION, d.id, 'Variation'));
           const vars = varSnap.docs.map(vd => vd.data() as any);
+          variationCount = vars.length;
           totalStock = vars.reduce((sum, v) => sum + (Number(v.stock ?? 0)), 0);
           if (derivedPrice == null && vars.length > 0) {
             const minVarPrice = Math.min(...vars.map(v => Number(v.price ?? 0) || 0));
@@ -371,6 +377,7 @@ export const ProductService = {
         return {
           id: String(d.id),
           name: String(pd.name ?? ''),
+          description: typeof pd.description === 'string' ? pd.description : '',
           imageUrl: pd.imageURL ? String(pd.imageURL) : undefined,
           price: derivedPrice != null ? derivedPrice : (pd.price != null ? Number(pd.price) : undefined),
           specialPrice: effectiveSpecial,
@@ -378,10 +385,13 @@ export const ProductService = {
           status: s,
           updatedAt: pd.updatedAt?.toMillis?.() ? Number(pd.updatedAt.toMillis()) : Date.now(),
           sku: undefined as string | undefined,
-          category: undefined as string | undefined,
-          subcategory: undefined as string | undefined,
+          category: typeof pd.categoryID === 'string' ? pd.categoryID : undefined,
+          categoryID: typeof pd.categoryID === 'string' ? pd.categoryID : undefined,
+          subcategory: typeof pd.subCategoryID === 'string' ? pd.subCategoryID : undefined,
+          subCategoryID: typeof pd.subCategoryID === 'string' ? pd.subCategoryID : undefined,
           qcReason: typeof pd.qcReason === 'string' ? pd.qcReason : undefined,
           suggestedThreshold: pd.suggestedThreshold != null ? Number(pd.suggestedThreshold) : null,
+          variationCount: variationCount,
         };
       }));
       // sort name asc like before
@@ -425,6 +435,77 @@ export const ProductService = {
     }
     
     // Nudge parent product so product snapshot listeners refresh totals
+    const pRef = doc(db, PRODUCT_COLLECTION, productId);
+    await updateDoc(pRef, { updatedAt: serverTimestamp() });
+  },
+
+  // Listen to variations for a specific product
+  listenVariations(productId: string, callback: (variations: Array<any>) => void) {
+    const col = collection(db, PRODUCT_COLLECTION, productId, 'Variation');
+    const unsub = onSnapshot(col, snapshot => {
+      const variations = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+      }));
+      callback(variations);
+    });
+    return unsub;
+  },
+
+  // Update a variation
+  async updateVariation(productId: string, variationId: string, updates: {
+    name?: string;
+    SKU?: string;
+    price?: number;
+    stock?: number;
+    weight?: number;
+    weightUnit?: string;
+    dimensions?: { length?: number; width?: number; height?: number };
+    dimensionsUnit?: string;
+    imageURL?: string;
+  }) {
+    const vRef = doc(db, PRODUCT_COLLECTION, productId, 'Variation', variationId);
+    const updateData: any = {
+      updatedAt: serverTimestamp(),
+    };
+    
+    if (updates.name !== undefined) updateData.name = updates.name;
+    if (updates.SKU !== undefined) {
+      updateData.SKU = updates.SKU;
+      updateData.sku = updates.SKU; // Keep both for compatibility
+    }
+    if (updates.price !== undefined) updateData.price = Number(updates.price);
+    if (updates.stock !== undefined) updateData.stock = Number(updates.stock);
+    if (updates.weight !== undefined) updateData.weight = Number(updates.weight);
+    if (updates.weightUnit !== undefined) updateData.weightUnit = updates.weightUnit;
+    if (updates.dimensionsUnit !== undefined) updateData.dimensionsUnit = updates.dimensionsUnit;
+    if (updates.imageURL !== undefined) updateData.imageURL = updates.imageURL;
+    
+    if (updates.dimensions) {
+      updateData.dimensions = updates.dimensions;
+      updateData.dimension = {
+        height: updates.dimensions.height ?? null,
+        width: updates.dimensions.width ?? null,
+        weight: updates.weight ?? null,
+      };
+    }
+    
+    await updateDoc(vRef, updateData);
+    
+    // Nudge parent product to trigger listeners
+    const pRef = doc(db, PRODUCT_COLLECTION, productId);
+    await updateDoc(pRef, { updatedAt: serverTimestamp() });
+  },
+
+  // Delete a variation
+  async deleteVariation(productId: string, variationId: string) {
+    const vRef = doc(db, PRODUCT_COLLECTION, productId, 'Variation', variationId);
+    await updateDoc(vRef, {
+      isDeleted: true,
+      updatedAt: serverTimestamp()
+    });
+    
+    // Nudge parent product
     const pRef = doc(db, PRODUCT_COLLECTION, productId);
     await updateDoc(pRef, { updatedAt: serverTimestamp() });
   },

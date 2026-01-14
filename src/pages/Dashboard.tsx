@@ -474,11 +474,18 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
     users: "users",
     'seller-orders': 'seller-orders',
     inventory: 'inventory',
+    'inventory-all': 'inventory',
+    'inventory-history': 'inventory',
+    'stock-adjustment': 'inventory',
+    'price-management': 'add-product',
+    'item-management': 'inventory',
     'add-product': 'add-product',
    // notifications: 'dashboard',
     'product-qc': 'product-qc',
     'warranty': 'warranty',
     'categories': 'categories',
+    chats: 'chats',
+    policies: 'policies',
   } as any;
 
   const isAllowed = (itemId: string) => {
@@ -3538,11 +3545,32 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
           <UsersTab />
         );
       case "inventory":
+      case "inventory-all":
         if (!isAllowed("inventory")) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
         return (
-          <InventoryTab />
+          <InventoryTab initialTab="all" />
         );
-      case "add-product":
+      case "inventory-history":
+        if (!isAllowed("inventory")) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
+        return (
+          <InventoryTab initialTab="history" />
+        );
+      case "stock-adjustment":
+        if (!isAllowed("inventory")) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
+        return (
+          <InventoryTab initialTab="add" />
+        );
+      case "price-management":
+        if (!isAllowed("add-product")) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
+        return (
+          <InventoryTab initialTab="price" />
+        );
+      case "item-management":
+        if (!isAllowed("inventory")) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
+        return (
+          <InventoryTab initialTab="item-management" />
+        );
+      case "items":
         if (!isAllowed("add-product")) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
         return (
           <AddProduct />
@@ -3582,6 +3610,14 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
       case 'warranty': return 'Warranty';
       case 'categories': return 'Categories';
       case 'chats': return 'Chats';
+      case 'inventory':
+      case 'inventory-all': return 'Inventory - All Products';
+      case 'inventory-history': return 'Inventory - History';
+      case 'inventory-control': return 'Inventory Control';
+      case 'stock-adjustment': return 'Stock Adjustment';
+      case 'price-management': return 'Price Management';
+      case 'item-management': return 'Item Management';
+      case 'items': return 'Items';
       default: return "Dashboard";
     }
   };
