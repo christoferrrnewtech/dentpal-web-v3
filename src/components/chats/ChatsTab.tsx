@@ -1,8 +1,9 @@
-import { useState, useEffect, useMemo } from 'react';
-import { database, auth, db } from '@/lib/firebase';
+import { useState, useEffect, useMemo, useRef } from 'react';
+import { database, auth, db, storage } from '@/lib/firebase';
 import { ref, onValue, off, push, set, update, get } from 'firebase/database';
 import { doc, getDoc } from 'firebase/firestore';
-import { MessageSquare, Send, Search, X, User, Loader2 } from 'lucide-react';
+import { ref as storageRef, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
+import { MessageSquare, Send, Search, X, User, Loader2, Image as ImageIcon, ZoomIn } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 
 interface ChatMessage {
@@ -17,6 +18,8 @@ interface ChatMessage {
   productId?: string;
   productName?: string;
   productImage?: string;
+  imageUrl?: string;
+  messageType?: string;
 }
 
 interface ChatRoom {
@@ -53,8 +56,45 @@ const ChatsTab = ({ isSeller = false, currentUserId }: ChatsTabProps) => {
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [chatFilter, setChatFilter] = useState<'all' | 'inquiries' | 'orders'>('all');
+  const [uploadingImage, setUploadingImage] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [fullScreenImage, setFullScreenImage] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [currentUserAvatar, setCurrentUserAvatar] = useState<string | undefined>(undefined);
 
   const userId = currentUserId || auth.currentUser?.uid;
+
+  // Load current user's avatar
+  useEffect(() => {
+    const loadCurrentUserAvatar = async () => {
+      if (!userId) return;
+
+      try {
+        // First try to get from User collection
+        const userDoc = await getDoc(doc(db, 'User', userId));
+        if (userDoc.exists()) {
+          const userData = userDoc.data();
+          if (userData.photoURL) {
+            setCurrentUserAvatar(userData.photoURL);
+            return;
+          }
+        }
+
+        // If user is a seller, check Seller collection
+        const sellerDoc = await getDoc(doc(db, 'Seller', userId));
+        if (sellerDoc.exists()) {
+          const sellerData = sellerDoc.data();
+          if (sellerData.photoURL) {
+            setCurrentUserAvatar(sellerData.photoURL);
+          }
+        }
+      } catch (error) {
+        console.error('Error loading user avatar:', error);
+      }
+    };
+
+    loadCurrentUserAvatar();
+  }, [userId]);
 
   // Load chat rooms
   useEffect(() => {
@@ -111,6 +151,8 @@ const ChatsTab = ({ isSeller = false, currentUserId }: ChatsTabProps) => {
                   productId: roomData.lastMessage.productId,
                   productName: roomData.lastMessage.productName,
                   productImage: roomData.lastMessage.productImage,
+                  imageUrl: roomData.lastMessage.imageUrl,
+                  messageType: roomData.lastMessage.messageType || 'text',
                 };
               }
 
@@ -162,6 +204,8 @@ const ChatsTab = ({ isSeller = false, currentUserId }: ChatsTabProps) => {
             productId: msgData.productId,
             productName: msgData.productName,
             productImage: msgData.productImage,
+            imageUrl: msgData.imageUrl,
+            messageType: msgData.messageType || 'text',
           });
         });
       }
@@ -240,6 +284,121 @@ const ChatsTab = ({ isSeller = false, currentUserId }: ChatsTabProps) => {
     }
   };
 
+  // Upload and send image
+  const uploadAndSendImage = async (file: File) => {
+    if (!selectedChatRoom || !userId || uploadingImage) return;
+
+    setUploadingImage(true);
+    setUploadProgress(0);
+
+    try {
+      // Validate file type
+      if (!file.type.startsWith('image/')) {
+        throw new Error('Please select an image file');
+      }
+
+      // Validate file size (max 5MB)
+      if (file.size > 5 * 1024 * 1024) {
+        throw new Error('Image size must be less than 5MB');
+      }
+
+      // Create storage reference
+      const timestamp = Date.now();
+      const fileName = `${timestamp}_${file.name}`;
+      const imageStorageRef = storageRef(storage, `chat_images/${selectedChatRoom.id}/${fileName}`);
+
+      // Upload image with progress tracking
+      const uploadTask = uploadBytesResumable(imageStorageRef, file);
+
+      uploadTask.on('state_changed', 
+        (snapshot) => {
+          const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
+          setUploadProgress(progress);
+        },
+        (error) => {
+          console.error('Upload error:', error);
+          throw error;
+        }
+      );
+
+      // Wait for upload to complete
+      await uploadTask;
+
+      // Get download URL
+      const imageUrl = await getDownloadURL(imageStorageRef);
+
+      // Get sender data from Firestore
+      let senderName = 'User';
+      let senderAvatar: string | undefined;
+
+      const userDoc = await getDoc(doc(db, 'User', userId));
+      if (userDoc.exists()) {
+        const userData = userDoc.data();
+        senderName = userData.fullName || userData.displayName || 'User';
+        senderAvatar = userData.photoURL;
+      }
+
+      // Check if seller and get seller data
+      const sellerDoc = await getDoc(doc(db, 'Seller', userId));
+      if (sellerDoc.exists()) {
+        const sellerData = sellerDoc.data();
+        if (sellerData.photoURL) {
+          senderAvatar = sellerData.photoURL;
+        }
+      }
+
+      const messagesRef = ref(database, `chatRooms/${selectedChatRoom.id}/messages`);
+      const newMessageRef = push(messagesRef);
+
+      const otherUserId = selectedChatRoom.user1Id === userId 
+        ? selectedChatRoom.user2Id 
+        : selectedChatRoom.user1Id;
+
+      const messageData: any = {
+        senderId: userId,
+        receiverId: otherUserId,
+        message: '📷 Image',
+        timestamp: Date.now(),
+        senderName,
+        isRead: false,
+        imageUrl,
+        messageType: 'image',
+      };
+
+      // Only include senderAvatar if it exists
+      if (senderAvatar) {
+        messageData.senderAvatar = senderAvatar;
+      }
+
+      await set(newMessageRef, messageData);
+
+      // Update chat room's last message and activity
+      const chatRoomRef = ref(database, `chatRooms/${selectedChatRoom.id}`);
+      await update(chatRoomRef, {
+        lastMessage: messageData,
+        lastActivity: Date.now(),
+      });
+
+    } catch (error: any) {
+      console.error('Error uploading image:', error);
+      alert(error.message || 'Failed to upload image. Please try again.');
+    } finally {
+      setUploadingImage(false);
+      setUploadProgress(0);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    }
+  };
+
+  // Handle file selection
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      uploadAndSendImage(file);
+    }
+  };
+
   // Send message
   const sendMessage = async () => {
     if (!messageText.trim() || !selectedChatRoom || !userId || sending) return;
@@ -274,15 +433,19 @@ const ChatsTab = ({ isSeller = false, currentUserId }: ChatsTabProps) => {
         ? selectedChatRoom.user2Id 
         : selectedChatRoom.user1Id;
 
-      const messageData: Partial<ChatMessage> = {
+      const messageData: any = {
         senderId: userId,
         receiverId: otherUserId,
         message: messageText.trim(),
         timestamp: Date.now(),
         senderName,
-        senderAvatar,
         isRead: false,
       };
+
+      // Only include senderAvatar if it exists
+      if (senderAvatar) {
+        messageData.senderAvatar = senderAvatar;
+      }
 
       await set(newMessageRef, messageData);
 
@@ -589,31 +752,150 @@ const ChatsTab = ({ isSeller = false, currentUserId }: ChatsTabProps) => {
                   return (
                     <div
                       key={msg.id}
-                      className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}
+                      className={`flex gap-2 items-end ${isMe ? 'justify-end' : 'justify-start'}`}
                     >
-                      <div className={`max-w-[70%] ${isMe ? 'order-2' : 'order-1'}`}>
-                        <div
-                          className={`rounded-lg px-4 py-2 ${
-                            isMe
-                              ? 'bg-teal-600 text-white'
-                              : 'bg-gray-100 text-gray-900'
-                          }`}
-                        >
-                          <p className="text-sm whitespace-pre-wrap break-words">{msg.message}</p>
+                      {/* Avatar for received messages (left side, bottom aligned) */}
+                      {!isMe && (
+                        <div className="flex-shrink-0 mb-5">
+                          {msg.senderAvatar ? (
+                            <img
+                              src={msg.senderAvatar}
+                              alt={msg.senderName || 'User'}
+                              className="w-8 h-8 rounded-full object-cover"
+                            />
+                          ) : (
+                            <div className="w-8 h-8 rounded-full bg-gray-300 flex items-center justify-center">
+                              <User className="w-4 h-4 text-gray-600" />
+                            </div>
+                          )}
                         </div>
-                        <p className={`text-xs text-gray-500 mt-1 ${isMe ? 'text-right' : 'text-left'}`}>
+                      )}
+
+                      <div className={`max-w-[70%]`}>
+                        {/* Sender name for received messages */}
+                        {!isMe && msg.senderName && (
+                          <p className="text-xs text-gray-500 mb-1 ml-1">
+                            {msg.senderName}
+                          </p>
+                        )}
+                        
+                        {msg.messageType === 'image' && msg.imageUrl ? (
+                          // Image message
+                          <div className="relative group">
+                            <img
+                              src={msg.imageUrl}
+                              alt="Shared image"
+                              className="rounded-lg max-w-full h-auto cursor-pointer hover:opacity-90 transition-opacity"
+                              style={{ maxHeight: '250px', maxWidth: '250px' }}
+                              onClick={() => setFullScreenImage(msg.imageUrl!)}
+                            />
+                            <button
+                              onClick={() => setFullScreenImage(msg.imageUrl!)}
+                              className="absolute top-2 right-2 bg-black/50 text-white p-1.5 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
+                            >
+                              <ZoomIn className="w-4 h-4" />
+                            </button>
+                            {msg.message && msg.message !== '📷 Image' && (
+                              <p className={`text-sm mt-1 ${isMe ? 'text-white' : 'text-gray-900'}`}>
+                                {msg.message}
+                              </p>
+                            )}
+                          </div>
+                        ) : (
+                          // Text message
+                          <div
+                            className={`rounded-lg px-4 py-2 ${
+                              isMe
+                                ? 'bg-teal-600 text-white'
+                                : 'bg-gray-100 text-gray-900'
+                            }`}
+                          >
+                            <p className="text-sm whitespace-pre-wrap break-words">{msg.message}</p>
+                          </div>
+                        )}
+                        <p className={`text-xs text-gray-500 mt-1 ${isMe ? 'text-right' : 'text-left'} ml-1`}>
                           {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                         </p>
                       </div>
+
+                      {/* Avatar for sent messages (right side, bottom aligned) */}
+                      {isMe && (
+                        <div className="flex-shrink-0 mb-5 order-3">
+                          {currentUserAvatar ? (
+                            <img
+                              src={currentUserAvatar}
+                              alt="You"
+                              className="w-8 h-8 rounded-full object-cover"
+                            />
+                          ) : (
+                            <div className="w-8 h-8 rounded-full bg-teal-600 flex items-center justify-center">
+                              <User className="w-4 h-4 text-white" />
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   );
                 })
+              )}
+              
+              {/* Uploading image preview */}
+              {uploadingImage && (
+                <div className="flex gap-2 items-end justify-end">
+                  <div className="max-w-[70%]">
+                    <div className="bg-teal-600 text-white rounded-lg px-4 py-3">
+                      <div className="flex items-center gap-3">
+                        <Loader2 className="w-5 h-5 animate-spin" />
+                        <div className="flex-1">
+                          <p className="text-sm font-medium">Uploading image...</p>
+                          <div className="mt-2 bg-white/20 rounded-full h-2 overflow-hidden">
+                            <div 
+                              className="bg-white h-full transition-all duration-300"
+                              style={{ width: `${uploadProgress}%` }}
+                            />
+                          </div>
+                          <p className="text-xs mt-1 opacity-80">{Math.round(uploadProgress)}%</p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  {/* Current user avatar (bottom aligned) */}
+                  <div className="flex-shrink-0 mb-5">
+                    {currentUserAvatar ? (
+                      <img
+                        src={currentUserAvatar}
+                        alt="You"
+                        className="w-8 h-8 rounded-full object-cover"
+                      />
+                    ) : (
+                      <div className="w-8 h-8 rounded-full bg-teal-600 flex items-center justify-center">
+                        <User className="w-4 h-4 text-white" />
+                      </div>
+                    )}
+                  </div>
+                </div>
               )}
             </div>
 
             {/* Message input */}
             <div className="p-4 border-t border-gray-200">
               <div className="flex gap-2">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={handleFileSelect}
+                  className="hidden"
+                />
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={uploadingImage || sending}
+                  className="px-3 py-2 text-teal-600 hover:bg-teal-50 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  title="Send image"
+                >
+                  <ImageIcon className="w-5 h-5" />
+                </button>
                 <input
                   type="text"
                   value={messageText}
@@ -625,12 +907,12 @@ const ChatsTab = ({ isSeller = false, currentUserId }: ChatsTabProps) => {
                     }
                   }}
                   placeholder="Type a message..."
-                  disabled={sending}
+                  disabled={sending || uploadingImage}
                   className="flex-1 px-4 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500 disabled:bg-gray-100 disabled:cursor-not-allowed"
                 />
                 <button
                   onClick={sendMessage}
-                  disabled={!messageText.trim() || sending}
+                  disabled={!messageText.trim() || sending || uploadingImage}
                   className="px-4 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed flex items-center gap-2"
                 >
                   {sending ? (
@@ -653,6 +935,27 @@ const ChatsTab = ({ isSeller = false, currentUserId }: ChatsTabProps) => {
           </div>
         )}
       </div>
+
+      {/* Full-screen image viewer */}
+      {fullScreenImage && (
+        <div 
+          className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-4"
+          onClick={() => setFullScreenImage(null)}
+        >
+          <button
+            onClick={() => setFullScreenImage(null)}
+            className="absolute top-4 right-4 text-white hover:text-gray-300 transition-colors"
+          >
+            <X className="w-8 h-8" />
+          </button>
+          <img
+            src={fullScreenImage}
+            alt="Full screen view"
+            className="max-w-full max-h-full object-contain"
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
+      )}
     </div>
   );
 };
