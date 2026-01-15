@@ -189,7 +189,7 @@ const AddProduct: React.FC = () => {
 
   const variantFileInputs = useRef<Record<string, HTMLInputElement | null>>({});
   const [pendingVariantPick, setPendingVariantPick] = useState<string | null>(null);
-  const [variants, setVariants] = useState<Array<{ key: string; options: Record<string, string>; price: number; stock: number; sku?: string; specialPrice?: number; available?: boolean; imageUrl?: string; imageFile?: File | null; imagePreview?: string | null; name?: string }>>([]);
+  const [variants, setVariants] = useState<Array<{ key: string; options: Record<string, string>; price: number; stock: number; sku?: string; specialPrice?: number; available?: boolean; isFragile?: boolean; imageUrl?: string; imageFile?: File | null; imagePreview?: string | null; name?: string }>>([]);
 
   const triggerVariantFilePick = (key: string) => {
     if (!variantFileInputs.current[key]) return;
@@ -223,7 +223,7 @@ const AddProduct: React.FC = () => {
 
   const addBlankVariant = () => {
     const key = `manual-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-    setVariants((prev) => [...prev, { key, options: {}, price: 0, stock: 0, sku: undefined, specialPrice: 0, available: true, imageUrl: undefined, imageFile: null, imagePreview: null, name: '' }]);
+    setVariants((prev) => [...prev, { key, options: {}, price: 0, stock: 0, sku: undefined, specialPrice: 0, available: true, isFragile: false, imageUrl: undefined, imageFile: null, imagePreview: null, name: '' }]);
     setPendingVariantPick(key);
   };
 
@@ -325,7 +325,7 @@ const AddProduct: React.FC = () => {
 
       // Prepare variants and upload any new variant images
       const variationImageVersions: Record<string, string> = {};
-      const variantsToSave: Array<{ key: string; options: Record<string, string>; price: number; stock: number; sku?: string; specialPrice?: number; available?: boolean; imageUrl?: string; name?: string }>=[];
+      const variantsToSave: Array<{ key: string; options: Record<string, string>; price: number; stock: number; sku?: string; specialPrice?: number; available?: boolean; isFragile?: boolean; imageUrl?: string; name?: string }>=[];
       for (let idx = 0; idx < variants.length; idx++) {
         const v = variants[idx];
         let vUrl = v.imageUrl;
@@ -338,7 +338,7 @@ const AddProduct: React.FC = () => {
           vUrl = await getDownloadURL(ref);
           variationImageVersions[String(idx)] = ts;
         }
-        variantsToSave.push({ key: v.key, options: v.options, price: Number(v.price) || 0, stock: Number(v.stock) || 0, sku: v.sku, specialPrice: v.specialPrice, available: v.available, imageUrl: vUrl, name: (v.name || '').trim() || undefined });
+        variantsToSave.push({ key: v.key, options: v.options, price: Number(v.price) || 0, stock: Number(v.stock) || 0, sku: v.sku, specialPrice: v.specialPrice, available: v.available, isFragile: v.isFragile, imageUrl: vUrl, name: (v.name || '').trim() || undefined });
       }
 
       // Compute lowestPrice
@@ -382,6 +382,7 @@ const AddProduct: React.FC = () => {
             dimensionsUnit: newItem.dimensionUnit || undefined,
             imageURL: v.imageUrl || null,
             name: v.name?.trim() || `batch${i}`,
+            isFragile: v.isFragile ?? false,
           }))
         : [{
             sku: newItem.sku || undefined,
@@ -394,6 +395,7 @@ const AddProduct: React.FC = () => {
             dimensionsUnit: newItem.dimensionUnit || undefined,
             imageURL: productImageUrl || null,
             name: (newItem.simpleVariantName || '').trim() || 'default',
+            isFragile: false,
           }];
 
       await ProductService.addVariations(productRef.id, variationsForProduct);
@@ -746,7 +748,7 @@ const AddProduct: React.FC = () => {
             {/* Simple product row when no variants */}
             {variants.length === 0 && (
               <div className="border rounded overflow-hidden">
-                <div className="grid grid-cols-7 text-xs bg-gray-50">
+                <div className="grid grid-cols-8 text-xs bg-gray-50">
                   <div className="p-2 font-medium text-gray-600">Image</div>
                   <div className="p-2 font-medium text-gray-600">Name</div>
                   <div className="p-2 font-medium text-gray-600">Price</div>
@@ -754,8 +756,9 @@ const AddProduct: React.FC = () => {
                   <div className="p-2 font-medium text-gray-600">Stock</div>
                   <div className="p-2 font-medium text-gray-600">SellerSKU</div>
                   <div className="p-2 font-medium text-gray-600">Availability</div>
+                  <div className="p-2 font-medium text-gray-600">Fragile</div>
                 </div>
-                <div className="grid grid-cols-7 items-center text-xs">
+                <div className="grid grid-cols-8 items-center text-xs">
                   <div className="p-2">
                     <button type="button" className="text-xs px-3 py-1 rounded border border-gray-300 hover:bg-gray-50" onClick={handlePickImage} title="Choose product image" disabled={!effectiveSellerId}>
                       {(newItem.imagePreview || newItem.imageUrl) ? 'Replace Image' : 'Add Image'}
@@ -770,6 +773,7 @@ const AddProduct: React.FC = () => {
                   <div className="p-2"><input type="number" value={newItem.inStock} onChange={(e)=> setNewItem(s=> ({...s, inStock: Number(e.target.value)}))} className="w-full p-1 border rounded" /></div>
                   <div className="p-2"><input value={newItem.sku} onChange={(e)=> setNewItem(s=> ({...s, sku: e.target.value}))} className="w-full p-1 border rounded" /></div>
                   <div className="p-2"><input type="checkbox" className="accent-teal-600" checked={available} onChange={(e)=> setAvailable(e.target.checked)} /></div>
+                  <div className="p-2"><input type="checkbox" className="accent-teal-600" checked={false} disabled /></div>
                 </div>
               </div>
             )}
@@ -796,6 +800,7 @@ const AddProduct: React.FC = () => {
                         SellerSKU <span className="text-red-500">*</span>
                       </th>
                       <th className="text-left p-2 font-medium text-gray-600">Availability</th>
+                      <th className="text-left p-2 font-medium text-gray-600">Fragile</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -856,6 +861,7 @@ const AddProduct: React.FC = () => {
                           />
                         </td>
                         <td className="p-2"><input type="checkbox" className="accent-teal-600" checked={(v as any).available ?? true} onChange={(e)=> setVariants((list)=> list.map(x=> x.key===v.key?{...x, available: e.target.checked}:x))} /></td>
+                        <td className="p-2"><input type="checkbox" className="accent-teal-600" checked={(v as any).isFragile ?? false} onChange={(e)=> setVariants((list)=> list.map(x=> x.key===v.key?{...x, isFragile: e.target.checked}:x))} /></td>
                       </tr>
                     ))}
                   </tbody>

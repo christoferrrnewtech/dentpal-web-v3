@@ -91,6 +91,25 @@ function normalizeTimestamp(value: any): number | null {
     return { ...defaultPermissionsByRole(role), ...(perms || {}) } as User['permissions'];
   };
 
+  // Helper to get display label for permissions
+  const getPermissionLabel = (key: string): string => {
+    const labelMap: Record<string, string> = {
+      'dashboard': 'Sales Summary',
+      'profile': 'Profile',
+      'bookings': 'Booking',
+      'confirmation': 'Confirmation',
+      'withdrawal': 'Withdrawal',
+      'access': 'Access',
+      'images': 'Images',
+      'users': 'Users',
+      'inventory': 'Inventory Control',
+      'seller-orders': 'Orders',
+      'add-product': 'Items',
+      'policies': 'Policies'
+    };
+    return labelMap[key] || key.replace('-', ' ');
+  };
+
 interface User {
   id: string;
   username: string;
@@ -373,6 +392,7 @@ const AccessTab = ({ loading = false, error, setError, onTabChange, onEditUser }
   const [members, setMembers] = useState<any[]>([]);
   const [membersLoading, setMembersLoading] = useState(false);
   const [editing, setEditing] = useState<any | null>(null);
+  const [viewOnly, setViewOnly] = useState(false);
 
   // Platform fee edit state
   const [platformFeeModalOpen, setPlatformFeeModalOpen] = useState(false);
@@ -1085,7 +1105,7 @@ const AccessTab = ({ loading = false, error, setError, onTabChange, onEditUser }
             <div className="space-y-4">
               <h4 className="text-lg font-medium text-gray-900">Access</h4>
               <div className="text-xs text-gray-600 bg-gray-50 border border-gray-200 rounded-lg p-3">
-                Sellers automatically have access to: <span className="font-medium">Dashboard, Profile, Inventory, Orders, Add Product, Access (Sub Accounts)</span>.
+                Sellers automatically have access to: <span className="font-medium">Sales Summary, Profile, Inventory Control, Orders, Items, Access (Sub Accounts)</span>.
               </div>
             </div>
           )}
@@ -1313,14 +1333,18 @@ const AccessTab = ({ loading = false, error, setError, onTabChange, onEditUser }
                         <div className="font-medium">{m.name || m.email}</div>
                         <div className="text-xs text-gray-500">{m.email}</div>
                         <div className="mt-1 flex flex-wrap gap-1">
-                          {Object.entries(m.permissions || {}).filter(([,v]) => v).map(([k]) => (
-                            <span key={k} className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">{String(k).replace('seller-orders','orders')}</span>
+                          {Object.entries(m.permissions || {}).filter(([k, v]) => {
+                            // Filter out bookings and notifications from display
+                            if (k === 'bookings' || k === 'notifications') return false;
+                            return v;
+                          }).map(([k]) => (
+                            <span key={k} className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">{getPermissionLabel(k)}</span>
                           ))}
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
-                        <Button variant="ghost" size="sm" onClick={() => setEditing({ ...m })}>View</Button>
-                        <Button variant="ghost" size="sm" onClick={() => setEditing({ ...m })}><Edit3 className="w-4 h-4 mr-1"/> Edit</Button>
+                        <Button variant="ghost" size="sm" onClick={() => { setEditing({ ...m }); setViewOnly(true); }}>View</Button>
+                        <Button variant="ghost" size="sm" onClick={() => { setEditing({ ...m }); setViewOnly(false); }}><Edit3 className="w-4 h-4 mr-1"/> Edit</Button>
                         <Button variant="ghost" size="sm" className="text-red-600 hover:text-red-800" onClick={() => handleDeleteMember(m)}><Trash2 className="w-4 h-4 mr-1"/> Delete</Button>
                       </div>
                     </div>
@@ -1335,29 +1359,35 @@ const AccessTab = ({ loading = false, error, setError, onTabChange, onEditUser }
         </Dialog>
 
         {/* Edit/View Sub-account Dialog */}
-        <Dialog open={!!editing} onOpenChange={(o)=> !o && setEditing(null)}>
+        <Dialog open={!!editing} onOpenChange={(o)=> { if (!o) { setEditing(null); setViewOnly(false); } }}>
           <DialogContent className="sm:max-w-md">
             <DialogHeader>
-              <DialogTitle>{editing?.name || 'Sub-account'}</DialogTitle>
+              <DialogTitle>{viewOnly ? 'View' : 'Edit'} Sub-account - {editing?.name || 'Sub-account'}</DialogTitle>
               <DialogDescription>{editing?.email}</DialogDescription>
             </DialogHeader>
             {editing && (
               <div className="space-y-3">
                 <div>
                   <label className="block text-xs mb-1">Name</label>
-                  <Input value={editing.name || ''} onChange={(e)=> setEditing({ ...editing, name: e.target.value })} />
+                  <Input value={editing.name || ''} onChange={(e)=> setEditing({ ...editing, name: e.target.value })} disabled={viewOnly} readOnly={viewOnly} className={viewOnly ? 'bg-gray-50' : ''} />
                 </div>
                 <div>
                   <label className="block text-xs mb-1">Permissions</label>
                   <div className="grid grid-cols-2 gap-2">
-                    {Object.keys(sellerPerms).filter(k => sellerPerms[k as keyof typeof sellerPerms]).map((k) => (
+                    {Object.keys(sellerPerms).filter(k => {
+                      const key = k as keyof typeof sellerPerms;
+                      // Filter out bookings and notifications from display
+                      if (k === 'bookings' || k === 'notifications') return false;
+                      return sellerPerms[key];
+                    }).map((k) => (
                       <label key={k} className="flex items-center gap-2 text-xs">
                         <input
                           type="checkbox"
                           checked={Boolean(editing.permissions?.[k])}
                           onChange={(e)=> setEditing({ ...editing, permissions: { ...(editing.permissions || {}), [k]: e.target.checked } })}
+                          disabled={viewOnly}
                         />
-                        <span className="capitalize">{String(k).replace('seller-orders','orders').replace('-', ' ')}</span>
+                        <span>{getPermissionLabel(k)}</span>
                       </label>
                     ))}
                   </div>
@@ -1365,8 +1395,10 @@ const AccessTab = ({ loading = false, error, setError, onTabChange, onEditUser }
               </div>
             )}
             <DialogFooter>
-              <Button variant="outline" onClick={()=> setEditing(null)}>Close</Button>
-              <Button onClick={handleUpdateMember} className="bg-teal-600 hover:bg-teal-700 text-white">Save changes</Button>
+              <Button variant="outline" onClick={()=> { setEditing(null); setViewOnly(false); }}>Close</Button>
+              {!viewOnly && (
+                <Button onClick={handleUpdateMember} className="bg-teal-600 hover:bg-teal-700 text-white">Save changes</Button>
+              )}
             </DialogFooter>
           </DialogContent>
         </Dialog>
@@ -1389,7 +1421,7 @@ const AccessTab = ({ loading = false, error, setError, onTabChange, onEditUser }
               <div>
                 <label className="block text-xs mb-1">Role Bundle</label>
                 <select className="w-full p-2 border rounded" value={subBundle} onChange={(e)=> setSubBundle(e.target.value as any)}>
-                  <option value="ops">Order Management (Orders & Inventory)</option>
+                  <option value="ops">Order Management (Orders & Inventory Control)</option>
                   <option value="finance">Finance (Withdrawal only)</option>
                   <option value="custom">Custom</option>
                 </select>
@@ -1397,10 +1429,14 @@ const AccessTab = ({ loading = false, error, setError, onTabChange, onEditUser }
 
               {/* Permissions grid (for custom tweak) */}
               <div className="grid grid-cols-2 gap-2">
-                {Object.keys(subPerms).map((k) => (
+                {Object.keys(subPerms).filter(k => {
+                  // Filter out bookings and notifications from display
+                  if (k === 'bookings' || k === 'notifications') return false;
+                  return true;
+                }).map((k) => (
                   <label key={k} className="flex items-center gap-2 text-xs">
                     <input type="checkbox" checked={(subPerms as any)[k]} onChange={(e)=> setSubPerms(p=>({ ...(p as any), [k]: e.target.checked }))} disabled={subBundle!=='custom'} />
-                    <span className="capitalize">{k.replace('seller-orders','orders').replace('-', ' ')}</span>
+                    <span>{getPermissionLabel(k)}</span>
                   </label>
                 ))}
               </div>
