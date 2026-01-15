@@ -410,7 +410,7 @@ exports.createJRSShipping = (0, https_1.onRequest)({
     cors: true,
     region: "asia-southeast1",
 }, async (req, res) => {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _0, _1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12, _13, _14, _15, _16, _17, _18, _19, _20, _21, _22, _23, _24, _25, _26, _27, _28, _29, _30, _31, _32, _33, _34, _35, _36, _37, _38, _39, _40;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _0, _1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12, _13, _14, _15, _16, _17, _18, _19, _20, _21, _22, _23, _24, _25, _26, _27, _28, _29, _30, _31, _32, _33, _34, _35, _36, _37, _38, _39;
     // Add explicit CORS headers
     res.set('Access-Control-Allow-Origin', '*');
     res.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -778,7 +778,7 @@ exports.createJRSShipping = (0, https_1.onRequest)({
                 }
             }
             // Build comprehensive shipping note
-            let shippingNote = `Order shipped via JRS Express. Reference: ${shippingReferenceNo}, Tracking: ${(_28 = responseData.ShippingRequestEntityDto) === null || _28 === void 0 ? void 0 : _28.TrackingId}`;
+            let shippingNote = `Order shipped via JRS Express.`;
             if (isCODOrder && codAmount > 0) {
                 shippingNote += `. COD Amount: ₱${codAmount.toFixed(2)}`;
             }
@@ -793,15 +793,15 @@ exports.createJRSShipping = (0, https_1.onRequest)({
                     jrs: {
                         response: responseData,
                         shippingReferenceNo: shippingReferenceNo,
-                        trackingId: (_29 = responseData.ShippingRequestEntityDto) === null || _29 === void 0 ? void 0 : _29.TrackingId,
+                        trackingId: (_28 = responseData.ShippingRequestEntityDto) === null || _28 === void 0 ? void 0 : _28.TrackingId,
                         requestedAt: new Date(),
-                        totalShippingAmount: (_30 = responseData.ShippingRequestEntityDto) === null || _30 === void 0 ? void 0 : _30.TotalShippingAmount,
+                        totalShippingAmount: (_29 = responseData.ShippingRequestEntityDto) === null || _29 === void 0 ? void 0 : _29.TotalShippingAmount,
                         pickupSchedule: jrsRequest.apiShippingRequest.requestedPickupSchedule,
                         // Include COD information
                         cashOnDelivery: {
                             isCOD: isCODOrder,
                             codAmount: codAmount,
-                            paymentMethod: ((_31 = orderData.paymongo) === null || _31 === void 0 ? void 0 : _31.paymentMethod) || ((_32 = orderData.paymentInfo) === null || _32 === void 0 ? void 0 : _32.method) || 'unknown',
+                            paymentMethod: ((_30 = orderData.paymongo) === null || _30 === void 0 ? void 0 : _30.paymentMethod) || ((_31 = orderData.paymentInfo) === null || _31 === void 0 ? void 0 : _31.method) || 'unknown',
                         },
                         // Include shipping charge allocation info
                         shippingCharges: {
@@ -831,7 +831,7 @@ exports.createJRSShipping = (0, https_1.onRequest)({
             logger.info("Order updated successfully in Firestore", {
                 orderId: payload.orderId,
                 collection: orderResult.collection,
-                trackingId: (_33 = responseData.ShippingRequestEntityDto) === null || _33 === void 0 ? void 0 : _33.TrackingId,
+                trackingId: (_32 = responseData.ShippingRequestEntityDto) === null || _32 === void 0 ? void 0 : _32.TrackingId,
             });
         }
         catch (firestoreError) {
@@ -847,7 +847,7 @@ exports.createJRSShipping = (0, https_1.onRequest)({
                 error: "Order shipping succeeded but failed to update order status",
                 message: "JRS shipping request was successful, but we couldn't update the order in our database. Please contact support.",
                 shippingReferenceNo,
-                trackingId: (_34 = responseData.ShippingRequestEntityDto) === null || _34 === void 0 ? void 0 : _34.TrackingId,
+                trackingId: (_33 = responseData.ShippingRequestEntityDto) === null || _33 === void 0 ? void 0 : _33.TrackingId,
                 firestoreError: firestoreError instanceof Error ? firestoreError.message : 'Unknown error'
             });
             return;
@@ -856,8 +856,8 @@ exports.createJRSShipping = (0, https_1.onRequest)({
         res.status(200).json({
             success: true,
             shippingReferenceNo,
-            trackingId: (_35 = responseData.ShippingRequestEntityDto) === null || _35 === void 0 ? void 0 : _35.TrackingId,
-            totalShippingAmount: (_36 = responseData.ShippingRequestEntityDto) === null || _36 === void 0 ? void 0 : _36.TotalShippingAmount,
+            trackingId: (_34 = responseData.ShippingRequestEntityDto) === null || _34 === void 0 ? void 0 : _34.TrackingId,
+            totalShippingAmount: (_35 = responseData.ShippingRequestEntityDto) === null || _35 === void 0 ? void 0 : _35.TotalShippingAmount,
             shippingCharges: {
                 sellerCharge: sellerShippingCharge,
                 buyerCharge: buyerShippingCharge,
@@ -867,7 +867,7 @@ exports.createJRSShipping = (0, https_1.onRequest)({
             cashOnDelivery: {
                 isCOD: isCODOrder,
                 codAmount: codAmount,
-                paymentMethod: ((_37 = orderData.paymongo) === null || _37 === void 0 ? void 0 : _37.paymentMethod) || ((_38 = orderData.paymentInfo) === null || _38 === void 0 ? void 0 : _38.method) || 'unknown',
+                paymentMethod: ((_36 = orderData.paymongo) === null || _36 === void 0 ? void 0 : _36.paymentMethod) || ((_37 = orderData.paymentInfo) === null || _37 === void 0 ? void 0 : _37.method) || 'unknown',
             },
             jrsResponse: responseData,
             message: isCODOrder
@@ -879,14 +879,14 @@ exports.createJRSShipping = (0, https_1.onRequest)({
                 orderId: payload.orderId,
                 recipient: `${recipientInfo.firstName} ${recipientInfo.lastName}`,
                 shipper: `${shipperInfo.firstName} ${shipperInfo.lastName}`,
-                items: ((_39 = orderData.items) === null || _39 === void 0 ? void 0 : _39.length) || 0,
+                items: ((_38 = orderData.items) === null || _38 === void 0 ? void 0 : _38.length) || 0,
             },
         });
     }
     catch (error) {
         logger.error("Error in createJRSShipping", {
             error: error instanceof Error ? error.message : "Unknown error",
-            orderId: (_40 = req.body) === null || _40 === void 0 ? void 0 : _40.orderId,
+            orderId: (_39 = req.body) === null || _39 === void 0 ? void 0 : _39.orderId,
             stack: error instanceof Error ? error.stack : undefined,
         });
         res.status(500).json({

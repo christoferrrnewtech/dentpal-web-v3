@@ -942,7 +942,7 @@ export const createJRSShipping = onRequest({
       }
 
       // Build comprehensive shipping note
-      let shippingNote = `Order shipped via JRS Express. Reference: ${shippingReferenceNo}, Tracking: ${responseData.ShippingRequestEntityDto?.TrackingId}`;
+      let shippingNote = `Order shipped via JRS Express.`;
       
       if (isCODOrder && codAmount > 0) {
         shippingNote += `. COD Amount: ₱${codAmount.toFixed(2)}`;
