@@ -176,6 +176,7 @@ export const ProductService = {
     dimensions?: { length?: number; width?: number; height?: number } | null;
     imageURL?: string | null;
     name?: string;
+    isFragile?: boolean;
   }>) {
     const col = collection(db, PRODUCT_COLLECTION, productId, 'Variation');
     const tasks = variations.map(v => {
@@ -202,6 +203,7 @@ export const ProductService = {
         dimensions: dim ?? null,
         imageURL: v.imageURL ?? null,
         name: v.name ?? null,
+        isFragile: v.isFragile ?? false,
         productId,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
@@ -463,6 +465,7 @@ export const ProductService = {
     dimensions?: { length?: number; width?: number; height?: number };
     dimensionsUnit?: string;
     imageURL?: string;
+    isFragile?: boolean;
   }) {
     const vRef = doc(db, PRODUCT_COLLECTION, productId, 'Variation', variationId);
     const updateData: any = {
@@ -480,6 +483,7 @@ export const ProductService = {
     if (updates.weightUnit !== undefined) updateData.weightUnit = updates.weightUnit;
     if (updates.dimensionsUnit !== undefined) updateData.dimensionsUnit = updates.dimensionsUnit;
     if (updates.imageURL !== undefined) updateData.imageURL = updates.imageURL;
+    if (updates.isFragile !== undefined) updateData.isFragile = updates.isFragile;
     
     if (updates.dimensions) {
       updateData.dimensions = updates.dimensions;

@@ -190,7 +190,7 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId, initialTab = 'lis
   const [available, setAvailable] = useState<boolean>(true);
   const [preOrder, setPreOrder] = useState<boolean>(false);
 
-  const [variants, setVariants] = useState<Array<{ key: string; options: Record<string, string>; price: number; stock: number; sku?: string; specialPrice?: number; available?: boolean; imageUrl?: string; imageFile?: File | null; imagePreview?: string | null; name?: string }>>([]);
+  const [variants, setVariants] = useState<Array<{ key: string; options: Record<string, string>; price: number; stock: number; sku?: string; specialPrice?: number; available?: boolean; isFragile?: boolean; imageUrl?: string; imageFile?: File | null; imagePreview?: string | null; name?: string }>>([]);
   const variantFileInputs = useRef<Record<string, HTMLInputElement | null>>({});
   const [pendingVariantPick, setPendingVariantPick] = useState<string | null>(null);
 
@@ -222,7 +222,7 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId, initialTab = 'lis
 
   const addBlankVariant = () => {
     const key = `manual-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-    setVariants((prev) => [...prev, { key, options: {}, price: 0, stock: 0, sku: undefined, specialPrice: 0, available: true, imageUrl: undefined, imageFile: null, imagePreview: null, name: '' }]);
+    setVariants((prev) => [...prev, { key, options: {}, price: 0, stock: 0, sku: undefined, specialPrice: 0, available: true, isFragile: false, imageUrl: undefined, imageFile: null, imagePreview: null, name: '' }]);
     setPendingVariantPick(key);
   };
 
@@ -289,6 +289,7 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId, initialTab = 'lis
       weightUnit: string;
       dimensions: { length: number | ''; width: number | ''; height: number | '' };
       dimensionsUnit: string;
+      isFragile?: boolean;
       isNew?: boolean;
       isDeleted?: boolean;
     }>;
@@ -451,7 +452,7 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId, initialTab = 'lis
       }
 
       const variationImageVersions: Record<string, string> = {};
-      const variantsToSave = [] as Array<{ key: string; options: Record<string, string>; price: number; stock: number; sku?: string; specialPrice?: number; available?: boolean; imageUrl?: string; name?: string }>;
+      const variantsToSave = [] as Array<{ key: string; options: Record<string, string>; price: number; stock: number; sku?: string; specialPrice?: number; available?: boolean; isFragile?: boolean; imageUrl?: string; name?: string }>;
       for (let idx = 0; idx < variants.length; idx++) {
         const v = variants[idx];
         let vUrl = v.imageUrl;
@@ -464,7 +465,7 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId, initialTab = 'lis
           vUrl = await getDownloadURL(ref);
           variationImageVersions[String(idx)] = ts;
         }
-        variantsToSave.push({ key: v.key, options: v.options, price: Number(v.price) || 0, stock: Number(v.stock) || 0, sku: v.sku, specialPrice: v.specialPrice, available: v.available, imageUrl: vUrl, name: (v.name || '').trim() || undefined });
+        variantsToSave.push({ key: v.key, options: v.options, price: Number(v.price) || 0, stock: Number(v.stock) || 0, sku: v.sku, specialPrice: v.specialPrice, available: v.available, isFragile: v.isFragile, imageUrl: vUrl, name: (v.name || '').trim() || undefined });
       }
 
       const lowestPrice = variantsToSave.length > 0
@@ -496,6 +497,7 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId, initialTab = 'lis
             dimensions: newItem.dimensions || undefined,
             imageURL: v.imageUrl || null,
             name: v.name?.trim() || `batch${i}`,
+            isFragile: v.isFragile ?? false,
           }))
         : [{
             sku: newItem.sku || undefined,
@@ -505,6 +507,7 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId, initialTab = 'lis
             dimensions: newItem.dimensions || undefined,
             imageURL: productImageUrl || null,
             name: (newItem.simpleVariantName || '').trim() || 'default',
+            isFragile: false,
           }];
 
       await ProductService.addVariations(productRef.id, variationsForProduct);
@@ -1408,6 +1411,7 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId, initialTab = 'lis
             height: v.dimensions?.height || ''
           },
           dimensionsUnit: v.dimensionsUnit || 'cm',
+          isFragile: v.isFragile ?? false,
           isNew: false,
           isDeleted: false,
           imageFile: null,
@@ -1536,6 +1540,7 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId, initialTab = 'lis
             },
             dimensionsUnit: variation.dimensionsUnit,
             imageURL: variationImageUrl || null,
+            isFragile: variation.isFragile ?? false,
           }]);
         } else if (variation.id) {
           // Update existing variation
@@ -1553,6 +1558,7 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId, initialTab = 'lis
             },
             dimensionsUnit: variation.dimensionsUnit,
             imageURL: variationImageUrl,
+            isFragile: variation.isFragile ?? false,
           });
         }
       }
@@ -2797,6 +2803,7 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId, initialTab = 'lis
                             weightUnit: 'kg',
                             dimensions: { length: '', width: '', height: '' },
                             dimensionsUnit: 'cm',
+                            isFragile: false,
                             isNew: true,
                             isDeleted: false
                           }]
@@ -2993,6 +3000,27 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId, initialTab = 'lis
                                     className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
                                     placeholder="0"
                                   />
+                                </div>
+                                
+                                {/* Fragile Checkbox */}
+                                <div>
+                                  <label className="block text-sm font-medium text-gray-700 mb-2">Fragile</label>
+                                  <div className="flex items-center h-10">
+                                    <input
+                                      type="checkbox"
+                                      checked={variation.isFragile ?? false}
+                                      onChange={(e) => {
+                                        setEditForm(prev => {
+                                          if (!prev) return null;
+                                          const updated = [...prev.variations];
+                                          updated[index] = { ...updated[index], isFragile: e.target.checked };
+                                          return { ...prev, variations: updated };
+                                        });
+                                      }}
+                                      className="w-5 h-5 text-purple-600 border-gray-300 rounded focus:ring-purple-500 cursor-pointer accent-purple-600"
+                                    />
+                                    <span className="ml-2 text-sm text-gray-600">Mark as fragile item</span>
+                                  </div>
                                 </div>
                                 
                                 {/* Weight Section */}
@@ -3885,6 +3913,7 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId, initialTab = 'lis
                           <th className="text-left p-2 font-medium text-gray-600">Stock</th>
                           <th className="text-left p-2 font-medium text-gray-600">SellerSKU</th>
                           <th className="text-left p-2 font-medium text-gray-600">Availability</th>
+                          <th className="text-left p-2 font-medium text-gray-600">Fragile</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -3927,6 +3956,9 @@ const InventoryTab: React.FC<InventoryTabProps> = ({ sellerId, initialTab = 'lis
                             </td>
                             <td className="p-2">
                               <input type="checkbox" className="accent-teal-600" checked={(v as any).available ?? true} onChange={(e)=> setVariants((list)=> list.map(x=> x.key===v.key?{...x, available: e.target.checked}:x))} />
+                            </td>
+                            <td className="p-2">
+                              <input type="checkbox" className="accent-teal-600" checked={(v as any).isFragile ?? false} onChange={(e)=> setVariants((list)=> list.map(x=> x.key===v.key?{...x, isFragile: e.target.checked}:x))} />
                             </td>
                           </tr>
                         ))}
