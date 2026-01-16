@@ -17,14 +17,15 @@ import InventoryTab from '@/components/inventory/InventoryTab';
 import ProductQCTab from '@/components/admin/ProductQCTab';
 import PoliciesTab from '@/components/policies/PoliciesTab';
 import ChatsTab from '@/components/chats/ChatsTab';
+import { ItemsTab, ItemsAll, ItemsList } from '@/components/items';
+import AddItem from '@/components/items/AddItem';
 import { Order } from "@/types/order";
-import { DollarSign, Users, ShoppingCart, TrendingUp, Filter, Download } from "lucide-react";
+import { DollarSign, Users, ShoppingCart, TrendingUp, Filter, Download, ChevronDown, ChevronRight } from "lucide-react";
 // Add permission-aware auth hook
 import { useAuth } from "@/hooks/use-auth";
 import SellerProfileTab from '@/components/profile/SellerProfileTab';
 import ReportsTab from '@/components/reports/ReportsTab';
 import OrdersService from '@/services/orders';
-import AddProduct from '@/pages/AddProduct'; // New
 //import NotificationsTab from '@/components/notifications/NotificationsTab';
 import { useLocation, useNavigate } from 'react-router-dom';
 import WarrantyManager from '@/pages/admin/WarrantyManager';
@@ -70,8 +71,27 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
   
   // New: seller dashboard UI state
   const [showTutorial, setShowTutorial] = useState(false);
-  const [sellerFilters, setSellerFilters] = useState({ dateRange: 'last-30', brand: 'all', subcategory: 'all', location: 'all', paymentType: 'all', viewType: 'summary' });
+  const [sellerFilters, setSellerFilters] = useState({ dateRange: 'last-30', brand: 'all', subcategory: 'all', location: 'all', paymentType: 'all', viewType: 'summary', viewExpanded: false });
   const [itemChartType, setItemChartType] = useState<'line' | 'bar' | 'pie'>('bar');
+  
+  // Handler for sidebar navigation with dashboard sub-items
+  const handleItemClick = (itemId: string) => {
+    // Handle dashboard sub-items
+    if (itemId.startsWith('dashboard-')) {
+      setActiveItem('dashboard');
+      const viewTypeMap: Record<string, string> = {
+        'dashboard-summary': 'summary',
+        'dashboard-item': 'item',
+        'dashboard-category': 'category',
+        'dashboard-payment': 'paymentType',
+        'dashboard-receipts': 'receipts'
+      };
+      setSellerFilters(f => ({ ...f, viewType: viewTypeMap[itemId] || 'summary' }));
+    } else {
+      setActiveItem(itemId);
+    }
+  };
+  
   // Admin filters (date picker range, province, city, seller/shop name)
   const [adminFilters, setAdminFilters] = useState<{ dateFrom: string; dateTo: string; province: string; city: string; seller: string }>({ dateFrom: '', dateTo: '', province: 'all', city: 'all', seller: 'all' });
   // Date range picker state (moved back after refactor)
@@ -1087,17 +1107,6 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
                 <div className="text-sm font-semibold text-gray-900 mb-3">Filters</div>
                 <div className="flex flex-col lg:flex-row lg:items-end lg:space-x-4 gap-4">
                   <div className="flex-1 min-w-[160px]">
-                    <label className="block text-xs font-medium text-gray-700 mb-1">View by</label>
-                    <select className="w-full p-2 border border-gray-200 rounded-lg text-xs focus:ring-2 focus:ring-teal-500 focus:border-transparent" value={sellerFilters.viewType || 'summary'} onChange={(e)=> setSellerFilters(f=>({ ...f, viewType: e.target.value }))}>
-                      <option value="summary">Summary (Revenue Chart)</option>
-                      <option value="item">By Item</option>
-                      <option value="category">By Category</option>
-                      <option value="paymentType">By Payment Type</option>
-                      <option value="Receipts">By Receipts</option>
-
-                    </select>
-                  </div>
-                  <div className="flex-1 min-w-[160px]">
                     <label className="block text-xs font-medium text-gray-700 mb-1">Select date</label>
                     <div ref={sellerDateDropdownRef} className="relative">
                       <button
@@ -1226,7 +1235,7 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
                   {/* Financial Summary Table */}
                   <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
                     <div className="px-6 py-4 border-b border-gray-100">
-                      <h3 className="text-sm font-semibold text-gray-800 tracking-wide">FINANCIAL SUMMARY</h3>
+                      <h3 className="text-sm font-semibold text-gray-800 tracking-wide">FINANCIAL SUMMARY (PER DATE)</h3>
                     </div>
                     <div className="overflow-x-auto">
                       <table className="w-full text-sm">
@@ -1242,49 +1251,131 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
                           </tr>
                         </thead>
                         <tbody>
-                          <tr className="border-t hover:bg-gray-50">
-                            <td className="px-6 py-4 text-gray-700 font-medium text-xs">
-                              {(() => {
-                                const now = new Date();
-                                const formatTimestamp = (date: Date) => {
-                                  return date.toLocaleString('en-US', {
-                                    month: 'short',
-                                    day: 'numeric',
-                                    year: 'numeric',
-                                    hour: 'numeric',
-                                    minute: '2-digit',
-                                    hour12: true
-                                  });
-                                };
+                          {(() => {
+                            // Group orders by date
+                            const ordersByDate = new Map<string, typeof paidOrders>();
+                            const formatDateKey = (date: Date) => {
+                              return date.toLocaleDateString('en-US', { 
+                                year: 'numeric', 
+                                month: 'short', 
+                                day: 'numeric' 
+                              });
+                            };
+
+                            paidOrders.forEach(order => {
+                              const orderDate = order.createdAt ? new Date(order.createdAt) : new Date();
+                              const dateKey = formatDateKey(orderDate);
+                              if (!ordersByDate.has(dateKey)) {
+                                ordersByDate.set(dateKey, []);
+                              }
+                              ordersByDate.get(dateKey)!.push(order);
+                            });
+
+                            // Sort dates in descending order
+                            const sortedDates = Array.from(ordersByDate.keys()).sort((a, b) => {
+                              const dateA = new Date(a);
+                              const dateB = new Date(b);
+                              return dateB.getTime() - dateA.getTime();
+                            });
+
+                            // Calculate totals across all dates
+                            let grandTotalGross = 0;
+                            let grandTotalPaymentFee = 0;
+                            let grandTotalShippingFee = 0;
+                            let grandTotalPlatformFee = 0;
+                            let grandTotalNetPayout = 0;
+
+                            const rows = sortedDates.map(dateKey => {
+                              const dayOrders = ordersByDate.get(dateKey)!;
+                              const dayMetrics = dayOrders.reduce((acc, o) => {
+                                const summary = o.summary || {};
+                                const feesData = o.feesBreakdown || {};
+                                const payout = o.payout || {};
                                 
-                                if (sellerRange.start) {
-                                  return `${formatTimestamp(sellerRange.start)} → ${formatTimestamp(sellerRange.end || sellerRange.start)}`;
-                                } else {
-                                  const days = parseInt(sellerFilters.dateRange.replace('last-', ''));
-                                  const startDate = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
-                                  return `${formatTimestamp(startDate)} → ${formatTimestamp(now)}`;
-                                }
-                              })()}
-                            </td>
-                            <td className="px-6 py-4 text-gray-900 text-right font-medium">
-                              {currency.format(financialMetrics.totalGross)}
-                            </td>
-                            <td className="px-6 py-4 text-red-600 text-right font-medium">
-                              {currency.format(0)} {/* TODO: Add refunds calculation */}
-                            </td>
-                            <td className="px-6 py-4 text-red-600 text-right">
-                              {currency.format(financialMetrics.totalPaymentProcessingFee)}
-                            </td>
-                            <td className="px-6 py-4 text-orange-600 text-right">
-                              {currency.format(financialMetrics.totalShippingCharge)}
-                            </td>
-                            <td className="px-6 py-4 text-red-600 text-right">
-                              {currency.format(financialMetrics.totalPlatformFee)}
-                            </td>
-                            <td className="px-6 py-4 text-green-600 text-right font-bold text-base">
-                              {currency.format(financialMetrics.totalNetPayout)}
-                            </td>
-                          </tr>
+                                const gross = Number(summary.subtotal || 0);
+                                const paymentFee = Number(feesData.paymentProcessingFee || 0);
+                                const shippingFee = Number(summary.sellerShippingCharge || 0);
+                                const platformFee = Number(feesData.platformFee || 0);
+                                const netPayout = Number(payout.netPayoutToSeller || 0);
+                                
+                                return {
+                                  totalGross: acc.totalGross + gross,
+                                  totalPaymentFee: acc.totalPaymentFee + paymentFee,
+                                  totalShippingFee: acc.totalShippingFee + shippingFee,
+                                  totalPlatformFee: acc.totalPlatformFee + platformFee,
+                                  totalNetPayout: acc.totalNetPayout + netPayout
+                                };
+                              }, {
+                                totalGross: 0,
+                                totalPaymentFee: 0,
+                                totalShippingFee: 0,
+                                totalPlatformFee: 0,
+                                totalNetPayout: 0
+                              });
+
+                              // Add to grand totals
+                              grandTotalGross += dayMetrics.totalGross;
+                              grandTotalPaymentFee += dayMetrics.totalPaymentFee;
+                              grandTotalShippingFee += dayMetrics.totalShippingFee;
+                              grandTotalPlatformFee += dayMetrics.totalPlatformFee;
+                              grandTotalNetPayout += dayMetrics.totalNetPayout;
+
+                              return (
+                                <tr key={dateKey} className="border-t hover:bg-gray-50">
+                                  <td className="px-6 py-4 text-gray-700 font-medium text-xs">
+                                    {dateKey}
+                                  </td>
+                                  <td className="px-6 py-4 text-gray-900 text-right font-medium">
+                                    {currency.format(dayMetrics.totalGross)}
+                                  </td>
+                                  <td className="px-6 py-4 text-red-600 text-right font-medium">
+                                    {currency.format(0)}
+                                  </td>
+                                  <td className="px-6 py-4 text-red-600 text-right">
+                                    {currency.format(dayMetrics.totalPaymentFee)}
+                                  </td>
+                                  <td className="px-6 py-4 text-orange-600 text-right">
+                                    {currency.format(dayMetrics.totalShippingFee)}
+                                  </td>
+                                  <td className="px-6 py-4 text-red-600 text-right">
+                                    {currency.format(dayMetrics.totalPlatformFee)}
+                                  </td>
+                                  <td className="px-6 py-4 text-green-600 text-right font-bold">
+                                    {currency.format(dayMetrics.totalNetPayout)}
+                                  </td>
+                                </tr>
+                              );
+                            });
+
+                            // Add total row
+                            rows.push(
+                              <tr key="total" className="border-t-2 border-gray-300 bg-gray-50 font-bold">
+                                <td className="px-6 py-4 text-gray-900 text-xs">
+                                  TOTAL
+                                </td>
+                                <td className="px-6 py-4 text-gray-900 text-right">
+                                  {currency.format(grandTotalGross)}
+                                </td>
+                                <td className="px-6 py-4 text-red-600 text-right">
+                                  {currency.format(0)}
+                                </td>
+                                <td className="px-6 py-4 text-red-600 text-right">
+                                  {currency.format(grandTotalPaymentFee)}
+                                </td>
+                                <td className="px-6 py-4 text-orange-600 text-right">
+                                  {currency.format(grandTotalShippingFee)}
+                                </td>
+                                <td className="px-6 py-4 text-red-600 text-right">
+                                  {currency.format(grandTotalPlatformFee)}
+                                </td>
+                                <td className="px-6 py-4 text-green-600 text-right text-base">
+                                  {currency.format(grandTotalNetPayout)}
+                                </td>
+                              </tr>
+                            );
+
+                            return rows;
+                          })()}
                         </tbody>
                       </table>
                     </div>
@@ -1297,7 +1388,13 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
                           </span>
                         </div>
                         <div className="text-gray-500">
-                          Based on {paidOrders.length} paid {paidOrders.length === 1 ? 'order' : 'orders'}
+                          {(() => {
+                            if (sellerRange.start) {
+                              return `${toISO(sellerRange.start)} → ${toISO(sellerRange.end || sellerRange.start)}`;
+                            } else {
+                              return sellerFilters.dateRange.replace('last-', 'Last ') + ' days';
+                            }
+                          })()} • {paidOrders.length} paid {paidOrders.length === 1 ? 'order' : 'orders'}
                         </div>
                       </div>
                     </div>
@@ -3573,8 +3670,20 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
       case "items":
         if (!isAllowed("add-product")) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
         return (
-          <AddProduct />
+          <ItemsTab />
         );
+      case "items-all":
+        if (!isAllowed("add-product")) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
+        return <ItemsAll />;
+      case "items-list":
+        if (!isAllowed("add-product")) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
+        return <ItemsList />;
+      case "items-add":
+        if (!isAllowed("add-product")) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
+        return <AddItem />;
+      case "items-add":
+        if (!isAllowed("add-product")) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
+        return <AddItem />;
       case 'warranty':
         if (!isAdmin) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
         return <WarrantyManager />;
@@ -3618,6 +3727,9 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
       case 'price-management': return 'Price Management';
       case 'item-management': return 'Item Management';
       case 'items': return 'Items';
+      case 'items-all': return 'Items - All';
+      case 'items-list': return 'Items - Item List';
+      case 'items-add': return 'Items - Add Item';
       default: return "Dashboard";
     }
   };
@@ -4018,7 +4130,7 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
     <div className="min-h-screen bg-background flex">
       <Sidebar
         activeItem={activeItem}
-        onItemClick={setActiveItem}
+        onItemClick={handleItemClick}
         onLogout={onLogout}
       />
       <div className="flex-1 flex flex-col">

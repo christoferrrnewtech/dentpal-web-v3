@@ -1762,24 +1762,16 @@ const AccessTab = ({ loading = false, error, setError, onTabChange, onEditUser }
             <div className="space-y-6">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">Role</label>
-                <select
-                  className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                  value={editingUser.role}
-                  onChange={(e) => {
-                    const role = e.target.value as 'admin' | 'seller';
-                    setEditingUser(prev => prev ? { ...prev, role } : prev);
-                  }}
-                >
-                  <option value="seller">Seller</option>
-                  <option value="admin">Admin</option>
-                </select>
+                <div className="w-full px-3 py-2 border border-gray-200 rounded-lg bg-gray-50 text-gray-900 font-medium">
+                  Admin
+                </div>
               </div>
 
               <div>
                 <h4 className="text-sm font-medium text-gray-900 mb-3">Access permissions</h4>
                 <div className="space-y-3 max-h-72 overflow-auto pr-1">
                   {Object.entries(editingUser.permissions || {})
-                    .filter(([permission]) => !['bookings', 'inventory', 'seller-orders', 'add-product'].includes(permission))
+                    .filter(([permission]) => !['bookings', 'inventory', 'seller-orders', 'add-product', 'profile', 'confirmation'].includes(permission))
                     .map(([permission, enabled]) => (
                     <div key={permission} className="flex items-center justify-between">
                       <label className="text-sm text-gray-700 capitalize">{permission === 'seller-orders' ? 'orders' : permission === 'policies' ? 'terms & policies' : permission.replace('-', ' ')}</label>

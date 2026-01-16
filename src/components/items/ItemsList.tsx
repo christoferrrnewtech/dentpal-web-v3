@@ -1,0 +1,1145 @@
+/**
+ * ItemsList - Shows items with Active toggle and Edit functionality
+ * 
+ * Displays a list of products with:
+ * - Active column (toggle switch)
+ * - Edit Item column with GREEN button
+ */
+
+import React, { useEffect, useMemo, useState, useRef } from 'react';
+import { useAuth } from '@/hooks/use-auth';
+import { useToast } from '@/hooks/use-toast';
+import { ProductService } from '@/services/product';
+import CategoryService from '@/services/category';
+import { Package, Edit3, X, Plus, FolderTree, Boxes, Trash2, ImageIcon, AlertTriangle } from 'lucide-react';
+import { storage } from '@/lib/firebase';
+import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
+
+const CATEGORY_OPTIONS = ['Consumables', 'Dental Equipment', 'Disposables', 'Equipment'] as const;
+
+interface InventoryItem {
+  id: string;
+  name: string;
+  description?: string;
+  imageUrl?: string;
+  category?: string;
+  categoryID?: string;
+  categoryName?: string;
+  subcategory?: string;
+  subCategoryID?: string;
+  price?: number;
+  specialPrice?: number;
+  inStock: number;
+  suggestedThreshold?: number;
+  status?: string;
+  isActive?: boolean;
+  updatedAt?: number;
+  variationCount?: number;
+}
+
+const ItemsList: React.FC = () => {
+  const [items, setItems] = useState<InventoryItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [categoryMap, setCategoryMap] = useState<Record<string, string>>({});
+
+  const { uid, isSeller, isAdmin, isSubAccount, parentId } = useAuth();
+  const { toast } = useToast();
+  const effectiveSellerId = isSeller ? (isSubAccount ? (parentId || uid) : uid) : null;
+
+  // Filter states
+  const [filterName, setFilterName] = useState<string>('');
+  const [filterCategory, setFilterCategory] = useState<string>('');
+  const [sortBy, setSortBy] = useState<'name' | 'stock' | 'updatedAt'>('name');
+  const [catalogTab, setCatalogTab] = useState<'all' | 'active' | 'inactive' | 'draft' | 'pending_qc' | 'violation' | 'deleted'>('all');
+
+  // Pagination
+  const [page, setPage] = useState(1);
+  const pageSize = 10;
+
+  // Edit Modal states
+  const [showEditModal, setShowEditModal] = useState<boolean>(false);
+  const [editingItem, setEditingItem] = useState<string | null>(null);
+  const [editForm, setEditForm] = useState<{
+    name: string;
+    description: string;
+    categoryID: string;
+    subCategoryID: string;
+    price: number;
+    specialPrice: number | '';
+    inStock: number;
+    suggestedThreshold: number;
+    lowestPrice: number | '';
+    imageURL: string;
+    imageFile?: File | null;
+    imagePreview?: string | null;
+    status: 'active' | 'inactive' | 'draft' | 'pending_qc' | 'violation' | 'deleted';
+    dangerousGoods: 'none' | 'dangerous';
+    warrantyType: string;
+    warrantyDuration: string;
+    promoStart: number | null;
+    promoEnd: number | null;
+    variations: Array<{
+      id?: string;
+      name: string;
+      SKU: string;
+      price: number;
+      stock: number;
+      imageURL: string;
+      imageFile?: File | null;
+      imagePreview?: string | null;
+      weight: number | '';
+      weightUnit: string;
+      dimensions: { length: number | ''; width: number | ''; height: number | '' };
+      dimensionsUnit: string;
+      isFragile?: boolean;
+      isNew?: boolean;
+      isDeleted?: boolean;
+    }>;
+  } | null>(null);
+  const [subcategoryOptions, setSubcategoryOptions] = useState<Array<{ id: string; name: string }>>([]);
+  const editImageInputRef = useRef<HTMLInputElement | null>(null);
+  const variationImageInputRefs = useRef<Record<number, HTMLInputElement | null>>({});
+
+  const categoriesList = useMemo(() => {
+    return Object.entries(categoryMap)
+      .map(([id, name]) => ({ id, name }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [categoryMap]);
+
+  // Load categories
+  useEffect(() => {
+    const unsub = CategoryService.listenCategories((categories) => {
+      const map: Record<string, string> = {};
+      categories.forEach(cat => {
+        map[cat.id] = cat.name;
+      });
+      setCategoryMap(map);
+    });
+    return () => unsub();
+  }, []);
+
+  // Load products
+  useEffect(() => {
+    if (!effectiveSellerId) {
+      setItems([]);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    const unsub = ProductService.listenBySeller(effectiveSellerId, (rows) => {
+      const mapped = rows.map((r: any) => ({
+        id: r.id,
+        name: r.name,
+        suggestedThreshold: r.suggestedThreshold != null ? Number(r.suggestedThreshold) : 5,
+        inStock: r.inStock,
+        updatedAt: r.updatedAt,
+        description: r.description || '',
+        imageUrl: r.imageUrl,
+        category: r.category || r.categoryID,
+        categoryID: r.categoryID,
+        subcategory: r.subcategory || r.subCategoryID,
+        subCategoryID: r.subCategoryID,
+        price: r.price,
+        specialPrice: r.specialPrice,
+        status: r.status,
+        isActive: r.isActive != null ? !!r.isActive : (r.status === 'active'),
+        variationCount: r.variationCount || 0,
+      }));
+      setItems(mapped as any);
+      setLoading(false);
+    });
+    return () => unsub();
+  }, [effectiveSellerId]);
+
+  // Enrich items with category names
+  const enrichedItems = useMemo(() => {
+    return items.map(item => ({
+      ...item,
+      isActive: item.isActive != null ? !!item.isActive : ((item.status as any) === 'active'),
+      categoryName: categoryMap[item.category as string] || item.category || 'N/A',
+    }));
+  }, [items, categoryMap]);
+
+  // Status counts
+  const statusCounts = useMemo(() => {
+    const acc = { active: 0, inactive: 0, draft: 0, pending_qc: 0, violation: 0, deleted: 0 };
+    items.forEach((i) => {
+      const s = (i.status ?? 'active') as keyof typeof acc;
+      if (s in acc) acc[s] += 1;
+    });
+    return acc;
+  }, [items]);
+
+  // Filter and sort items
+  const filteredItems = useMemo(() => {
+    const nameQuery = (filterName || '').trim().toLowerCase();
+    return enrichedItems
+      .filter(i => {
+        const status = (i.status ?? 'active');
+        if (catalogTab === 'all') return true;
+        if (catalogTab === 'pending_qc') return status === 'pending_qc';
+        return status === catalogTab;
+      })
+      .filter(i => {
+        if (!nameQuery) return true;
+        const n = (i.name || '').toLowerCase();
+        return n.includes(nameQuery);
+      })
+      .filter(i => {
+        if (!filterCategory) return true;
+        return i.categoryName === filterCategory;
+      })
+      .sort((a, b) => {
+        if (sortBy === 'stock') {
+          const diff = (Number(b.inStock || 0) - Number(a.inStock || 0));
+          if (diff !== 0) return diff;
+          return (a.name || '').localeCompare(b.name || '');
+        }
+        if (sortBy === 'updatedAt') {
+          const diff = (Number(b.updatedAt || 0) - Number(a.updatedAt || 0));
+          if (diff !== 0) return diff;
+          return (a.name || '').localeCompare(b.name || '');
+        }
+        return (a.name || '').localeCompare(b.name || '');
+      });
+  }, [enrichedItems, catalogTab, filterName, filterCategory, sortBy]);
+
+  // Pagination
+  const totalPages = Math.max(1, Math.ceil(filteredItems.length / pageSize));
+  useEffect(() => { setPage(1); }, [filteredItems, catalogTab]);
+  const pagedItems = useMemo(() => {
+    const start = (page - 1) * pageSize;
+    return filteredItems.slice(start, start + pageSize);
+  }, [filteredItems, page]);
+
+  // Toggle active status
+  const handleToggleActive = async (productId: string, nextActive: boolean) => {
+    try {
+      // Optimistic update
+      setItems(prev => prev.map(i => i.id === productId ? ({
+        ...i,
+        isActive: nextActive,
+        status: nextActive ? 'active' : (i.status === 'deleted' ? 'deleted' : 'inactive'),
+      }) : i));
+
+      await ProductService.toggleActive(productId, nextActive);
+      toast({ 
+        title: 'Success', 
+        description: `Product ${nextActive ? 'activated' : 'deactivated'} successfully` 
+      });
+    } catch (error) {
+      console.error('Failed to toggle active status:', error);
+      // Revert on failure
+      setItems(prev => prev.map(i => i.id === productId ? ({
+        ...i,
+        isActive: !nextActive,
+        status: !nextActive ? 'active' : (i.status === 'deleted' ? 'deleted' : 'inactive'),
+      }) : i));
+      toast({ 
+        title: 'Error', 
+        description: 'Failed to update product status', 
+        variant: 'destructive' 
+      });
+    }
+  };
+
+  // Handle Edit Item - Open Edit Modal
+  const handleEditItem = async (product: any) => {
+    setEditingItem(product.id);
+    
+    // Fetch variations for this product
+    let variations: any[] = [];
+    try {
+      const unsub = ProductService.listenVariations(product.id, (vars) => {
+        variations = vars.map((v: any) => ({
+          id: v.id,
+          name: v.name || '',
+          SKU: v.SKU || v.sku || '',
+          price: v.price || 0,
+          stock: v.stock || 0,
+          imageURL: v.imageURL || '',
+          weight: v.weight || '',
+          weightUnit: v.weightUnit || 'kg',
+          dimensions: {
+            length: v.dimensions?.length || '',
+            width: v.dimensions?.width || '',
+            height: v.dimensions?.height || ''
+          },
+          dimensionsUnit: v.dimensionsUnit || 'cm',
+          isFragile: v.isFragile ?? false,
+          isNew: false,
+          isDeleted: false,
+          imageFile: null,
+          imagePreview: null
+        }));
+        
+        setEditForm(prev => prev ? { ...prev, variations } : null);
+      });
+      // Clean up listener after getting initial data
+      setTimeout(() => unsub(), 1000);
+    } catch (error) {
+      console.error('Failed to load variations:', error);
+    }
+    
+    setEditForm({
+      name: product.name || '',
+      description: product.description || '',
+      categoryID: product.category || '',
+      subCategoryID: product.subcategory || '',
+      price: product.price || 0,
+      specialPrice: product.specialPrice || '',
+      inStock: product.inStock || 0,
+      suggestedThreshold: product.suggestedThreshold || 5,
+      lowestPrice: product.lowestPrice || '',
+      imageURL: product.imageUrl || '',
+      imageFile: null,
+      imagePreview: null,
+      status: product.status || 'active',
+      dangerousGoods: product.dangerousGoods || 'none',
+      warrantyType: product.warrantyType || '',
+      warrantyDuration: product.warrantyDuration || '',
+      promoStart: product.promoStart || null,
+      promoEnd: product.promoEnd || null,
+      variations: variations,
+    });
+
+    // Load subcategories for the selected category
+    if (product.category) {
+      try {
+        const unsub = CategoryService.listenSubcategories(product.category, (subs) => {
+          setSubcategoryOptions(subs);
+        });
+        // Clean up after a brief moment since we just need initial data
+        setTimeout(() => unsub(), 1000);
+      } catch (error) {
+        console.error('Failed to load subcategories:', error);
+      }
+    }
+
+    setShowEditModal(true);
+  };
+
+  // Save Edited Item
+  const handleItemSave = async () => {
+    if (!editForm || !editingItem) return;
+
+    setSubmitting(true);
+    try {
+      let imageUrl = editForm.imageURL;
+
+      // Upload new image if selected
+      if (editForm.imageFile) {
+        const timestamp = Date.now();
+        const path = `ProductImages/${timestamp}/${editForm.imageFile.name}`;
+        const sRef = storageRef(storage, path);
+        await uploadBytes(sRef, editForm.imageFile);
+        imageUrl = await getDownloadURL(sRef);
+      }
+
+      // Update product details
+      await ProductService.updateProduct(editingItem, {
+        name: editForm.name,
+        description: editForm.description,
+        imageURL: imageUrl,
+        categoryID: editForm.categoryID || null,
+        subCategoryID: editForm.subCategoryID || null,
+        suggestedThreshold: editForm.suggestedThreshold,
+        lowestPrice: editForm.lowestPrice !== '' ? Number(editForm.lowestPrice) : null,
+        status: editForm.status,
+        dangerousGoods: editForm.dangerousGoods,
+        warrantyType: editForm.warrantyType || null,
+        warrantyDuration: editForm.warrantyDuration || null,
+      } as any);
+
+      // Update pricing
+      await ProductService.updatePriceAndPromo(
+        editingItem,
+        {
+          price: editForm.price,
+          specialPrice: editForm.specialPrice !== '' ? Number(editForm.specialPrice) : null,
+          promoStart: editForm.promoStart,
+          promoEnd: editForm.promoEnd,
+        },
+        uid,
+        undefined
+      );
+
+      // Handle variations
+      for (const variation of editForm.variations) {
+        let variationImageUrl = variation.imageURL;
+        
+        // Upload variation image if new file selected
+        if (variation.imageFile) {
+          const timestamp = Date.now();
+          const path = `ProductImages/variations/${timestamp}/${variation.imageFile.name}`;
+          const sRef = storageRef(storage, path);
+          await uploadBytes(sRef, variation.imageFile);
+          variationImageUrl = await getDownloadURL(sRef);
+        }
+        
+        if (variation.isDeleted && variation.id) {
+          // Delete existing variation
+          await ProductService.deleteVariation(editingItem, variation.id);
+        } else if (variation.isNew) {
+          // Add new variation
+          await ProductService.addVariations(editingItem, [{
+            name: variation.name,
+            sku: variation.SKU,
+            price: variation.price,
+            stock: variation.stock,
+            weight: variation.weight !== '' ? Number(variation.weight) : undefined,
+            weightUnit: variation.weightUnit,
+            dimensions: {
+              length: variation.dimensions.length !== '' ? Number(variation.dimensions.length) : undefined,
+              width: variation.dimensions.width !== '' ? Number(variation.dimensions.width) : undefined,
+              height: variation.dimensions.height !== '' ? Number(variation.dimensions.height) : undefined,
+            },
+            dimensionsUnit: variation.dimensionsUnit,
+            imageURL: variationImageUrl || null,
+            isFragile: variation.isFragile ?? false,
+          }]);
+        } else if (variation.id) {
+          // Update existing variation
+          await ProductService.updateVariation(editingItem, variation.id, {
+            name: variation.name,
+            SKU: variation.SKU,
+            price: variation.price,
+            stock: variation.stock,
+            weight: variation.weight !== '' ? Number(variation.weight) : undefined,
+            weightUnit: variation.weightUnit,
+            dimensions: {
+              length: variation.dimensions.length !== '' ? Number(variation.dimensions.length) : undefined,
+              width: variation.dimensions.width !== '' ? Number(variation.dimensions.width) : undefined,
+              height: variation.dimensions.height !== '' ? Number(variation.dimensions.height) : undefined,
+            },
+            dimensionsUnit: variation.dimensionsUnit,
+            imageURL: variationImageUrl,
+            isFragile: variation.isFragile ?? false,
+          });
+        }
+      }
+
+      toast({ title: 'Success', description: 'Product updated successfully' });
+      setShowEditModal(false);
+      setEditingItem(null);
+      setEditForm(null);
+    } catch (error) {
+      console.error('Failed to update product:', error);
+      toast({ title: 'Error', description: 'Failed to update product. Please try again.', variant: 'destructive' });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-16">
+        <div className="animate-spin rounded-full h-8 w-8 border-2 border-teal-600 border-t-transparent"></div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Status Tabs */}
+      <div className="flex flex-wrap gap-2 border-b border-gray-200 pb-2">
+        {[
+          { key: 'all', label: 'All' },
+          { key: 'active', label: 'Active' },
+          { key: 'inactive', label: 'Inactive' },
+          { key: 'draft', label: 'Draft' },
+          { key: 'pending_qc', label: 'Pending QC' },
+          { key: 'violation', label: 'Violation' },
+          { key: 'deleted', label: 'Archive' },
+        ].map(t => (
+          <button
+            key={t.key}
+            className={`relative px-3 py-1.5 text-sm font-medium rounded ${catalogTab === t.key ? 'bg-teal-50 text-teal-700 border border-teal-200' : 'text-gray-600 hover:bg-gray-50 border border-transparent'}`}
+            onClick={() => setCatalogTab(t.key as any)}
+          >
+            {t.label}
+            {t.key === 'active' && statusCounts.active > 0 && (
+              <span className="absolute -top-2 -right-2 inline-flex items-center justify-center h-5 min-w-5 px-1.5 rounded-full bg-teal-600 text-white text-[10px] leading-none shadow ring-2 ring-white">
+                {statusCounts.active}
+              </span>
+            )}
+            {t.key === 'inactive' && statusCounts.inactive > 0 && (
+              <span className="absolute -top-2 -right-2 inline-flex items-center justify-center h-5 min-w-5 px-1.5 rounded-full bg-gray-500 text-white text-[10px] leading-none shadow ring-2 ring-white">
+                {statusCounts.inactive}
+              </span>
+            )}
+          </button>
+        ))}
+      </div>
+
+      {/* Filters */}
+      <div className="flex flex-wrap gap-3 items-center">
+        <input
+          value={filterName}
+          onChange={(e) => setFilterName(e.target.value)}
+          placeholder="Filter by product name"
+          className="w-64 max-w-full text-sm p-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+        />
+        <select
+          value={filterCategory}
+          onChange={(e) => setFilterCategory(e.target.value)}
+          className="w-48 max-w-full text-sm p-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+        >
+          <option value="">All categories</option>
+          {CATEGORY_OPTIONS.map((c) => (
+            <option key={c} value={c}>{c}</option>
+          ))}
+        </select>
+        <select
+          value={sortBy}
+          onChange={(e) => setSortBy(e.target.value as any)}
+          className="w-48 max-w-full text-sm p-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+        >
+          <option value="name">Sort by: Name</option>
+          <option value="stock">Sort by: Stock (desc)</option>
+          <option value="updatedAt">Sort by: Updated</option>
+        </select>
+      </div>
+
+      {/* Table - WITH Active column AND Edit Item column */}
+      <div className="border border-gray-200 rounded-xl overflow-hidden bg-white">
+        <table className="w-full text-sm">
+          <thead className="bg-gray-50 border-b border-gray-200">
+            <tr className="text-left">
+              <th className="px-4 py-3 text-left text-[11px] font-semibold text-gray-600 tracking-wide">PRODUCT</th>
+              <th className="px-4 py-3 text-left text-[11px] font-semibold text-gray-600 tracking-wide hidden sm:table-cell">PRICE</th>
+              <th className="px-4 py-3 text-left text-[11px] font-semibold text-gray-600 tracking-wide">STOCK</th>
+              <th className="px-4 py-3 text-left text-[11px] font-semibold text-gray-600 tracking-wide hidden md:table-cell">ACTIVE</th>
+              <th className="px-4 py-3 text-left text-[11px] font-semibold text-gray-600 tracking-wide">EDIT ITEM</th>
+            </tr>
+          </thead>
+          <tbody>
+            {pagedItems.map((item) => {
+              const showSale = item.specialPrice != null && Number(item.specialPrice) > 0 && Number(item.specialPrice) < Number(item.price ?? Infinity);
+              const status = (item.status ?? 'active');
+              const isActive = status === 'active';
+              const isDeleted = status === 'deleted';
+              
+              return (
+                <tr key={item.id} className="border-b last:border-0 hover:bg-gray-50">
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-3 min-w-0">
+                      {item.imageUrl ? (
+                        <img src={item.imageUrl} alt={item.name} className="h-10 w-10 rounded object-cover bg-gray-100" />
+                      ) : (
+                        <div className="h-10 w-10 rounded bg-gray-100 flex items-center justify-center">
+                          <Package className="w-5 h-5 text-gray-400" />
+                        </div>
+                      )}
+                      <div className="min-w-0">
+                        <div className="truncate font-medium text-gray-900">{item.name}</div>
+                        <div className="text-xs text-gray-500 truncate">
+                          {item.categoryName || 'Uncategorized'}
+                        </div>
+                      </div>
+                    </div>
+                  </td>
+                  <td className="px-4 py-3 text-gray-700 hidden sm:table-cell">
+                    {item.price != null ? (
+                      showSale ? (
+                        <>
+                          <span className="font-semibold text-teal-700">₱{Number(item.specialPrice).toLocaleString()}</span>
+                          <span className="line-through text-gray-400 ml-1">₱{Number(item.price).toLocaleString()}</span>
+                        </>
+                      ) : (
+                        <span>₱{Number(item.price).toLocaleString()}</span>
+                      )
+                    ) : (
+                      <span className="text-gray-400">—</span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 text-gray-700">{item.inStock}</td>
+                  {/* ACTIVE Toggle Column */}
+                  <td className="px-4 py-3 hidden md:table-cell">
+                    <label className={`inline-flex items-center select-none ${isDeleted ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}>
+                      <input
+                        type="checkbox"
+                        className="sr-only peer"
+                        checked={isActive}
+                        onChange={(e) => !isDeleted && handleToggleActive(item.id, e.target.checked)}
+                        disabled={isDeleted}
+                      />
+                      <div
+                        className={`relative w-11 h-6 rounded-full ${isDeleted ? 'bg-gray-200' : 'bg-gray-300'} transition-colors duration-200 ease-in-out ${!isDeleted ? 'peer-checked:bg-teal-600' : ''}
+                                     after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-5 after:h-5 after:bg-white after:rounded-full after:shadow
+                                     after:transform after:transition-transform after:duration-200 after:ease-in-out ${!isDeleted ? 'peer-checked:after:translate-x-5' : ''}`}
+                      />
+                    </label>
+                  </td>
+                  {/* EDIT ITEM Button Column - GREEN */}
+                  <td className="px-4 py-3">
+                    <button
+                      onClick={() => handleEditItem(item)}
+                      disabled={isDeleted}
+                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg shadow-sm transition
+                        ${isDeleted 
+                          ? 'bg-gray-200 text-gray-400 cursor-not-allowed' 
+                          : 'bg-green-600 text-white hover:bg-green-700'
+                        }`}
+                    >
+                      <Edit3 className="w-3.5 h-3.5" />
+                      Edit Item
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+            {pagedItems.length === 0 && (
+              <tr>
+                <td colSpan={5} className="px-4 py-8 text-center text-xs text-gray-500">No products found.</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+
+        {/* Pagination */}
+        <div className="flex items-center justify-between px-4 py-3 border-t bg-white text-xs text-gray-600">
+          <div>
+            Page {page} of {totalPages}
+          </div>
+          <div className="flex items-center gap-2">
+            <button className="px-2 py-1 border rounded disabled:opacity-40" disabled={page <= 1} onClick={() => setPage(p => Math.max(1, p - 1))}>Prev</button>
+            <button className="px-2 py-1 border rounded disabled:opacity-40" disabled={page >= totalPages} onClick={() => setPage(p => Math.min(totalPages, p + 1))}>Next</button>
+          </div>
+        </div>
+      </div>
+
+      {/* Edit Product Modal */}
+      {showEditModal && editForm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/60" onClick={() => !submitting && setShowEditModal(false)} />
+          <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+            {/* Modal Header */}
+            <div className="sticky top-0 bg-gradient-to-r from-green-600 to-green-700 px-6 py-4 rounded-t-2xl z-10">
+              <div className="flex items-center justify-between">
+                <h2 className="text-xl font-bold text-white">Edit Product</h2>
+                <button
+                  onClick={() => !submitting && setShowEditModal(false)}
+                  className="text-white/80 hover:text-white transition"
+                >
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+            </div>
+
+            <input
+              ref={editImageInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) {
+                  const preview = URL.createObjectURL(file);
+                  setEditForm(prev => prev ? {
+                    ...prev,
+                    imageFile: file,
+                    imagePreview: preview
+                  } : null);
+                }
+              }}
+            />
+
+            {/* Modal Body */}
+            <div className="p-6 space-y-6">
+              {/* Basic Information Section */}
+              <div className="bg-gray-50 rounded-xl p-5 border border-gray-200">
+                <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+                  <Package className="w-5 h-5 text-green-600" />
+                  Basic Information
+                </h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="md:col-span-2">
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Product Name *</label>
+                    <input
+                      type="text"
+                      value={editForm.name}
+                      onChange={(e) => setEditForm({...editForm, name: e.target.value})}
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                      placeholder="Enter product name"
+                    />
+                  </div>
+                  <div className="md:col-span-2">
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Description</label>
+                    <textarea
+                      value={editForm.description}
+                      onChange={(e) => setEditForm({...editForm, description: e.target.value})}
+                      rows={3}
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                      placeholder="Enter product description"
+                    />
+                  </div>
+                  <div className="md:col-span-2">
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Product Image</label>
+                    <div className="flex items-center gap-4">
+                      {(editForm.imagePreview || editForm.imageURL) && (
+                        <img
+                          src={editForm.imagePreview || editForm.imageURL}
+                          alt="Product"
+                          className="w-24 h-24 rounded-lg object-cover border-2 border-gray-200"
+                        />
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => editImageInputRef.current?.click()}
+                        className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition font-medium"
+                      >
+                        {editForm.imageURL ? 'Change Image' : 'Upload Image'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Category & Classification Section */}
+              <div className="bg-gray-50 rounded-xl p-5 border border-gray-200">
+                <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+                  <FolderTree className="w-5 h-5 text-green-600" />
+                  Category & Classification
+                </h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Category *</label>
+                    <select
+                      value={editForm.categoryID}
+                      onChange={(e) => {
+                        setEditForm({...editForm, categoryID: e.target.value, subCategoryID: ''});
+                        if (e.target.value) {
+                          CategoryService.listenSubcategories(e.target.value, setSubcategoryOptions);
+                        }
+                      }}
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                    >
+                      <option value="">Select category</option>
+                      {categoriesList.map((cat) => (
+                        <option key={cat.id} value={cat.id}>{cat.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Subcategory</label>
+                    <select
+                      value={editForm.subCategoryID}
+                      onChange={(e) => setEditForm({...editForm, subCategoryID: e.target.value})}
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                      disabled={!editForm.categoryID}
+                    >
+                      <option value="">Select subcategory</option>
+                      {subcategoryOptions.map((sub) => (
+                        <option key={sub.id} value={sub.id}>{sub.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              {/* Pricing Section */}
+              <div className="bg-gray-50 rounded-xl p-5 border border-gray-200">
+                <h3 className="text-lg font-semibold text-gray-900 mb-4">Pricing</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Price (₱) *</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={editForm.price}
+                      onChange={(e) => setEditForm({...editForm, price: parseFloat(e.target.value) || 0})}
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                      placeholder="0.00"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Special Price (₱)</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={editForm.specialPrice}
+                      onChange={(e) => setEditForm({...editForm, specialPrice: e.target.value === '' ? '' : parseFloat(e.target.value)})}
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                      placeholder="0.00"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Stock</label>
+                    <input
+                      type="number"
+                      value={editForm.inStock}
+                      onChange={(e) => setEditForm({...editForm, inStock: parseInt(e.target.value) || 0})}
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                      placeholder="0"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Threshold</label>
+                    <input
+                      type="number"
+                      value={editForm.suggestedThreshold}
+                      onChange={(e) => setEditForm({...editForm, suggestedThreshold: parseInt(e.target.value) || 5})}
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                      placeholder="5"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Product Variations Section */}
+              <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl p-5 border-2 border-blue-200">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+                    <Boxes className="w-5 h-5 text-blue-600" />
+                    Product Variations
+                    <span className="ml-2 px-2 py-0.5 bg-blue-600 text-white text-xs font-bold rounded-full">
+                      {editForm.variations.filter(v => !v.isDeleted).length}
+                    </span>
+                  </h3>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditForm({
+                        ...editForm,
+                        variations: [
+                          ...editForm.variations,
+                          {
+                            name: '',
+                            SKU: '',
+                            price: 0,
+                            stock: 0,
+                            imageURL: '',
+                            imageFile: null,
+                            imagePreview: null,
+                            weight: '',
+                            weightUnit: 'kg',
+                            dimensions: { length: '', width: '', height: '' },
+                            dimensionsUnit: 'cm',
+                            isFragile: false,
+                            isNew: true
+                          }
+                        ]
+                      });
+                    }}
+                    className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition font-medium flex items-center gap-2 shadow-md"
+                  >
+                    <Plus className="w-4 h-4" />
+                    Add Variation
+                  </button>
+                </div>
+
+                {editForm.variations.filter(v => !v.isDeleted).length === 0 ? (
+                  <div className="text-center py-8 text-gray-500">
+                    <Boxes className="w-12 h-12 mx-auto mb-2 opacity-30" />
+                    <p className="text-sm">No variations added yet. Click "Add Variation" to create one.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {editForm.variations.map((variation, index) => {
+                      if (variation.isDeleted) return null;
+                      
+                      return (
+                        <div key={index} className="bg-white rounded-xl p-5 border-2 border-gray-200 shadow-sm hover:shadow-md transition">
+                          <div className="flex items-start justify-between mb-4">
+                            <div className="flex items-center gap-2">
+                              <div className="w-8 h-8 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center font-bold text-sm">
+                                {index + 1}
+                              </div>
+                              <span className="font-medium text-gray-700">Variation {index + 1}</span>
+                              {variation.isNew && (
+                                <span className="px-2 py-0.5 bg-green-100 text-green-700 text-xs font-semibold rounded">NEW</span>
+                              )}
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const updatedVariations = [...editForm.variations];
+                                if (variation.isNew) {
+                                  // Remove completely if it's new
+                                  updatedVariations.splice(index, 1);
+                                } else {
+                                  // Mark for deletion if existing
+                                  updatedVariations[index] = { ...variation, isDeleted: true };
+                                }
+                                setEditForm({ ...editForm, variations: updatedVariations });
+                              }}
+                              className="text-red-600 hover:text-red-700 hover:bg-red-50 p-2 rounded-lg transition"
+                            >
+                              <Trash2 className="w-5 h-5" />
+                            </button>
+                          </div>
+
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            {/* Variation Image */}
+                            <div className="md:col-span-2">
+                              <label className="block text-sm font-medium text-gray-700 mb-2">Variation Image</label>
+                              <div className="flex items-center gap-4">
+                                {(variation.imagePreview || variation.imageURL) && (
+                                  <div className="relative group">
+                                    <img
+                                      src={variation.imagePreview || variation.imageURL}
+                                      alt={`Variation ${index + 1}`}
+                                      className="w-20 h-20 rounded-lg object-cover border-2 border-gray-200"
+                                    />
+                                    <div className="absolute inset-0 bg-black/50 rounded-lg opacity-0 group-hover:opacity-100 transition flex items-center justify-center">
+                                      <ImageIcon className="w-6 h-6 text-white" />
+                                    </div>
+                                  </div>
+                                )}
+                                <input
+                                  type="file"
+                                  accept="image/*"
+                                  id={`variation-image-${index}`}
+                                  className="hidden"
+                                  onChange={(e) => {
+                                    const file = e.target.files?.[0];
+                                    if (file) {
+                                      const preview = URL.createObjectURL(file);
+                                      const updatedVariations = [...editForm.variations];
+                                      updatedVariations[index] = {
+                                        ...variation,
+                                        imageFile: file,
+                                        imagePreview: preview
+                                      };
+                                      setEditForm({ ...editForm, variations: updatedVariations });
+                                    }
+                                  }}
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => document.getElementById(`variation-image-${index}`)?.click()}
+                                  className="px-3 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition text-sm font-medium"
+                                >
+                                  {variation.imageURL ? 'Change Image' : 'Upload Image'}
+                                </button>
+                              </div>
+                            </div>
+
+                            {/* Variation Name */}
+                            <div className="md:col-span-2">
+                              <label className="block text-sm font-medium text-gray-700 mb-2">Variation Name *</label>
+                              <input
+                                type="text"
+                                value={variation.name}
+                                onChange={(e) => {
+                                  const updatedVariations = [...editForm.variations];
+                                  updatedVariations[index] = { ...variation, name: e.target.value };
+                                  setEditForm({ ...editForm, variations: updatedVariations });
+                                }}
+                                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                placeholder="e.g., Small, Medium, Large, Blue, Red"
+                              />
+                            </div>
+
+                            {/* SKU */}
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 mb-2">SKU *</label>
+                              <input
+                                type="text"
+                                value={variation.SKU}
+                                onChange={(e) => {
+                                  const updatedVariations = [...editForm.variations];
+                                  updatedVariations[index] = { ...variation, SKU: e.target.value };
+                                  setEditForm({ ...editForm, variations: updatedVariations });
+                                }}
+                                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                placeholder="e.g., PROD-VAR-001"
+                              />
+                            </div>
+
+                            {/* Price */}
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 mb-2">Price (₱) *</label>
+                              <input
+                                type="number"
+                                step="0.01"
+                                value={variation.price}
+                                onChange={(e) => {
+                                  const updatedVariations = [...editForm.variations];
+                                  updatedVariations[index] = { ...variation, price: parseFloat(e.target.value) || 0 };
+                                  setEditForm({ ...editForm, variations: updatedVariations });
+                                }}
+                                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                placeholder="0.00"
+                              />
+                            </div>
+
+                            {/* Stock */}
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 mb-2">Stock Quantity *</label>
+                              <input
+                                type="number"
+                                value={variation.stock}
+                                onChange={(e) => {
+                                  const updatedVariations = [...editForm.variations];
+                                  updatedVariations[index] = { ...variation, stock: parseInt(e.target.value) || 0 };
+                                  setEditForm({ ...editForm, variations: updatedVariations });
+                                }}
+                                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                placeholder="0"
+                              />
+                            </div>
+
+                            {/* Weight */}
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 mb-2">Weight</label>
+                              <div className="flex gap-2">
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  value={variation.weight}
+                                  onChange={(e) => {
+                                    const updatedVariations = [...editForm.variations];
+                                    updatedVariations[index] = { ...variation, weight: e.target.value === '' ? '' : parseFloat(e.target.value) };
+                                    setEditForm({ ...editForm, variations: updatedVariations });
+                                  }}
+                                  className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                  placeholder="0.00"
+                                />
+                                <select
+                                  value={variation.weightUnit}
+                                  onChange={(e) => {
+                                    const updatedVariations = [...editForm.variations];
+                                    updatedVariations[index] = { ...variation, weightUnit: e.target.value };
+                                    setEditForm({ ...editForm, variations: updatedVariations });
+                                  }}
+                                  className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                >
+                                  <option value="kg">kg</option>
+                                  <option value="g">g</option>
+                                  <option value="lb">lb</option>
+                                  <option value="oz">oz</option>
+                                </select>
+                              </div>
+                            </div>
+
+                            {/* Dimensions */}
+                            <div className="md:col-span-2">
+                              <label className="block text-sm font-medium text-gray-700 mb-2">Dimensions (L × W × H)</label>
+                              <div className="flex gap-2">
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  value={variation.dimensions.length}
+                                  onChange={(e) => {
+                                    const updatedVariations = [...editForm.variations];
+                                    updatedVariations[index] = {
+                                      ...variation,
+                                      dimensions: { ...variation.dimensions, length: e.target.value === '' ? '' : parseFloat(e.target.value) }
+                                    };
+                                    setEditForm({ ...editForm, variations: updatedVariations });
+                                  }}
+                                  className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                  placeholder="Length"
+                                />
+                                <span className="text-gray-400 flex items-center">×</span>
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  value={variation.dimensions.width}
+                                  onChange={(e) => {
+                                    const updatedVariations = [...editForm.variations];
+                                    updatedVariations[index] = {
+                                      ...variation,
+                                      dimensions: { ...variation.dimensions, width: e.target.value === '' ? '' : parseFloat(e.target.value) }
+                                    };
+                                    setEditForm({ ...editForm, variations: updatedVariations });
+                                  }}
+                                  className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                  placeholder="Width"
+                                />
+                                <span className="text-gray-400 flex items-center">×</span>
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  value={variation.dimensions.height}
+                                  onChange={(e) => {
+                                    const updatedVariations = [...editForm.variations];
+                                    updatedVariations[index] = {
+                                      ...variation,
+                                      dimensions: { ...variation.dimensions, height: e.target.value === '' ? '' : parseFloat(e.target.value) }
+                                    };
+                                    setEditForm({ ...editForm, variations: updatedVariations });
+                                  }}
+                                  className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                  placeholder="Height"
+                                />
+                                <select
+                                  value={variation.dimensionsUnit}
+                                  onChange={(e) => {
+                                    const updatedVariations = [...editForm.variations];
+                                    updatedVariations[index] = { ...variation, dimensionsUnit: e.target.value };
+                                    setEditForm({ ...editForm, variations: updatedVariations });
+                                  }}
+                                  className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                >
+                                  <option value="cm">cm</option>
+                                  <option value="m">m</option>
+                                  <option value="in">in</option>
+                                  <option value="ft">ft</option>
+                                </select>
+                              </div>
+                            </div>
+
+                            {/* Fragile Checkbox */}
+                            <div className="md:col-span-2">
+                              <label className="flex items-center gap-2 cursor-pointer group">
+                                <input
+                                  type="checkbox"
+                                  checked={variation.isFragile || false}
+                                  onChange={(e) => {
+                                    const updatedVariations = [...editForm.variations];
+                                    updatedVariations[index] = { ...variation, isFragile: e.target.checked };
+                                    setEditForm({ ...editForm, variations: updatedVariations });
+                                  }}
+                                  className="w-5 h-5 text-blue-600 border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
+                                />
+                                <AlertTriangle className={`w-4 h-4 ${variation.isFragile ? 'text-orange-500' : 'text-gray-400'}`} />
+                                <span className="text-sm font-medium text-gray-700 group-hover:text-gray-900">
+                                  Mark as fragile (requires special handling)
+                                </span>
+                              </label>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="sticky bottom-0 bg-gray-50 px-6 py-4 rounded-b-2xl border-t border-gray-200 flex items-center justify-end gap-3">
+              <button
+                onClick={() => !submitting && setShowEditModal(false)}
+                disabled={submitting}
+                className="px-5 py-2.5 border-2 border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-100 transition disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleItemSave}
+                disabled={submitting || !editForm.name}
+                className="px-5 py-2.5 bg-green-600 text-white font-medium rounded-lg hover:bg-green-700 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              >
+                {submitting ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    Saving...
+                  </>
+                ) : (
+                  'Save Changes'
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default ItemsList;
