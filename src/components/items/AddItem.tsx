@@ -118,7 +118,10 @@ const AddItem: React.FC = () => {
         imageURL: imageURL,
         status: 'pending_qc' as const, // Always pending QC first
         suggestedThreshold: form.suggestedThreshold,
-        lowestPrice: form.lowestPrice || null,
+        price: form.price || 0,
+        specialPrice: form.specialPrice || null,
+        inStock: form.inStock || 0,
+        lowestPrice: form.lowestPrice || form.price || null,
         // Map specific dangerous goods types to 'dangerous' for Firebase
         dangerousGoods: (form.dangerousGoods === 'none' ? 'none' : 'dangerous') as 'none' | 'dangerous',
         warrantyType: form.warrantyType || null,

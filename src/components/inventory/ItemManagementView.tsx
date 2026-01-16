@@ -21,12 +21,17 @@ const ItemManagementView: React.FC<ItemManagementViewProps> = ({
   const filteredProducts = React.useMemo(() => {
     return items
       .filter(item => {
-        if (filterName && !item.name.toLowerCase().includes(filterName.toLowerCase())) return false;
+        const name = item.name || '';
+        if (filterName && !name.toLowerCase().includes(filterName.toLowerCase())) return false;
         if (filterCategory && item.categoryID !== filterCategory) return false;
         return true;
       })
       .sort((a, b) => {
-        if (sortBy === 'name') return a.name.localeCompare(b.name);
+        if (sortBy === 'name') {
+          const nameA = a.name || '';
+          const nameB = b.name || '';
+          return nameA.localeCompare(nameB);
+        }
         if (sortBy === 'price') return (b.price || 0) - (a.price || 0);
         if (sortBy === 'stock') return (b.inStock || 0) - (a.inStock || 0);
         return (b.updatedAt || 0) - (a.updatedAt || 0);

@@ -12,8 +12,9 @@ import { useToast } from '@/hooks/use-toast';
 import { ProductService } from '@/services/product';
 import CategoryService from '@/services/category';
 import { Package, Edit3, X, Plus, FolderTree, Boxes, Trash2, ImageIcon, AlertTriangle } from 'lucide-react';
-import { storage } from '@/lib/firebase';
+import { storage, db } from '@/lib/firebase';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { collection, getDocs } from 'firebase/firestore';
 
 const CATEGORY_OPTIONS = ['Consumables', 'Dental Equipment', 'Disposables', 'Equipment'] as const;
 
@@ -100,12 +101,23 @@ const ItemsList: React.FC = () => {
   const [subcategoryOptions, setSubcategoryOptions] = useState<Array<{ id: string; name: string }>>([]);
   const editImageInputRef = useRef<HTMLInputElement | null>(null);
   const variationImageInputRefs = useRef<Record<number, HTMLInputElement | null>>({});
+  const currentSubcategoryUnsubscribeRef = useRef<(() => void) | null>(null);
 
   const categoriesList = useMemo(() => {
     return Object.entries(categoryMap)
       .map(([id, name]) => ({ id, name }))
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [categoryMap]);
+
+  // Cleanup subcategory listener on unmount
+  useEffect(() => {
+    return () => {
+      if (currentSubcategoryUnsubscribeRef.current) {
+        currentSubcategoryUnsubscribeRef.current();
+        currentSubcategoryUnsubscribeRef.current = null;
+      }
+    };
+  }, []);
 
   // Load categories
   useEffect(() => {
@@ -251,33 +263,28 @@ const ItemsList: React.FC = () => {
     // Fetch variations for this product
     let variations: any[] = [];
     try {
-      const unsub = ProductService.listenVariations(product.id, (vars) => {
-        variations = vars.map((v: any) => ({
-          id: v.id,
-          name: v.name || '',
-          SKU: v.SKU || v.sku || '',
-          price: v.price || 0,
-          stock: v.stock || 0,
-          imageURL: v.imageURL || '',
-          weight: v.weight || '',
-          weightUnit: v.weightUnit || 'kg',
-          dimensions: {
-            length: v.dimensions?.length || '',
-            width: v.dimensions?.width || '',
-            height: v.dimensions?.height || ''
-          },
-          dimensionsUnit: v.dimensionsUnit || 'cm',
-          isFragile: v.isFragile ?? false,
-          isNew: false,
-          isDeleted: false,
-          imageFile: null,
-          imagePreview: null
-        }));
-        
-        setEditForm(prev => prev ? { ...prev, variations } : null);
-      });
-      // Clean up listener after getting initial data
-      setTimeout(() => unsub(), 1000);
+      const vars = await ProductService.getVariations(product.id);
+      variations = vars.map((v: any) => ({
+        id: v.id,
+        name: v.name || '',
+        SKU: v.SKU || v.sku || '',
+        price: v.price || 0,
+        stock: v.stock || 0,
+        imageURL: v.imageURL || '',
+        weight: v.weight || '',
+        weightUnit: v.weightUnit || 'kg',
+        dimensions: {
+          length: v.dimensions?.length || '',
+          width: v.dimensions?.width || '',
+          height: v.dimensions?.height || ''
+        },
+        dimensionsUnit: v.dimensionsUnit || 'cm',
+        isFragile: v.isFragile ?? false,
+        isNew: false,
+        isDeleted: false,
+        imageFile: null,
+        imagePreview: null
+      }));
     } catch (error) {
       console.error('Failed to load variations:', error);
     }
@@ -307,11 +314,19 @@ const ItemsList: React.FC = () => {
     // Load subcategories for the selected category
     if (product.category) {
       try {
-        const unsub = CategoryService.listenSubcategories(product.category, (subs) => {
-          setSubcategoryOptions(subs);
-        });
-        // Clean up after a brief moment since we just need initial data
-        setTimeout(() => unsub(), 1000);
+        const col = collection(db, 'Category', product.category, 'subCategory');
+        const snap = await getDocs(col);
+        const subs = snap.docs
+          .map(d => {
+            const data: any = d.data();
+            const name = String(
+              data?.subCategoryName || data?.subcategoryName || data?.name || data?.title || data?.displayName || data?.label || d.id
+            ).trim();
+            return { id: d.id, name };
+          })
+          .filter(r => !!r.name)
+          .sort((a, b) => a.name.localeCompare(b.name));
+        setSubcategoryOptions(subs);
       } catch (error) {
         console.error('Failed to load subcategories:', error);
       }
@@ -710,8 +725,17 @@ const ItemsList: React.FC = () => {
                       value={editForm.categoryID}
                       onChange={(e) => {
                         setEditForm({...editForm, categoryID: e.target.value, subCategoryID: ''});
+                        // Clean up previous listener
+                        if (currentSubcategoryUnsubscribeRef.current) {
+                          currentSubcategoryUnsubscribeRef.current();
+                          currentSubcategoryUnsubscribeRef.current = null;
+                        }
+                        // Set up new listener
                         if (e.target.value) {
-                          CategoryService.listenSubcategories(e.target.value, setSubcategoryOptions);
+                          const unsub = CategoryService.listenSubcategories(e.target.value, setSubcategoryOptions);
+                          currentSubcategoryUnsubscribeRef.current = unsub;
+                        } else {
+                          setSubcategoryOptions([]);
                         }
                       }}
                       className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"

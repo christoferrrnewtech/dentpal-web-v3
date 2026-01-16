@@ -181,7 +181,22 @@ const InventoryCatalogView: React.FC<InventoryCatalogViewProps> = ({
         items={filteredCatalog}
         tabKey={catalogTab}
         onToggleActive={async (id, next) => {
-          await ProductService.toggleActive(id, next);
+          try {
+            await ProductService.toggleActive(id, next);
+            toast({
+              title: next ? 'Product activated' : 'Product deactivated',
+              description: `Product has been ${next ? 'activated' : 'deactivated'} successfully.`
+            });
+          } catch (e) {
+            console.error('Toggle active failed', e);
+            toast({
+              title: 'Failed to update status',
+              description: 'Please try again.',
+              variant: 'destructive'
+            });
+            // Optionally refresh or revert UI here:
+            setCatalogTab('all'); // force refresh
+          }
         }}
         onRestore={async (item) => {
           try {

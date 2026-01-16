@@ -22,7 +22,19 @@ const InventoryHistoryView: React.FC<InventoryHistoryViewProps> = ({
   logsPerPage,
   exportLogs,
 }) => {
-  const filteredLogs = useMemo(() => logs, [logs]);
+  // Filter logs by date range
+  const filteredLogs = useMemo(() => {
+    if (!logsDateRange?.start || !logsDateRange?.end) return logs;
+    const startTime = new Date(logsDateRange.start);
+    startTime.setHours(0, 0, 0, 0);
+    const endTime = new Date(logsDateRange.end);
+    endTime.setHours(23, 59, 59, 999);
+    return logs.filter(log => {
+      if (!log.at) return false;
+      const logTime = new Date(log.at);
+      return logTime >= startTime && logTime <= endTime;
+    });
+  }, [logs, logsDateRange]);
   const paginatedLogs = useMemo(() => {
     const start = (logsPage - 1) * logsPerPage;
     return filteredLogs.slice(start, start + logsPerPage);
