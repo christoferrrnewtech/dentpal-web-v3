@@ -5,7 +5,7 @@ import { Pencil, Edit3, Trash2, RotateCcw, Filter } from 'lucide-react';
 interface Props {
   items: InventoryItem[];
   onToggleActive: (id: string, nextActive: boolean) => void;
-  onEdit: (id: string) => void;
+  onEdit?: (id: string) => void;
   onEditPrice?: (item: InventoryItem) => void; 
   onEditStock?: (item: InventoryItem) => void; 
   onDelete?: (item: InventoryItem) => void; 
@@ -135,7 +135,9 @@ const CatalogTable: React.FC<Props> = ({ items, onToggleActive, onEdit, onEditPr
                     </div>
                   </div>
                 </HeaderWithFilter>
-                <th className="px-4 py-2 text-left text-[11px] font-semibold text-gray-600 tracking-wide">ACTIONS</th>
+                {(onEdit || onDelete) && (
+                  <th className="px-4 py-2 text-left text-[11px] font-semibold text-gray-600 tracking-wide">ACTIONS</th>
+                )}
               </>
             ) : (
               <>
@@ -181,7 +183,9 @@ const CatalogTable: React.FC<Props> = ({ items, onToggleActive, onEdit, onEditPr
                     </select>
                   </div>
                 </HeaderWithFilter>
-                <th className="px-4 py-2 text-left text-[11px] font-semibold text-gray-600 tracking-wide">ACTIONS</th>
+                {(onEdit || onDelete) && (
+                  <th className="px-4 py-2 text-left text-[11px] font-semibold text-gray-600 tracking-wide">ACTIONS</th>
+                )}
               </>
             )}
           </tr>
@@ -232,92 +236,138 @@ const CatalogTable: React.FC<Props> = ({ items, onToggleActive, onEdit, onEditPr
                       <div className="text-xs text-gray-600">{i.updatedAt ? new Date(Number(i.updatedAt)).toLocaleString() : '—'}</div>
                     </td>
                     <td className="px-4 py-2 text-gray-700 hidden sm:table-cell">
-                      <button
-                        type="button"
-                        className={`inline-flex items-center gap-2 ${isDeleted ? 'text-gray-400 cursor-not-allowed' : 'hover:underline'}`}
-                        onClick={() => !isDeleted && onEditPrice && onEditPrice(i)}
-                        title={isDeleted ? 'Unavailable for archived items' : 'Edit price'}
-                      >
-                        {i.price != null ? (
-                          showSale ? (
-                            <>
-                              <span className="font-semibold text-teal-700">₱{Number(i.specialPrice).toLocaleString()}</span>
-                              <span className="line-through text-gray-400">₱{Number(i.price).toLocaleString()}</span>
-                            </>
+                      {onEditPrice ? (
+                        <button
+                          type="button"
+                          className={`inline-flex items-center gap-2 ${isDeleted ? 'text-gray-400 cursor-not-allowed' : 'hover:underline'}`}
+                          onClick={() => !isDeleted && onEditPrice(i)}
+                          title={isDeleted ? 'Unavailable for archived items' : 'Edit price'}
+                        >
+                          {i.price != null ? (
+                            showSale ? (
+                              <>
+                                <span className="font-semibold text-teal-700">₱{Number(i.specialPrice).toLocaleString()}</span>
+                                <span className="line-through text-gray-400">₱{Number(i.price).toLocaleString()}</span>
+                              </>
+                            ) : (
+                              <span>₱{Number(i.price).toLocaleString()}</span>
+                            )
                           ) : (
-                            <span>₱{Number(i.price).toLocaleString()}</span>
-                          )
-                        ) : (
-                          <span className="text-gray-400">—</span>
-                        )}
-                        <Pencil className={`w-3.5 h-3.5 ${isDeleted ? 'text-gray-300' : 'text-gray-500'}`} />
-                      </button>
+                            <span className="text-gray-400">—</span>
+                          )}
+                          <Pencil className={`w-3.5 h-3.5 ${isDeleted ? 'text-gray-300' : 'text-gray-500'}`} />
+                        </button>
+                      ) : (
+                        <div>
+                          {i.price != null ? (
+                            showSale ? (
+                              <>
+                                <span className="font-semibold text-teal-700">₱{Number(i.specialPrice).toLocaleString()}</span>
+                                <span className="line-through text-gray-400 ml-1">₱{Number(i.price).toLocaleString()}</span>
+                              </>
+                            ) : (
+                              <span>₱{Number(i.price).toLocaleString()}</span>
+                            )
+                          ) : (
+                            <span className="text-gray-400">—</span>
+                          )}
+                        </div>
+                      )}
                     </td>
                     <td className="px-4 py-2 text-gray-700">
-                      <button
-                        type="button"
-                        className={`inline-flex items-center gap-2 ${isDeleted ? 'text-gray-400 cursor-not-allowed' : 'hover:underline'}`}
-                        onClick={() => !isDeleted && onEditStock && onEditStock(i)}
-                        title={isDeleted ? 'Unavailable for archived items' : 'Adjust stock'}
-                      >
-                        {i.inStock}
-                        <Pencil className={`w-3.5 h-3.5 ${isDeleted ? 'text-gray-300' : 'text-gray-500'}`} />
-                      </button>
-                    </td>
-                    <td className="px-4 py-2">
-                      <div className="flex items-center gap-2">
+                      {onEditStock ? (
                         <button
-                          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-white border border-gray-300 hover:bg-gray-50 shadow-sm"
-                          onClick={() => onEdit(i.id)}
+                          type="button"
+                          className={`inline-flex items-center gap-2 ${isDeleted ? 'text-gray-400 cursor-not-allowed' : 'hover:underline'}`}
+                          onClick={() => !isDeleted && onEditStock(i)}
+                          title={isDeleted ? 'Unavailable for archived items' : 'Adjust stock'}
                         >
-                          <Edit3 className="w-3.5 h-3.5" /> Edit
+                          {i.inStock}
+                          <Pencil className={`w-3.5 h-3.5 ${isDeleted ? 'text-gray-300' : 'text-gray-500'}`} />
                         </button>
-                        {onDelete && (
-                          <button
-                            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-white border border-gray-300 text-red-600 hover:bg-red-50 hover:border-red-200 shadow-sm"
-                            onClick={() => onDelete(i)}
-                            title="Delete product"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" /> Delete
-                          </button>
-                        )}
-                      </div>
+                      ) : (
+                        <span>{i.inStock}</span>
+                      )}
                     </td>
+                    {(onEdit || onDelete) && (
+                      <td className="px-4 py-2">
+                        <div className="flex items-center gap-2">
+                          {onEdit && (
+                            <button
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-white border border-gray-300 hover:bg-gray-50 shadow-sm"
+                              onClick={() => onEdit(i.id)}
+                            >
+                              <Edit3 className="w-3.5 h-3.5" /> Edit
+                            </button>
+                          )}
+                          {onDelete && (
+                            <button
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-white border border-gray-300 text-red-600 hover:bg-red-50 hover:border-red-200 shadow-sm"
+                              onClick={() => onDelete(i)}
+                              title="Delete product"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" /> Delete
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    )}
                   </>
                 ) : (
                   <>
                     <td className="px-4 py-2 text-gray-700 hidden sm:table-cell">
-                      <button
-                        type="button"
-                        className={`inline-flex items-center gap-2 ${isDeleted ? 'text-gray-400 cursor-not-allowed' : 'hover:underline'}`}
-                        onClick={() => !isDeleted && onEditPrice && onEditPrice(i)}
-                        title={isDeleted ? 'Unavailable for archived items' : 'Edit price'}
-                      >
-                        {i.price != null ? (
-                          showSale ? (
-                            <>
-                              <span className="font-semibold text-teal-700">₱{Number(i.specialPrice).toLocaleString()}</span>
-                              <span className="line-through text-gray-400">₱{Number(i.price).toLocaleString()}</span>
-                            </>
+                      {onEditPrice ? (
+                        <button
+                          type="button"
+                          className={`inline-flex items-center gap-2 ${isDeleted ? 'text-gray-400 cursor-not-allowed' : 'hover:underline'}`}
+                          onClick={() => !isDeleted && onEditPrice(i)}
+                          title={isDeleted ? 'Unavailable for archived items' : 'Edit price'}
+                        >
+                          {i.price != null ? (
+                            showSale ? (
+                              <>
+                                <span className="font-semibold text-teal-700">₱{Number(i.specialPrice).toLocaleString()}</span>
+                                <span className="line-through text-gray-400">₱{Number(i.price).toLocaleString()}</span>
+                              </>
+                            ) : (
+                              <span>₱{Number(i.price).toLocaleString()}</span>
+                            )
                           ) : (
-                            <span>₱{Number(i.price).toLocaleString()}</span>
-                          )
-                        ) : (
-                          <span className="text-gray-400">—</span>
-                        )}
-                        <Pencil className={`w-3.5 h-3.5 ${isDeleted ? 'text-gray-300' : 'text-gray-500'}`} />
-                      </button>
+                            <span className="text-gray-400">—</span>
+                          )}
+                          <Pencil className={`w-3.5 h-3.5 ${isDeleted ? 'text-gray-300' : 'text-gray-500'}`} />
+                        </button>
+                      ) : (
+                        <div>
+                          {i.price != null ? (
+                            showSale ? (
+                              <>
+                                <span className="font-semibold text-teal-700">₱{Number(i.specialPrice).toLocaleString()}</span>
+                                <span className="line-through text-gray-400 ml-1">₱{Number(i.price).toLocaleString()}</span>
+                              </>
+                            ) : (
+                              <span>₱{Number(i.price).toLocaleString()}</span>
+                            )
+                          ) : (
+                            <span className="text-gray-400">—</span>
+                          )}
+                        </div>
+                      )}
                     </td>
                     <td className="px-4 py-2 text-gray-700">
-                      <button
-                        type="button"
-                        className={`inline-flex items-center gap-2 ${isDeleted ? 'text-gray-400 cursor-not-allowed' : 'hover:underline'}`}
-                        onClick={() => !isDeleted && onEditStock && onEditStock(i)}
-                        title={isDeleted ? 'Unavailable for archived items' : 'Adjust stock'}
-                      >
-                        {i.inStock}
-                        <Pencil className={`w-3.5 h-3.5 ${isDeleted ? 'text-gray-300' : 'text-gray-500'}`} />
-                      </button>
+                      {onEditStock ? (
+                        <button
+                          type="button"
+                          className={`inline-flex items-center gap-2 ${isDeleted ? 'text-gray-400 cursor-not-allowed' : 'hover:underline'}`}
+                          onClick={() => !isDeleted && onEditStock(i)}
+                          title={isDeleted ? 'Unavailable for archived items' : 'Adjust stock'}
+                        >
+                          {i.inStock}
+                          <Pencil className={`w-3.5 h-3.5 ${isDeleted ? 'text-gray-300' : 'text-gray-500'}`} />
+                        </button>
+                      ) : (
+                        <span>{i.inStock}</span>
+                      )}
                     </td>
                     <td className="px-4 py-2 hidden md:table-cell">
                       <label className={`inline-flex items-center select-none ${isDeleted ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}>
@@ -335,39 +385,43 @@ const CatalogTable: React.FC<Props> = ({ items, onToggleActive, onEdit, onEditPr
                         />
                       </label>
                     </td>
-                    <td className="px-4 py-2">
-                      <div className="flex items-center gap-2">
-                        {isDeleted ? (
-                          onRestore ? (
-                            <button
-                              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded bg-white border border-gray-300 hover:bg-gray-50"
-                              onClick={() => onRestore(i)}
-                              title="Restore from archive"
-                            >
-                              <RotateCcw className="w-3.5 h-3.5" /> Restore
-                            </button>
-                          ) : null
-                        ) : (
-                          <>
-                            <button
-                              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-white border border-gray-300 hover:bg-gray-50 shadow-sm"
-                              onClick={() => onEdit(i.id)}
-                            >
-                              <Edit3 className="w-3.5 h-3.5" /> Edit
-                            </button>
-                            {onDelete && (
+                    {(onEdit || onDelete || onRestore) && (
+                      <td className="px-4 py-2">
+                        <div className="flex items-center gap-2">
+                          {isDeleted ? (
+                            onRestore ? (
                               <button
-                                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-white border border-gray-300 text-red-600 hover:bg-red-50 hover:border-red-200 shadow-sm"
-                                onClick={() => onDelete(i)}
-                                title="Delete product"
+                                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded bg-white border border-gray-300 hover:bg-gray-50"
+                                onClick={() => onRestore(i)}
+                                title="Restore from archive"
                               >
-                                <Trash2 className="w-3.5 h-3.5" /> Delete
+                                <RotateCcw className="w-3.5 h-3.5" /> Restore
                               </button>
-                            )}
-                          </>
-                        )}
-                      </div>
-                    </td>
+                            ) : null
+                          ) : (
+                            <>
+                              {onEdit && (
+                                <button
+                                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-white border border-gray-300 hover:bg-gray-50 shadow-sm"
+                                  onClick={() => onEdit(i.id)}
+                                >
+                                  <Edit3 className="w-3.5 h-3.5" /> Edit
+                                </button>
+                              )}
+                              {onDelete && (
+                                <button
+                                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-white border border-gray-300 text-red-600 hover:bg-red-50 hover:border-red-200 shadow-sm"
+                                  onClick={() => onDelete(i)}
+                                  title="Delete product"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" /> Delete
+                                </button>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      </td>
+                    )}
                   </>
                 )}
               </tr>

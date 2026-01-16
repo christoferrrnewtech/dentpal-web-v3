@@ -4,6 +4,7 @@ import DashboardHeader from "@/components/dashboard/DashboardHeader";
 // import StatsCard from "@/components/dashboard/StatsCard";
 // import RecentOrders from "@/components/dashboard/RecentOrders";
 import RevenueChart from "@/components/dashboard/RevenueChart";
+import { LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from "recharts";
 import Booking from "@/pages/Booking";
 import ConfirmationTab from "@/components/confirmation/ConfirmationTab";
 import WithdrawalTab from "@/components/withdrawal/WithdrawalTab";
@@ -14,14 +15,17 @@ import UsersTab from "@/components/users/UsersTab";
 import OrderTab from '@/components/orders/SellerOrdersTab';
 import InventoryTab from '@/components/inventory/InventoryTab';
 import ProductQCTab from '@/components/admin/ProductQCTab';
+import PoliciesTab from '@/components/policies/PoliciesTab';
+import ChatsTab from '@/components/chats/ChatsTab';
+import { ItemsTab, ItemsAll, ItemsList } from '@/components/items';
+import AddItem from '@/components/items/AddItem';
 import { Order } from "@/types/order";
-import { DollarSign, Users, ShoppingCart, TrendingUp, Filter, Download } from "lucide-react";
+import { DollarSign, Users, ShoppingCart, TrendingUp, Filter, Download, ChevronDown, ChevronRight } from "lucide-react";
 // Add permission-aware auth hook
 import { useAuth } from "@/hooks/use-auth";
 import SellerProfileTab from '@/components/profile/SellerProfileTab';
 import ReportsTab from '@/components/reports/ReportsTab';
 import OrdersService from '@/services/orders';
-import AddProduct from '@/pages/AddProduct'; // New
 //import NotificationsTab from '@/components/notifications/NotificationsTab';
 import { useLocation, useNavigate } from 'react-router-dom';
 import WarrantyManager from '@/pages/admin/WarrantyManager';
@@ -67,7 +71,27 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
   
   // New: seller dashboard UI state
   const [showTutorial, setShowTutorial] = useState(false);
-  const [sellerFilters, setSellerFilters] = useState({ dateRange: 'last-30', brand: 'all', subcategory: 'all', location: 'all', paymentType: 'all', viewType: 'summary' });
+  const [sellerFilters, setSellerFilters] = useState({ dateRange: 'last-30', brand: 'all', subcategory: 'all', location: 'all', paymentType: 'all', viewType: 'summary', viewExpanded: false });
+  const [itemChartType, setItemChartType] = useState<'line' | 'bar' | 'pie'>('bar');
+  
+  // Handler for sidebar navigation with dashboard sub-items
+  const handleItemClick = (itemId: string) => {
+    // Handle dashboard sub-items
+    if (itemId.startsWith('dashboard-')) {
+      setActiveItem('dashboard');
+      const viewTypeMap: Record<string, string> = {
+        'dashboard-summary': 'summary',
+        'dashboard-item': 'item',
+        'dashboard-category': 'category',
+        'dashboard-payment': 'paymentType',
+        'dashboard-receipts': 'receipts'
+      };
+      setSellerFilters(f => ({ ...f, viewType: viewTypeMap[itemId] || 'summary' }));
+    } else {
+      setActiveItem(itemId);
+    }
+  };
+  
   // Admin filters (date picker range, province, city, seller/shop name)
   const [adminFilters, setAdminFilters] = useState<{ dateFrom: string; dateTo: string; province: string; city: string; seller: string }>({ dateFrom: '', dateTo: '', province: 'all', city: 'all', seller: 'all' });
   // Date range picker state (moved back after refactor)
@@ -223,6 +247,7 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
   }, [confirmationOrders]);
 
   const isPaidStatus = (s: Order['status']) => ['to_ship','processing','completed','shipping'].includes(s);
+  const isWithdrawableStatus = (s: Order['status']) => s === 'completed'; // Only completed orders are eligible for withdrawal
   const getAmount = (o: Order) => typeof o.total === 'number' ? o.total : ((o.items || []).reduce((s, it) => s + ((it.price || 0) * (it.quantity || 0)), 0) || 0);
 
   const filteredOrders = useMemo(() => {
@@ -367,7 +392,8 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
     let matchedOrders = 0;
 
     confirmationOrders.forEach((order: any) => {
-      if (!isPaidStatus(order.status)) {
+      // Only count completed orders for withdrawal metrics
+      if (!isWithdrawableStatus(order.status)) {
         return;
       }
 
@@ -393,7 +419,7 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
       }
     });
 
-    console.log('[Dashboard] Financial metrics calculated:', {
+    console.log('[Dashboard] Financial metrics calculated (completed orders only):', {
       totalGross,
       totalNetPayout,
       totalPaymentProcessingFee,
@@ -468,11 +494,18 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
     users: "users",
     'seller-orders': 'seller-orders',
     inventory: 'inventory',
+    'inventory-all': 'inventory',
+    'inventory-history': 'inventory',
+    'stock-adjustment': 'inventory',
+    'price-management': 'add-product',
+    'item-management': 'inventory',
     'add-product': 'add-product',
-    notifications: 'dashboard',
+   // notifications: 'dashboard',
     'product-qc': 'product-qc',
     'warranty': 'warranty',
     'categories': 'categories',
+    chats: 'chats',
+    policies: 'policies',
   } as any;
 
   const isAllowed = (itemId: string) => {
@@ -1074,17 +1107,6 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
                 <div className="text-sm font-semibold text-gray-900 mb-3">Filters</div>
                 <div className="flex flex-col lg:flex-row lg:items-end lg:space-x-4 gap-4">
                   <div className="flex-1 min-w-[160px]">
-                    <label className="block text-xs font-medium text-gray-700 mb-1">View by</label>
-                    <select className="w-full p-2 border border-gray-200 rounded-lg text-xs focus:ring-2 focus:ring-teal-500 focus:border-transparent" value={sellerFilters.viewType || 'summary'} onChange={(e)=> setSellerFilters(f=>({ ...f, viewType: e.target.value }))}>
-                      <option value="summary">Summary (Revenue Chart)</option>
-                      <option value="item">By Item</option>
-                      <option value="category">By Category</option>
-                      <option value="paymentType">By Payment Type</option>
-                      <option value="Receipts">By Receipts</option>
-
-                    </select>
-                  </div>
-                  <div className="flex-1 min-w-[160px]">
                     <label className="block text-xs font-medium text-gray-700 mb-1">Select date</label>
                     <div ref={sellerDateDropdownRef} className="relative">
                       <button
@@ -1213,7 +1235,7 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
                   {/* Financial Summary Table */}
                   <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
                     <div className="px-6 py-4 border-b border-gray-100">
-                      <h3 className="text-sm font-semibold text-gray-800 tracking-wide">FINANCIAL SUMMARY</h3>
+                      <h3 className="text-sm font-semibold text-gray-800 tracking-wide">FINANCIAL SUMMARY (PER DATE)</h3>
                     </div>
                     <div className="overflow-x-auto">
                       <table className="w-full text-sm">
@@ -1229,49 +1251,131 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
                           </tr>
                         </thead>
                         <tbody>
-                          <tr className="border-t hover:bg-gray-50">
-                            <td className="px-6 py-4 text-gray-700 font-medium text-xs">
-                              {(() => {
-                                const now = new Date();
-                                const formatTimestamp = (date: Date) => {
-                                  return date.toLocaleString('en-US', {
-                                    month: 'short',
-                                    day: 'numeric',
-                                    year: 'numeric',
-                                    hour: 'numeric',
-                                    minute: '2-digit',
-                                    hour12: true
-                                  });
-                                };
+                          {(() => {
+                            // Group orders by date
+                            const ordersByDate = new Map<string, typeof paidOrders>();
+                            const formatDateKey = (date: Date) => {
+                              return date.toLocaleDateString('en-US', { 
+                                year: 'numeric', 
+                                month: 'short', 
+                                day: 'numeric' 
+                              });
+                            };
+
+                            paidOrders.forEach(order => {
+                              const orderDate = order.createdAt ? new Date(order.createdAt) : new Date();
+                              const dateKey = formatDateKey(orderDate);
+                              if (!ordersByDate.has(dateKey)) {
+                                ordersByDate.set(dateKey, []);
+                              }
+                              ordersByDate.get(dateKey)!.push(order);
+                            });
+
+                            // Sort dates in descending order
+                            const sortedDates = Array.from(ordersByDate.keys()).sort((a, b) => {
+                              const dateA = new Date(a);
+                              const dateB = new Date(b);
+                              return dateB.getTime() - dateA.getTime();
+                            });
+
+                            // Calculate totals across all dates
+                            let grandTotalGross = 0;
+                            let grandTotalPaymentFee = 0;
+                            let grandTotalShippingFee = 0;
+                            let grandTotalPlatformFee = 0;
+                            let grandTotalNetPayout = 0;
+
+                            const rows = sortedDates.map(dateKey => {
+                              const dayOrders = ordersByDate.get(dateKey)!;
+                              const dayMetrics = dayOrders.reduce((acc, o) => {
+                                const summary = o.summary || {};
+                                const feesData = o.feesBreakdown || {};
+                                const payout = o.payout || {};
                                 
-                                if (sellerRange.start) {
-                                  return `${formatTimestamp(sellerRange.start)} → ${formatTimestamp(sellerRange.end || sellerRange.start)}`;
-                                } else {
-                                  const days = parseInt(sellerFilters.dateRange.replace('last-', ''));
-                                  const startDate = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
-                                  return `${formatTimestamp(startDate)} → ${formatTimestamp(now)}`;
-                                }
-                              })()}
-                            </td>
-                            <td className="px-6 py-4 text-gray-900 text-right font-medium">
-                              {currency.format(financialMetrics.totalGross)}
-                            </td>
-                            <td className="px-6 py-4 text-red-600 text-right font-medium">
-                              {currency.format(0)} {/* TODO: Add refunds calculation */}
-                            </td>
-                            <td className="px-6 py-4 text-red-600 text-right">
-                              {currency.format(financialMetrics.totalPaymentProcessingFee)}
-                            </td>
-                            <td className="px-6 py-4 text-orange-600 text-right">
-                              {currency.format(financialMetrics.totalShippingCharge)}
-                            </td>
-                            <td className="px-6 py-4 text-red-600 text-right">
-                              {currency.format(financialMetrics.totalPlatformFee)}
-                            </td>
-                            <td className="px-6 py-4 text-green-600 text-right font-bold text-base">
-                              {currency.format(financialMetrics.totalNetPayout)}
-                            </td>
-                          </tr>
+                                const gross = Number(summary.subtotal || 0);
+                                const paymentFee = Number(feesData.paymentProcessingFee || 0);
+                                const shippingFee = Number(summary.sellerShippingCharge || 0);
+                                const platformFee = Number(feesData.platformFee || 0);
+                                const netPayout = Number(payout.netPayoutToSeller || 0);
+                                
+                                return {
+                                  totalGross: acc.totalGross + gross,
+                                  totalPaymentFee: acc.totalPaymentFee + paymentFee,
+                                  totalShippingFee: acc.totalShippingFee + shippingFee,
+                                  totalPlatformFee: acc.totalPlatformFee + platformFee,
+                                  totalNetPayout: acc.totalNetPayout + netPayout
+                                };
+                              }, {
+                                totalGross: 0,
+                                totalPaymentFee: 0,
+                                totalShippingFee: 0,
+                                totalPlatformFee: 0,
+                                totalNetPayout: 0
+                              });
+
+                              // Add to grand totals
+                              grandTotalGross += dayMetrics.totalGross;
+                              grandTotalPaymentFee += dayMetrics.totalPaymentFee;
+                              grandTotalShippingFee += dayMetrics.totalShippingFee;
+                              grandTotalPlatformFee += dayMetrics.totalPlatformFee;
+                              grandTotalNetPayout += dayMetrics.totalNetPayout;
+
+                              return (
+                                <tr key={dateKey} className="border-t hover:bg-gray-50">
+                                  <td className="px-6 py-4 text-gray-700 font-medium text-xs">
+                                    {dateKey}
+                                  </td>
+                                  <td className="px-6 py-4 text-gray-900 text-right font-medium">
+                                    {currency.format(dayMetrics.totalGross)}
+                                  </td>
+                                  <td className="px-6 py-4 text-red-600 text-right font-medium">
+                                    {currency.format(0)}
+                                  </td>
+                                  <td className="px-6 py-4 text-red-600 text-right">
+                                    {currency.format(dayMetrics.totalPaymentFee)}
+                                  </td>
+                                  <td className="px-6 py-4 text-orange-600 text-right">
+                                    {currency.format(dayMetrics.totalShippingFee)}
+                                  </td>
+                                  <td className="px-6 py-4 text-red-600 text-right">
+                                    {currency.format(dayMetrics.totalPlatformFee)}
+                                  </td>
+                                  <td className="px-6 py-4 text-green-600 text-right font-bold">
+                                    {currency.format(dayMetrics.totalNetPayout)}
+                                  </td>
+                                </tr>
+                              );
+                            });
+
+                            // Add total row
+                            rows.push(
+                              <tr key="total" className="border-t-2 border-gray-300 bg-gray-50 font-bold">
+                                <td className="px-6 py-4 text-gray-900 text-xs">
+                                  TOTAL
+                                </td>
+                                <td className="px-6 py-4 text-gray-900 text-right">
+                                  {currency.format(grandTotalGross)}
+                                </td>
+                                <td className="px-6 py-4 text-red-600 text-right">
+                                  {currency.format(0)}
+                                </td>
+                                <td className="px-6 py-4 text-red-600 text-right">
+                                  {currency.format(grandTotalPaymentFee)}
+                                </td>
+                                <td className="px-6 py-4 text-orange-600 text-right">
+                                  {currency.format(grandTotalShippingFee)}
+                                </td>
+                                <td className="px-6 py-4 text-red-600 text-right">
+                                  {currency.format(grandTotalPlatformFee)}
+                                </td>
+                                <td className="px-6 py-4 text-green-600 text-right text-base">
+                                  {currency.format(grandTotalNetPayout)}
+                                </td>
+                              </tr>
+                            );
+
+                            return rows;
+                          })()}
                         </tbody>
                       </table>
                     </div>
@@ -1284,7 +1388,13 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
                           </span>
                         </div>
                         <div className="text-gray-500">
-                          Based on {paidOrders.length} paid {paidOrders.length === 1 ? 'order' : 'orders'}
+                          {(() => {
+                            if (sellerRange.start) {
+                              return `${toISO(sellerRange.start)} → ${toISO(sellerRange.end || sellerRange.start)}`;
+                            } else {
+                              return sellerFilters.dateRange.replace('last-', 'Last ') + ' days';
+                            }
+                          })()} • {paidOrders.length} paid {paidOrders.length === 1 ? 'order' : 'orders'}
                         </div>
                       </div>
                     </div>
@@ -1385,7 +1495,8 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
                             <h4 className="text-sm font-medium text-gray-700">Sales by Item Chart</h4>
                             <select 
                               className="px-3 py-1.5 text-xs border border-gray-200 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
-                              defaultValue="bar"
+                              value={itemChartType}
+                              onChange={(e) => setItemChartType(e.target.value as 'line' | 'bar' | 'pie')}
                             >
                               <option value="line">Line Chart</option>
                               <option value="bar">Bar Chart</option>
@@ -1424,28 +1535,128 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
                             }
 
                             const maxSales = Math.max(...chartData.map(d => d.sales));
-                            return (
-                              <div className="space-y-3">
-                                {chartData.map((item, idx) => (
-                                  <div key={idx} className="space-y-1">
-                                    <div className="flex items-center justify-between text-xs">
-                                      <span className="font-medium text-gray-700 truncate pr-2">{item.name}</span>
-                                      <span className="font-semibold text-gray-900">{currency.format(item.sales)}</span>
-                                    </div>
-                                    <div className="w-full bg-gray-100 rounded-full h-6 relative overflow-hidden">
-                                      <div 
-                                        className="bg-gradient-to-r from-teal-500 to-teal-600 h-full rounded-full transition-all duration-500 flex items-center justify-end pr-2"
-                                        style={{ width: `${(item.sales / maxSales) * 100}%` }}
+                            const COLORS = ['#14b8a6', '#06b6d4', '#3b82f6', '#8b5cf6', '#ec4899'];
+
+                            // Line Chart
+                            if (itemChartType === 'line') {
+                              return (
+                                <div className="h-64 w-full">
+                                  <ResponsiveContainer width="100%" height="100%">
+                                    <LineChart data={chartData} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
+                                      <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                                      <XAxis 
+                                        dataKey="name" 
+                                        stroke="#9ca3af"
+                                        fontSize={11}
+                                        angle={-45}
+                                        textAnchor="end"
+                                        height={80}
+                                        interval={0}
+                                      />
+                                      <YAxis 
+                                        stroke="#9ca3af"
+                                        fontSize={11}
+                                        tickFormatter={(value) => currency.format(value)}
+                                      />
+                                      <Tooltip 
+                                        contentStyle={{
+                                          backgroundColor: "white",
+                                          border: "1px solid #e5e7eb",
+                                          borderRadius: "8px",
+                                          fontSize: "12px",
+                                        }}
+                                        formatter={(value: any) => [currency.format(value), 'Sales']}
+                                      />
+                                      <Line 
+                                        type="monotone" 
+                                        dataKey="sales" 
+                                        stroke="#14b8a6" 
+                                        strokeWidth={2}
+                                        dot={{ fill: '#14b8a6', r: 4 }}
+                                        activeDot={{ r: 6 }}
+                                      />
+                                    </LineChart>
+                                  </ResponsiveContainer>
+                                </div>
+                              );
+                            }
+
+                            // Pie Chart
+                            if (itemChartType === 'pie') {
+                              return (
+                                <div className="h-64 w-full">
+                                  <ResponsiveContainer width="100%" height="100%">
+                                    <PieChart>
+                                      <Pie
+                                        data={chartData}
+                                        dataKey="sales"
+                                        nameKey="name"
+                                        cx="50%"
+                                        cy="50%"
+                                        outerRadius={90}
                                       >
-                                        {(item.sales / maxSales) > 0.3 && (
-                                          <span className="text-[10px] font-medium text-white">
-                                            {((item.sales / maxSales) * 100).toFixed(0)}%
-                                          </span>
-                                        )}
-                                      </div>
-                                    </div>
-                                  </div>
-                                ))}
+                                        {chartData.map((entry, index) => (
+                                          <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                                        ))}
+                                      </Pie>
+                                      <Tooltip 
+                                        contentStyle={{
+                                          backgroundColor: "white",
+                                          border: "1px solid #e5e7eb",
+                                          borderRadius: "8px",
+                                          fontSize: "12px",
+                                          padding: "8px 12px",
+                                        }}
+                                        formatter={(value: any, name: string) => [currency.format(value), 'Sales']}
+                                      />
+                                      <Legend 
+                                        verticalAlign="bottom" 
+                                        height={36}
+                                        iconType="circle"
+                                        iconSize={8}
+                                        wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }}
+                                      />
+                                    </PieChart>
+                                  </ResponsiveContainer>
+                                </div>
+                              );
+                            }
+
+                            // Bar Chart (default/original with horizontal bars)
+                            return (
+                              <div className="h-64 w-full">
+                                <ResponsiveContainer width="100%" height="100%">
+                                  <BarChart data={chartData} layout="vertical" margin={{ top: 5, right: 20, bottom: 5, left: 100 }}>
+                                    <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" horizontal={false} />
+                                    <XAxis 
+                                      type="number"
+                                      stroke="#9ca3af"
+                                      fontSize={11}
+                                      tickFormatter={(value) => currency.format(value)}
+                                    />
+                                    <YAxis 
+                                      type="category"
+                                      dataKey="name" 
+                                      stroke="#9ca3af"
+                                      fontSize={11}
+                                      width={90}
+                                    />
+                                    <Tooltip 
+                                      contentStyle={{
+                                        backgroundColor: "white",
+                                        border: "1px solid #e5e7eb",
+                                        borderRadius: "8px",
+                                        fontSize: "12px",
+                                      }}
+                                      formatter={(value: any) => [currency.format(value), 'Sales']}
+                                    />
+                                    <Bar 
+                                      dataKey="sales" 
+                                      fill="#14b8a6"
+                                      radius={[0, 8, 8, 0]}
+                                    />
+                                  </BarChart>
+                                </ResponsiveContainer>
                               </div>
                             );
                           })()}
@@ -3431,21 +3642,60 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
           <UsersTab />
         );
       case "inventory":
+      case "inventory-all":
         if (!isAllowed("inventory")) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
         return (
-          <InventoryTab />
+          <InventoryTab initialTab="all" />
         );
-      case "add-product":
+      case "inventory-history":
+        if (!isAllowed("inventory")) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
+        return (
+          <InventoryTab initialTab="history" />
+        );
+      case "stock-adjustment":
+        if (!isAllowed("inventory")) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
+        return (
+          <InventoryTab initialTab="add" />
+        );
+      case "price-management":
         if (!isAllowed("add-product")) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
         return (
-          <AddProduct />
+          <InventoryTab initialTab="price" />
         );
+      case "item-management":
+        if (!isAllowed("inventory")) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
+        return (
+          <InventoryTab initialTab="item-management" />
+        );
+      case "items":
+        if (!isAllowed("add-product")) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
+        return (
+          <ItemsTab />
+        );
+      case "items-all":
+        if (!isAllowed("add-product")) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
+        return <ItemsAll />;
+      case "items-list":
+        if (!isAllowed("add-product")) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
+        return <ItemsList />;
+      case "items-add":
+        if (!isAllowed("add-product")) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
+        return <AddItem />;
+      case "items-add":
+        if (!isAllowed("add-product")) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
+        return <AddItem />;
       case 'warranty':
         if (!isAdmin) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
         return <WarrantyManager />;
       case 'categories':
         if (!isAdmin) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
         return <CategoryManager />;
+      case "policies":
+        if (!isAdmin) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
+        return <PoliciesTab />;
+      case 'chats':
+        if (!isAllowed('chats')) return <div className="p-6 bg-white rounded-xl border">Access denied</div>;
+        return <ChatsTab isSeller={!isAdmin} currentUserId={uid || undefined} />;
       default:
         return null;
     }
@@ -3455,7 +3705,8 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
     switch (activeItem) {
       case "dashboard": 
         return isAdmin ? "Dashboard" : "Sales Summary";
-      //case "booking": return "Booking";
+      case "policies":
+        return "Terms & Policies";
       case "confirmation": return "Confirmation";
       case "withdrawal": return "Withdrawal";
       case "access": return "Access";
@@ -3467,6 +3718,18 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
       case "users": return "Users";
       case 'warranty': return 'Warranty';
       case 'categories': return 'Categories';
+      case 'chats': return 'Chats';
+      case 'inventory':
+      case 'inventory-all': return 'Inventory - All Products';
+      case 'inventory-history': return 'Inventory - History';
+      case 'inventory-control': return 'Inventory Control';
+      case 'stock-adjustment': return 'Stock Adjustment';
+      case 'price-management': return 'Price Management';
+      case 'item-management': return 'Item Management';
+      case 'items': return 'Items';
+      case 'items-all': return 'Items - All';
+      case 'items-list': return 'Items - Item List';
+      case 'items-add': return 'Items - Add Item';
       default: return "Dashboard";
     }
   };
@@ -3478,6 +3741,8 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
           return `Welcome back, ${user.name || user.email}`;
         }
         return `Welcome back, ${user.name || user.email}`;
+      case "policies":
+        return "Add and manage your platform's terms, conditions, and policies here.";
       case "profile":
         return "Manage seller profile, documents, and security";
       case "reports":
@@ -3504,6 +3769,8 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
         return 'Set warranty durations by category and subcategory';
       case 'categories':
         return 'Create, rename, and delete categories and their subcategories';
+      case 'chats':
+        return 'Message with buyers and sellers';
       default:
         return "";
     }
@@ -3863,7 +4130,7 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
     <div className="min-h-screen bg-background flex">
       <Sidebar
         activeItem={activeItem}
-        onItemClick={setActiveItem}
+        onItemClick={handleItemClick}
         onLogout={onLogout}
       />
       <div className="flex-1 flex flex-col">

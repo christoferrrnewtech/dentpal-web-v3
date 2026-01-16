@@ -358,7 +358,7 @@ const SellerWithdrawalTab = ({
         <div>
           <h2 className="text-2xl font-bold text-gray-900">Withdrawal</h2>
           <p className="text-sm text-gray-500 mt-1">
-            View your earnings summary and request payouts
+            View your earnings summary and request payouts (completed orders only)
           </p>
         </div>
         <button
@@ -369,6 +369,24 @@ const SellerWithdrawalTab = ({
           <Banknote className="w-4 h-4" />
           Request Payout
         </button>
+      </div>
+
+      {/* Info Notice */}
+      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+        <div className="flex items-start gap-3">
+          <div className="w-5 h-5 text-blue-600 mt-0.5">
+            ℹ️
+          </div>
+          <div className="flex-1">
+            <p className="text-sm text-blue-800 font-medium">
+              Withdrawal Policy
+            </p>
+            <p className="text-xs text-blue-700 mt-1">
+              Only funds from orders with <span className="font-semibold">'Completed'</span> status are available for withdrawal. 
+              Orders must be delivered and confirmed before the payout becomes available.
+            </p>
+          </div>
+        </div>
       </div>
 
       {/* Financial Summary Cards */}
@@ -387,7 +405,7 @@ const SellerWithdrawalTab = ({
             </div>
           </div>
           <div className="mt-2 text-xs text-gray-500">
-            Total subtotal from all orders
+            Total subtotal from completed orders
           </div>
         </div>
 
@@ -404,7 +422,7 @@ const SellerWithdrawalTab = ({
               </div>
             </div>
           </div>
-          <div className="mt-2 text-xs text-gray-500">After fees & charges</div>
+          <div className="mt-2 text-xs text-gray-500">From completed orders only</div>
         </div>
 
         {/* Payment Processing Fee */}
@@ -475,6 +493,9 @@ const SellerWithdrawalTab = ({
             </div>
             <div className="text-3xl font-bold mt-1">
               {currency.format(availableBalance)}
+            </div>
+            <div className="text-xs text-teal-100 mt-2 italic">
+              Only funds from completed orders are available for withdrawal
             </div>
             {pendingAmount > 0 && (
               <div className="text-sm text-teal-100 mt-2">
