@@ -45,7 +45,18 @@ interface MenuItem {
 }
 
 const menuItems: MenuItem[] = [
-  { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { 
+    id: "dashboard", 
+    label: "Dashboard", 
+    icon: LayoutDashboard,
+    subItems: [
+      { id: "dashboard-summary", label: "Sales by Summary", icon: BarChart3 },
+      { id: "dashboard-item", label: "By Item", icon: List },
+      { id: "dashboard-category", label: "By Category", icon: FolderTree },
+      { id: "dashboard-payment", label: "By Payment Type", icon: CreditCard },
+      { id: "dashboard-receipts", label: "By Receipts", icon: ClipboardList }
+    ]
+  },
   { id: "profile", label: "Profile", icon: IdCard },
   // { id: "booking", label: "Booking", icon: Calendar }, // HIDE BOOKING FOR ADMIN
   // Booking tab is now fully hidden for all users
@@ -57,20 +68,21 @@ const menuItems: MenuItem[] = [
     icon: Package,
     subItems: [
       { id: "inventory-all", label: "All", icon: List },
-      { id: "inventory-history", label: "History", icon: History }
+      { id: "inventory-history", label: "History", icon: History },
+      { id: "stock-adjustment", label: "Stock Adjustment", icon: Edit },
+      { id: "price-management", label: "Price Management", icon: CreditCard }
     ]
   },
   { 
-    id: "inventory-control", 
-    label: "Inventory Control", 
-    icon: ClipboardList,
+    id: "items", 
+    label: "Items", 
+    icon: PlusSquare,
     subItems: [
-      { id: "stock-adjustment", label: "Stock Adjustment", icon: Package },
-      { id: "price-management", label: "Price Management", icon: CreditCard },
-      { id: "item-management", label: "Item Management", icon: Edit }
+      { id: "items-all", label: "All", icon: List },
+      { id: "items-list", label: "Item List", icon: Edit },
+      { id: "items-add", label: "Add Item", icon: Plus }
     ]
   },
-  { id: "items", label: "Items", icon: PlusSquare },
   { id: "chats", label: "Chats", icon: MessageSquare },
   //{ id: "notifications", label: "Notifications", icon: Bell },
   { id: "product-qc", label: "QC Product", icon: CheckCircle },
@@ -86,7 +98,7 @@ const menuItems: MenuItem[] = [
 
 const Sidebar = ({ activeItem, onItemClick, onLogout }: SidebarProps) => {
   const [isCollapsed, setIsCollapsed] = useState(false);
-  const [expandedMenus, setExpandedMenus] = useState<Set<string>>(new Set(['inventory', 'inventory-control'])); // Expanded by default
+  const [expandedMenus, setExpandedMenus] = useState<Set<string>>(new Set(['dashboard', 'inventory', 'inventory-control', 'items'])); // Expanded by default
   const { hasPermission, loading, isAdmin, isSeller, isSubAccount, role } = useAuth();
   const { vendorProfileComplete } = useProfileCompletion();
 
@@ -111,6 +123,8 @@ const Sidebar = ({ activeItem, onItemClick, onLogout }: SidebarProps) => {
     'stock-adjustment': 'inventory',
     'price-management': 'add-product',
     items: 'add-product',
+    'items-all': 'add-product',
+    'items-list': 'add-product',
     'product-qc': 'product-qc',
     warranty: 'warranty',
     categories: 'categories',
